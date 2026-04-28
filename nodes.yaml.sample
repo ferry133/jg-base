@@ -1,0 +1,31 @@
+---
+# nodes.yaml.sample — node definitions
+# Copy to nodes.yaml, fill in values, then run: task configure
+# nodes.yaml is gitignored and never committed.
+
+nodes:
+  - name: "node1"                           # lowercase, alphanumeric + hyphens
+    address: "10.x.x.x"                    # static IP
+    controller: true                        # true = control-plane, false = worker
+    disk: "/dev/sda"                        # install disk (check with talosctl)
+    mac_addr: "aa:bb:cc:dd:ee:ff"          # used for DHCP reservation / PXE
+    schematic_id: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"  # 64-char hex, from Talos Image Factory
+    # mtu: 1500                             # optional, 1450-9000
+    # secureboot: false
+    # encrypt_disk: false
+    # kernel_modules:
+    #   - "br_netfilter"
+
+  - name: "node2"
+    address: "10.x.x.x"
+    controller: true
+    disk: "/dev/sda"
+    mac_addr: "aa:bb:cc:dd:ee:00"
+    schematic_id: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+
+  - name: "node3"
+    address: "10.x.x.x"
+    controller: false
+    disk: "/dev/sda"
+    mac_addr: "aa:bb:cc:dd:ee:11"
+    schematic_id: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
