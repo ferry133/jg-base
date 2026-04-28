@@ -4,7 +4,26 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What This Repo Is
 
-A personal Kubernetes home-ops cluster (`jiahd.cc`) on [Talos Linux](https://github.com/siderolabs/talos) managed via [Omni](https://omni.janncot.com). Flux CD GitOps syncs `kubernetes/` to the cluster. Config is generated from Jinja2 templates in `templates/` using [makejinja](https://github.com/mirkolenz/makejinja), driven by `cluster.yaml` and `nodes.yaml`.
+**`ferry133/jg-base`** — shared base repo for ~20 Kubernetes home-ops clusters managed by ferry133.
+All deployments are operated by ferry133; end users only specify requirements.
+
+**Architecture:**
+- This repo (`jg-base`, public) — common system manifests, watched by all user clusters via Flux
+- Per-user repo (private) — only `cluster-secrets.sops.yaml` + Kustomizations that reference this repo
+- `ferry133/jg-jiahd` — ferry133's own cluster; kept separate and not changed by this repo
+
+**Two-layer variable strategy:**
+- *Values* (IPs, domain, passwords) → Flux `${VARIABLE}` substituted at runtime from `cluster-secrets`
+- *Structure* (which extras, how many instances) → ferry133 renders via `task configure`, commits to per-user repo
+
+**Planned directory structure** (restructuring in progress):
+```
+kubernetes/apps/
+  base/     ← installed on every cluster (cert-manager, kube-system, network, flux-system, storage ns)
+  extras/   ← optional per-user selection (claude-code, trello-notifier, storage/nfs-subdir, ...)
+```
+
+Config is generated from Jinja2 templates in `templates/` using [makejinja](https://github.com/mirkolenz/makejinja), driven by `cluster.yaml` and `nodes.yaml`.
 
 See @cluster.yaml and @nodes.yaml for the primary config inputs.
 
