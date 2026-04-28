@@ -1,0 +1,90 @@
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: trello-notifier-morning
+spec:
+  schedule: "0 9 * * 1-6"
+  timeZone: "Asia/Taipei"
+  concurrencyPolicy: Forbid
+  jobTemplate:
+    spec:
+      ttlSecondsAfterFinished: 3600
+      template:
+        spec:
+          restartPolicy: OnFailure
+          containers:
+            - name: notifier
+              image: ghcr.io/ferry133/trello-notifier:latest
+              args: ["morning"]
+              envFrom:
+                - secretRef:
+                    name: trello-notifier-secret
+              volumeMounts:
+                - name: contacts
+                  mountPath: /app/line_contacts.json
+                  subPath: line_contacts.json
+          volumes:
+            - name: contacts
+              configMap:
+                name: trello-notifier-contacts
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: trello-notifier-noon
+spec:
+  schedule: "0 12 * * 1-6"
+  timeZone: "Asia/Taipei"
+  concurrencyPolicy: Forbid
+  jobTemplate:
+    spec:
+      ttlSecondsAfterFinished: 3600
+      template:
+        spec:
+          restartPolicy: OnFailure
+          containers:
+            - name: notifier
+              image: ghcr.io/ferry133/trello-notifier:latest
+              args: ["noon"]
+              envFrom:
+                - secretRef:
+                    name: trello-notifier-secret
+              volumeMounts:
+                - name: contacts
+                  mountPath: /app/line_contacts.json
+                  subPath: line_contacts.json
+          volumes:
+            - name: contacts
+              configMap:
+                name: trello-notifier-contacts
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: trello-notifier-evening
+spec:
+  schedule: "0 18 * * 1-6"
+  timeZone: "Asia/Taipei"
+  concurrencyPolicy: Forbid
+  jobTemplate:
+    spec:
+      ttlSecondsAfterFinished: 3600
+      template:
+        spec:
+          restartPolicy: OnFailure
+          containers:
+            - name: notifier
+              image: ghcr.io/ferry133/trello-notifier:latest
+              args: ["evening"]
+              envFrom:
+                - secretRef:
+                    name: trello-notifier-secret
+              volumeMounts:
+                - name: contacts
+                  mountPath: /app/line_contacts.json
+                  subPath: line_contacts.json
+          volumes:
+            - name: contacts
+              configMap:
+                name: trello-notifier-contacts
