@@ -21,6 +21,6 @@ spec:
       provisionerName: "k8s-sigs.io/first-nfs-subdir-external-provisioner"
       pathPattern: "jg-$${.PVC.namespace}-$${.PVC.name}"   # "jcom-$${.PVC.namespace}-$${.PVC.annotations.nfs.io/storage-path }" #
     nfs:
-      server: "10.9.1.12"
-      path: "/volume2/claudecode"
+      server: "${NAS_SERVER}"
+      path: "${NAS_PATH}"
 

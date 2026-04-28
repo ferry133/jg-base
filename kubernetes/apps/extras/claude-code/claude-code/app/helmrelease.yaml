@@ -61,8 +61,8 @@ spec:
           - path: /home/claude/workspace
       coding:
         type: nfs
-        server: 10.9.1.12
-        path: /volume2/coding
+        server: "${NAS_SERVER}"
+        path: "${NAS_CODING_PATH}"
         globalMounts:
           - path: /home/claude/coding
     defaultPodOptions:
@@ -149,8 +149,8 @@ spec:
           - path: /home/claude/workspace
       coding:
         type: nfs
-        server: 10.9.1.12
-        path: /volume2/coding
+        server: "${NAS_SERVER}"
+        path: "${NAS_CODING_PATH}"
         globalMounts:
           - path: /home/claude/coding
     defaultPodOptions:
