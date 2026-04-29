@@ -5,7 +5,7 @@ metadata:
   name: echo
 spec:
   interval: 1h
-  path: ./kubernetes/apps/extras/echo/app
+  path: ./kubernetes/apps/extras/default/echo/app
   postBuild:
     substituteFrom:
       - name: cluster-secrets
