@@ -32,8 +32,7 @@ kubernetes/
       storage/          ← namespace only (provisioner is an extra)
     extras/             ← opt-in per user
       claude-code/      ← own namespace
-        ks.yaml
-        app/
+        claude-code/
       default/          ← apps in default namespace
         echo/
         trello-notifier/
