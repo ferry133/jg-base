@@ -3,6 +3,7 @@ apiVersion: helm.toolkit.fluxcd.io/v2
 kind: HelmRelease
 metadata:
   name: trello
+  namespace: claude-code
 spec:
   chartRef:
     kind: OCIRepository
@@ -91,6 +92,7 @@ apiVersion: helm.toolkit.fluxcd.io/v2
 kind: HelmRelease
 metadata:
   name: cc
+  namespace: claude-code
 spec:
   chartRef:
     kind: OCIRepository
