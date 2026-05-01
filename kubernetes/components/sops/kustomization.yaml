@@ -1,5 +1,5 @@
 ---
 apiVersion: kustomize.config.k8s.io/v1alpha1
 kind: Component
-resources:
-  - ./cluster-secrets.sops.yaml
+# cluster-secrets.sops.yaml lives in the per-user repo and is applied during bootstrap.
+# Flux uses postBuild.substituteFrom to inject variables at runtime — no need to include it here.
