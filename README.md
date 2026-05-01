@@ -125,3 +125,31 @@ kubectl -n <namespace> logs <pod-name> -f
 kubectl -n <namespace> describe <resource> <name>
 kubectl -n <namespace> get events --sort-by='.metadata.creationTimestamp'
 ```
+
+### Why task bootstrap:apps can't be run repeatedly?
+
+  task bootstrap:apps uses helmfile to directly helm install FluxOperator + FluxInstance. The first time it
+  works fine because the cluster is empty. But afterwards, Flux is running and has taken ownership of those
+  releases. Running helmfile again causes:
+
+  - helmfile tries to helm upgrade releases already managed by Flux
+  - Conflicts with Flux's reconcile loop (two sources managing the same release)
+  - Results in UPGRADE FAILED or resource ownership conflict errors
+
+  The alternative:
+
+  Once bootstrapped, everything goes through Flux reconcile:
+
+  # Force re-sync git source
+  flux reconcile source git flux-system -n flux-system
+
+  # Force re-apply a specific KS
+  flux reconcile ks <ks-name> -n flux-system
+
+  # After changing cluster.yaml — re-apply cluster-secrets
+  sops -d kubernetes/components/sops/cluster-secrets.sops.yaml \
+    | kubectl apply -n flux-system -f - --server-side
+
+  One-liner rule: bootstrap once, then all changes go through git → Flux → cluster.
+
+

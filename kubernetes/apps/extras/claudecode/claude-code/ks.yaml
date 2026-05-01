@@ -6,7 +6,7 @@ metadata:
   namespace: flux-system
 spec:
   interval: 1h
-  path: ./kubernetes/apps/extras/claude-code/claude-code/app
+  path: ./kubernetes/apps/extras/claudecode/claude-code/app
   postBuild:
     substituteFrom:
       - name: cluster-secrets
