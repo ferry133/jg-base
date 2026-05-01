@@ -21,7 +21,7 @@ spec:
         - notification-controller
       sync:
         kind: GitRepository
-        url: "https://github.com/ferry133/jg-jiahd.git"
+        url: "${FLUX_SYNC_URL}"
         ref: "refs/heads/main"
         path: kubernetes/flux/cluster
       commonMetadata:
