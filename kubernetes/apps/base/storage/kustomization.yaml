@@ -5,3 +5,4 @@ kind: Kustomization
 
 resources:
   - ./namespace.yaml
+  - ./nfs-subdir/ks.yaml
