@@ -12,6 +12,10 @@ All deployments are operated by ferry133; end users only specify requirements.
 - Per-user repo (private) — only `cluster-secrets.sops.yaml` + Kustomizations that reference this repo
 - `ferry133/jg-jiahd` — ferry133's own cluster; kept separate and not changed by this repo
 
+> **修正原則：`jg-base` 與 `jg-cluster-template` 才是主要的 manifest sources。**
+> 任何 bug fix 或功能變更都應套用回這兩個 repo，而非只改 per-user repo（如 jgu2）。
+> Per-user repo 只存放 `cluster-secrets.sops.yaml`（per-cluster 機密）與 `ks.yaml`（extras 選擇），不應包含 manifest 邏輯。
+
 **Two-layer variable strategy:**
 - *Values* (IPs, domain, passwords) → Flux `${VARIABLE}` substituted at runtime from `cluster-secrets`
 - *Structure* (which extras, how many instances) → ferry133 renders via `task configure`, commits to per-user repo
