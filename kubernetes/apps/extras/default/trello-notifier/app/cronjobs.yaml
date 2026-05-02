@@ -34,7 +34,7 @@ kind: CronJob
 metadata:
   name: trello-notifier-noon
 spec:
-  schedule: "0 12 * * 1-6"
+  schedule: "0 12 * * *"
   timeZone: "Asia/Taipei"
   concurrencyPolicy: Forbid
   jobTemplate:
