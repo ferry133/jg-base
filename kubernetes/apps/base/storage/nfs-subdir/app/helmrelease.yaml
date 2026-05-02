@@ -18,6 +18,7 @@ spec:
   values:
     storageClass:
       name: sc-nas
+      defaultClass: true
       provisionerName: "k8s-sigs.io/first-nfs-subdir-external-provisioner"
       pathPattern: "jg-$${.PVC.namespace}-$${.PVC.name}"   # "jcom-$${.PVC.namespace}-$${.PVC.annotations.nfs.io/storage-path }" #
     nfs:
