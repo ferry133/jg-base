@@ -86,6 +86,52 @@ spec:
 ---
 # ── Extras — uncomment as needed ──────────────────────────────────────────────
 
+# extras/mqtt — Mosquitto MQTT broker for agent inter-communication
+# apiVersion: kustomize.toolkit.fluxcd.io/v1
+# kind: Kustomization
+# metadata:
+#   name: extras-mqtt
+#   namespace: flux-system
+# spec:
+#   decryption:
+#     provider: sops
+#   interval: 1h
+#   path: ./kubernetes/apps/extras/default/mqtt
+#   prune: true
+#   sourceRef:
+#     kind: GitRepository
+#     name: jg-base
+#     namespace: flux-system
+#   postBuild:
+#     substituteFrom:
+#       - name: cluster-secrets
+#         kind: Secret
+#   dependsOn:
+#     - name: cluster-apps-base
+# ---
+# extras/postgres — shared PostgreSQL for linebot agents + k8scc MCP memory
+# apiVersion: kustomize.toolkit.fluxcd.io/v1
+# kind: Kustomization
+# metadata:
+#   name: extras-postgres
+#   namespace: flux-system
+# spec:
+#   decryption:
+#     provider: sops
+#   interval: 1h
+#   path: ./kubernetes/apps/extras/default/postgres
+#   prune: true
+#   sourceRef:
+#     kind: GitRepository
+#     name: jg-base
+#     namespace: flux-system
+#   postBuild:
+#     substituteFrom:
+#       - name: cluster-secrets
+#         kind: Secret
+#   dependsOn:
+#     - name: cluster-apps-base
+# ---
 # extras/claude-code — Claude Code web IDE (requires NAS)
 # apiVersion: kustomize.toolkit.fluxcd.io/v1
 # kind: Kustomization
@@ -96,7 +142,7 @@ spec:
 #   decryption:
 #     provider: sops
 #   interval: 1h
-#   path: ./kubernetes/apps/extras/claude-code
+#   path: ./kubernetes/apps/extras/claudecode
 #   prune: true
 #   sourceRef:
 #     kind: GitRepository
@@ -142,7 +188,7 @@ spec:
 #   decryption:
 #     provider: sops
 #   interval: 1h
-#   path: ./kubernetes/apps/extras/trello-notifier
+#   path: ./kubernetes/apps/extras/default/trello-notifier
 #   prune: true
 #   sourceRef:
 #     kind: GitRepository
