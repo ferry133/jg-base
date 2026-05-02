@@ -6,3 +6,4 @@ resources:
   - ./secret.yaml
   - ./pvc.yaml
   - ./deploy.yaml
+  - ./migration-job.yaml
