@@ -2,8 +2,8 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
-  - ./nfs-pvc.yaml
-#  - ./helmrepository.yaml
-  - ./helmrelease.yaml
+  - ./configmap.yaml
+  - ./pvc.yaml
+  - ./deploy.yaml
   - ./tcp-gateway.yaml
   - ./tcproute.yaml
