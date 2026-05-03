@@ -40,7 +40,7 @@ data:
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: postgres-migrate
+  name: postgres-migrate-v2
   namespace: db
 spec:
   ttlSecondsAfterFinished: 300
