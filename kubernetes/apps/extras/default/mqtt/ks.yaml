@@ -16,5 +16,5 @@ spec:
     kind: GitRepository
     name: jg-base
     namespace: flux-system
-  targetNamespace: default
+  targetNamespace: mqtt
   wait: false
