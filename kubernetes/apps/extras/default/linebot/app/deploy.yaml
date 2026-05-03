@@ -52,6 +52,39 @@ spec:
     - port: 8080
       targetPort: 8080
 ---
+# Trello Agent — MQTT subscribe + Trello API
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: trello-agent
+  namespace: linebot
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: trello-agent
+  template:
+    metadata:
+      labels:
+        app: trello-agent
+    spec:
+      containers:
+        - name: agent
+          image: ghcr.io/ferry133/linebot:latest
+          command: ["python", "/app/agents/trello_agent.py"]
+          env:
+            - name: MQTT_HOST
+              value: mosquitto.mqtt.svc.cluster.local
+          envFrom:
+            - secretRef:
+                name: linebot-secret
+          resources:
+            requests:
+              cpu: 10m
+              memory: 64Mi
+            limits:
+              memory: 256Mi
+---
 # Customer Service Agent — MQTT subscribe + Claude loop
 apiVersion: apps/v1
 kind: Deployment
