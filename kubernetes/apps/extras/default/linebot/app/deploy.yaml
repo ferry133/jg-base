@@ -105,6 +105,45 @@ spec:
             capabilities:
               drop: ["ALL"]
 ---
+# Trello Board Sync — CronJob 每天 03:00 (UTC+8) 同步 board 清單至 DB
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: trello-board-sync
+  namespace: linebot
+spec:
+  schedule: "0 19 * * *"  # 03:00 UTC+8 = 19:00 UTC
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          restartPolicy: OnFailure
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+            - name: sync
+              image: ghcr.io/ferry133/linebot:latest
+              command: ["python", "/app/agents/trello_board_sync.py"]
+              envFrom:
+                - secretRef:
+                    name: linebot-secret
+              resources:
+                requests:
+                  cpu: 10m
+                  memory: 64Mi
+                limits:
+                  memory: 128Mi
+              securityContext:
+                allowPrivilegeEscalation: false
+                capabilities:
+                  drop: ["ALL"]
+---
 # Customer Service Agent — MQTT subscribe + Claude loop
 apiVersion: apps/v1
 kind: Deployment
