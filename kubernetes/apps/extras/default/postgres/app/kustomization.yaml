@@ -7,3 +7,4 @@ resources:
   - ./pvc.yaml
   - ./deploy.yaml
   - ./migration-job.yaml
+  - ./backup.yaml

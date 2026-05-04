@@ -1,0 +1,102 @@
+---
+# NFS PV/PVC — NAS1 backup volume
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: postgres-backup-nas
+spec:
+  capacity:
+    storage: 50Gi
+  accessModes:
+    - ReadWriteMany
+  persistentVolumeReclaimPolicy: Retain
+  nfs:
+    server: 10.9.1.12
+    path: /volume2/backup1
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: postgres-backup-nas
+  namespace: db
+spec:
+  accessModes:
+    - ReadWriteMany
+  resources:
+    requests:
+      storage: 50Gi
+  volumeName: postgres-backup-nas
+---
+# CronJob — daily pg_dump at 02:00 UTC+8 (18:00 UTC), retain 14 days
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: postgres-backup
+  namespace: db
+spec:
+  schedule: "0 18 * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          restartPolicy: OnFailure
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 999
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+            - name: backup
+              image: postgres:16-alpine
+              command:
+                - /bin/sh
+                - -c
+                - |
+                  set -e
+                  FILENAME="linebot-$(date +%Y%m%d).sql.gz"
+                  DEST="/backup/linebot"
+                  mkdir -p "$DEST"
+                  pg_dump -h "$PGHOST" -U "$PGUSER" "$PGDATABASE" | gzip > "$DEST/$FILENAME"
+                  echo "Backup written: $DEST/$FILENAME ($(du -sh $DEST/$FILENAME | cut -f1))"
+                  # Retain last 14 days
+                  find "$DEST" -name "linebot-*.sql.gz" -mtime +14 -delete
+                  echo "Cleanup done. Files kept:"
+                  ls -lh "$DEST"
+              env:
+                - name: PGHOST
+                  value: postgres.db.svc
+                - name: PGDATABASE
+                  valueFrom:
+                    secretKeyRef:
+                      name: postgres-secret
+                      key: POSTGRES_DB
+                - name: PGUSER
+                  valueFrom:
+                    secretKeyRef:
+                      name: postgres-secret
+                      key: POSTGRES_USER
+                - name: PGPASSWORD
+                  valueFrom:
+                    secretKeyRef:
+                      name: postgres-secret
+                      key: POSTGRES_PASSWORD
+              volumeMounts:
+                - name: backup
+                  mountPath: /backup
+              resources:
+                requests:
+                  cpu: 10m
+                  memory: 64Mi
+                limits:
+                  memory: 256Mi
+              securityContext:
+                allowPrivilegeEscalation: false
+                capabilities:
+                  drop: ["ALL"]
+          volumes:
+            - name: backup
+              persistentVolumeClaim:
+                claimName: postgres-backup-nas
