@@ -10,6 +10,7 @@ spec:
   accessModes:
     - ReadWriteMany
   persistentVolumeReclaimPolicy: Retain
+  storageClassName: ""
   nfs:
     server: 10.9.1.12
     path: /volume2/backup1
@@ -22,6 +23,7 @@ metadata:
 spec:
   accessModes:
     - ReadWriteMany
+  storageClassName: ""
   resources:
     requests:
       storage: 50Gi
