@@ -1,0 +1,30 @@
+---
+# NFS PV/PVC — NAS1 knowledge base volume
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: linebot-knowledge-nas
+spec:
+  capacity:
+    storage: 1Gi
+  accessModes:
+    - ReadOnlyMany
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: ""
+  nfs:
+    server: 10.9.1.12
+    path: /volume2/knowledge
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: linebot-knowledge-nas
+  namespace: linebot
+spec:
+  accessModes:
+    - ReadOnlyMany
+  storageClassName: ""
+  resources:
+    requests:
+      storage: 1Gi
+  volumeName: linebot-knowledge-nas

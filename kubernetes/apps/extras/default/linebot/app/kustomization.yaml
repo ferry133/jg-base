@@ -4,5 +4,6 @@ kind: Kustomization
 resources:
   - ./namespace.yaml
   - ./secret.yaml
+  - ./knowledge-pvc.yaml
   - ./deploy.yaml
   - ./httproute.yaml

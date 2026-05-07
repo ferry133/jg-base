@@ -186,3 +186,11 @@ spec:
             allowPrivilegeEscalation: false
             capabilities:
               drop: ["ALL"]
+          volumeMounts:
+            - name: knowledge
+              mountPath: /app/knowledge
+              readOnly: true
+      volumes:
+        - name: knowledge
+          persistentVolumeClaim:
+            claimName: linebot-knowledge-nas
