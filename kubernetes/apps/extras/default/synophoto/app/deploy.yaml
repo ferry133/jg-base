@@ -1,0 +1,56 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: synophoto
+  namespace: default
+spec:
+  replicas: 1
+  revisionHistoryLimit: 2
+  selector:
+    matchLabels:
+      app: synophoto
+  template:
+    metadata:
+      labels:
+        app: synophoto
+    spec:
+      containers:
+        - name: app
+          image: ghcr.io/ferry133/synology-photo-tagger:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 5001
+          envFrom:
+            - secretRef:
+                name: synophoto-secret
+          volumeMounts:
+            - name: sessions
+              mountPath: /root/.syno_sessions
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              memory: 256Mi
+          readinessProbe:
+            tcpSocket:
+              port: 5001
+            initialDelaySeconds: 5
+            periodSeconds: 10
+      volumes:
+        - name: sessions
+          persistentVolumeClaim:
+            claimName: synophoto-sessions
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: synophoto
+  namespace: default
+spec:
+  selector:
+    app: synophoto
+  ports:
+    - port: 5001
+      targetPort: 5001
