@@ -5,3 +5,4 @@ kind: Kustomization
 
 resources:
   - ./claude-code/ks.yaml
+  - ./postgres/ks.yaml
