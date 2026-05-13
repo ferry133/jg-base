@@ -27,40 +27,72 @@ kubernetes/
       flux-system/
         flux-operator/
         flux-instance/
-      kube-system/      ← cilium, coredns, metrics-server, reloader
+      kube-system/      ← cilium (CNI), metrics-server, reloader, spegel
       network/          ← cloudflare-dns, cloudflare-tunnel, envoy-gateway, k8s-gateway
       storage/          ← namespace only (provisioner is an extra)
-    extras/             ← opt-in per user
-      claude-code/      ← own namespace
-        claude-code/
-      default/          ← apps in default namespace
+    extras/             ← opt-in per user (selected via cluster.yaml)
+      claudecode/
+        claude-code/    ← Claude Code web IDE
+      default/
         echo/
+        homebridge/
+        mariadb/
+        mqtt/
+        postgres/
+        synophoto/
         trello-notifier/
-      network/          ← apps in network namespace
+        ttyd/
+      freepbx/
+        freepbx/
+      ingress-nginx/
+        ingress-nginx/
+      network/
         cloudflare-tunnel-lan/
+      omni/
+        omni/           ← Sidero Omni (requires storage/local-path-provisioner)
       storage/
+        local-path-provisioner/
         nfs-subdir/
   components/
     sops/               ← cluster-secrets Flux component
   flux/
-    cluster/            ← Flux entry point (→ apps/base/)
+    cluster/            ← Flux entry point (→ apps/base/ + extras/)
 ```
 
-### Available Extras
+## Available Extras
 
 | Extra | Description | Requires |
 |-------|-------------|----------|
-| `extras/claude-code` | Claude Code web IDE (ttyd) | NAS |
-| `extras/storage/nfs-subdir` | NFS storage provisioner (`sc-nas`) | NAS |
-| `extras/default/trello-notifier` | Trello LINE notification bot | — |
-| `extras/network/cloudflare-tunnel-lan` | Cloudflare tunnel for LAN-only access | — |
-| `extras/default/echo` | HTTP echo service (debug/test) | — |
+| `claudecode/claude-code` | Claude Code web IDE | NAS (`nas_*`) + `claude_instances` |
+| `default/echo` | HTTP echo service (debug/test) | — |
+| `default/homebridge` | Homebridge smart home bridge | — |
+| `default/mariadb` | MariaDB database | — |
+| `default/mqtt` | MQTT broker | — |
+| `default/postgres` | Shared PostgreSQL | `postgres_password` |
+| `default/synophoto` | Synology Photo Tagger web UI | `synophoto_auth0_*` |
+| `default/trello-notifier` | Trello LINE notification bot | Trello/LINE tokens |
+| `default/ttyd` | Web terminal | `ttyd_credential` |
+| `freepbx/freepbx` | FreePBX / Asterisk PBX | `freepbx_mysql_*` |
+| `ingress-nginx/ingress-nginx` | Nginx ingress controller | — |
+| `network/cloudflare-tunnel-lan` | Cloudflare tunnel for LAN access | — |
+| `omni/omni` | Sidero Omni cluster manager | `omni_gpg_key` + `storage/local-path-provisioner` |
+| `storage/local-path-provisioner` | Local-path storage class (`local-path`) | — |
+| `storage/nfs-subdir` | NFS storage provisioner (`sc-nas`) | NAS (`nas_*`) |
+
+## Bootstrap Order
+
+`task bootstrap:apps` (run once per new cluster) installs in this order:
+
+1. **cilium** — CNI (nodes become Ready)
+2. **cert-manager** — TLS certificate management
+3. **flux-operator** — Flux controller
+4. **flux-instance** — syncs this repo + per-user repo
+
+After bootstrap, all subsequent changes go through Flux reconcile.
 
 ## Setting Up a New User Cluster
 
 Use [`ferry133/jg-cluster-template`](https://github.com/ferry133/jg-cluster-template) — click **"Use this template"** to generate a per-user private repo, then follow its README.
-
-The per-user repo's `flux/cluster/ks.yaml` references this repo's paths. Use `per-user-repo.sample.yaml` in this repo as the reference for writing that file.
 
 ### cluster-secrets keys
 
@@ -73,7 +105,7 @@ All required `${VARIABLE}` keys are documented in:
 
 ```sh
 flux check
-flux get sources git flux-system
+flux get sources git -A
 flux get ks -A
 flux get hr -A
 ```
@@ -105,7 +137,7 @@ To have Flux reconcile on `git push` instead of polling:
 
 2. Full URL: `https://flux-webhook.${cloudflare_domain}/hook/<path>`
 
-3. In GitHub → Settings → Webhooks → Add webhook:
+3. GitHub → Settings → Webhooks → Add webhook:
    - URL: above
    - Token: from `github-push-token.txt`
    - Content type: `application/json`
@@ -126,30 +158,8 @@ kubectl -n <namespace> describe <resource> <name>
 kubectl -n <namespace> get events --sort-by='.metadata.creationTimestamp'
 ```
 
-### Why task bootstrap:apps can't be run repeatedly?
+### Why can't task bootstrap:apps be run repeatedly?
 
-  task bootstrap:apps uses helmfile to directly helm install FluxOperator + FluxInstance. The first time it
-  works fine because the cluster is empty. But afterwards, Flux is running and has taken ownership of those
-  releases. Running helmfile again causes:
+`task bootstrap:apps` uses helmfile to directly helm-install FluxOperator + FluxInstance. After bootstrap, Flux owns those releases. Running helmfile again conflicts with Flux's reconcile loop and causes `UPGRADE FAILED` or ownership conflict errors.
 
-  - helmfile tries to helm upgrade releases already managed by Flux
-  - Conflicts with Flux's reconcile loop (two sources managing the same release)
-  - Results in UPGRADE FAILED or resource ownership conflict errors
-
-  The alternative:
-
-  Once bootstrapped, everything goes through Flux reconcile:
-
-  # Force re-sync git source
-  flux reconcile source git flux-system -n flux-system
-
-  # Force re-apply a specific KS
-  flux reconcile ks <ks-name> -n flux-system
-
-  # After changing cluster.yaml — re-apply cluster-secrets
-  sops -d kubernetes/components/sops/cluster-secrets.sops.yaml \
-    | kubectl apply -n flux-system -f - --server-side
-
-  One-liner rule: bootstrap once, then all changes go through git → Flux → cluster.
-
-
+**Rule:** bootstrap once, then all changes go through git → Flux → cluster.
