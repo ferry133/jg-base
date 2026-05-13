@@ -6,7 +6,7 @@ kind: Kustomization
 resources:
   - ./namespace.yaml
   - ./cilium/ks.yaml
-#  - ./coredns/ks.yaml                  # Larry: adopt omni's default coredns.
+  - ./coredns/ks.yaml
   - ./metrics-server/ks.yaml
   - ./reloader/ks.yaml
   - ./spegel/ks.yaml
