@@ -27,12 +27,13 @@ kubernetes/
       flux-system/
         flux-operator/
         flux-instance/
-      kube-system/      ← cilium (CNI), metrics-server, reloader, spegel
+      kube-system/      ← cilium (CNI), coredns, metrics-server, reloader, spegel
       network/          ← cloudflare-dns, cloudflare-tunnel, envoy-gateway, k8s-gateway
       storage/          ← namespace only (provisioner is an extra)
     extras/             ← opt-in per user (selected via cluster.yaml)
       claudecode/
         claude-code/    ← Claude Code web IDE
+        postgres/       ← dedicated PostgreSQL for claude-code
       default/
         echo/
         homebridge/
@@ -63,7 +64,8 @@ kubernetes/
 
 | Extra | Description | Requires |
 |-------|-------------|----------|
-| `claudecode/claude-code` | Claude Code web IDE | NAS (`nas_*`) + `claude_instances` |
+| `claudecode/claude-code` | Claude Code web IDE | NAS (`nas_*`) + `claude_instances` + `claudecode/postgres` |
+| `claudecode/postgres` | Dedicated PostgreSQL for claude-code | `claudecode_postgres_password` |
 | `default/echo` | HTTP echo service (debug/test) | — |
 | `default/homebridge` | Homebridge smart home bridge | — |
 | `default/mariadb` | MariaDB database | — |
