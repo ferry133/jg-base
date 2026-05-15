@@ -7,7 +7,6 @@ resources:
   - ./helmrepository.yaml
   - ./helmrelease.yaml
   - ./helmrelease1.yaml
-  - ./certificate.yaml
   - ./ingress.yaml
   - ./httproute.yaml
   - ./udp-gateway.yaml
