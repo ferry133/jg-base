@@ -67,7 +67,7 @@ metadata:
     nginx.ingress.kubernetes.io/ssl-redirect: "true"
     nginx.ingress.kubernetes.io/backend-protocol: "GRPC"
     # add an annotation indicating the issuer to use.
-    cert-manager.io/cluster-issuer: cert-manager-webhook-duckdns-production
+    cert-manager.io/cluster-issuer: cert-manager-cert-manager-webhook-duckdns-production
   name: omni-siderolink-ing
 spec:
   ingressClassName: nginx
