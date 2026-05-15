@@ -18,5 +18,5 @@ spec:
   values:
     controller:
       service:
-        loadBalancerIP: 10.9.8.6
+        loadBalancerIP: ${INGRESS_NGINX_LB_IP}
 
