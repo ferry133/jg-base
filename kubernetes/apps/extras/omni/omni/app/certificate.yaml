@@ -9,7 +9,7 @@ spec:
     - "*.janncot.duckdns.org"
   duration: 160h
   issuerRef:
-    name: cert-manager-webhook-duckdns-production
+    name: cert-manager-cert-manager-webhook-duckdns-production
     kind: ClusterIssuer
   privateKey:
     algorithm: ECDSA
