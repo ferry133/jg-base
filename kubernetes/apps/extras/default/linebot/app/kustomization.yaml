@@ -7,3 +7,4 @@ resources:
   - ./knowledge-pvc.yaml
   - ./deploy.yaml
   - ./httproute.yaml
+  - ./admin.yaml

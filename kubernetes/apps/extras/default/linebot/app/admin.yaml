@@ -1,0 +1,100 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: linebot-admin
+  namespace: linebot
+spec:
+  replicas: 1
+  revisionHistoryLimit: 2
+  selector:
+    matchLabels:
+      app: linebot-admin
+  template:
+    metadata:
+      labels:
+        app: linebot-admin
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: admin
+          image: ghcr.io/ferry133/linebot:latest
+          command: ["python", "/app/agents/admin_server.py"]
+          envFrom:
+            - secretRef:
+                name: linebot-secret
+          env:
+            - name: ADMIN_USER
+              valueFrom:
+                secretKeyRef:
+                  name: linebot-secret
+                  key: ADMIN_USER
+                  optional: true
+            - name: ADMIN_PASS
+              valueFrom:
+                secretKeyRef:
+                  name: linebot-secret
+                  key: ADMIN_PASS
+                  optional: true
+          ports:
+            - containerPort: 8081
+          resources:
+            requests:
+              cpu: 10m
+              memory: 64Mi
+            limits:
+              memory: 128Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8081
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          volumeMounts:
+            - name: knowledge
+              mountPath: /app/knowledge
+      volumes:
+        - name: knowledge
+          persistentVolumeClaim:
+            claimName: linebot-knowledge-nas
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: linebot-admin
+  namespace: linebot
+spec:
+  selector:
+    app: linebot-admin
+  ports:
+    - port: 8081
+      targetPort: 8081
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: linebot-admin
+  namespace: linebot
+spec:
+  hostnames: ["linebot-admin.${SECRET_DOMAIN}"]
+  parentRefs:
+    - name: envoy-internal
+      namespace: network
+      sectionName: https
+  rules:
+    - backendRefs:
+        - name: linebot-admin
+          namespace: linebot
+          port: 8081
+      matches:
+        - path:
+            type: PathPrefix
+            value: /
