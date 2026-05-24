@@ -87,7 +87,7 @@ metadata:
 spec:
   hostnames: ["linebot-admin.${SECRET_DOMAIN}"]
   parentRefs:
-    - name: envoy-internal
+    - name: envoy-external
       namespace: network
       sectionName: https
   rules:
