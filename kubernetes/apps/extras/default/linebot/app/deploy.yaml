@@ -23,7 +23,8 @@ spec:
           type: RuntimeDefault
       containers:
         - name: gateway
-          image: ghcr.io/ferry133/linebot:latest
+          image: ghcr.io/ferry133/linebot:affd49f
+          imagePullPolicy: Always
           command: ["python", "/app/gateway/line_gateway.py"]
           ports:
             - containerPort: 8080
@@ -86,7 +87,8 @@ spec:
           type: RuntimeDefault
       containers:
         - name: agent
-          image: ghcr.io/ferry133/linebot:latest
+          image: ghcr.io/ferry133/linebot:affd49f
+          imagePullPolicy: Always
           command: ["python", "/app/agents/trello_agent.py"]
           env:
             - name: MQTT_HOST
@@ -128,7 +130,7 @@ spec:
               type: RuntimeDefault
           containers:
             - name: sync
-              image: ghcr.io/ferry133/linebot:latest
+              image: ghcr.io/ferry133/linebot:affd49f
               command: ["python", "/app/agents/trello_board_sync.py"]
               envFrom:
                 - secretRef:
@@ -168,7 +170,8 @@ spec:
           type: RuntimeDefault
       containers:
         - name: agent
-          image: ghcr.io/ferry133/linebot:latest
+          image: ghcr.io/ferry133/linebot:affd49f
+          imagePullPolicy: Always
           command: ["python", "/app/agents/customer_service.py"]
           env:
             - name: MQTT_HOST
