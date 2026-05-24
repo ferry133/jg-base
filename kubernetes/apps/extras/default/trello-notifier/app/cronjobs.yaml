@@ -2,6 +2,7 @@
 apiVersion: batch/v1
 kind: CronJob
 metadata:
+  namespace: linebot
   name: trello-notifier-morning
 spec:
   schedule: "0 9 * * 1-6"
@@ -15,11 +16,13 @@ spec:
           restartPolicy: OnFailure
           containers:
             - name: notifier
-              image: ghcr.io/ferry133/trello-notifier:latest
+              image: ghcr.io/ferry133/linebot:a1b4823
+              imagePullPolicy: Always
+              command: ["python", "/app/trello_line_notifier.py"]
               args: ["morning"]
               envFrom:
                 - secretRef:
-                    name: trello-notifier-secret
+                    name: linebot-secret
               volumeMounts:
                 - name: knowledge
                   mountPath: /app/knowledge
@@ -32,6 +35,7 @@ spec:
 apiVersion: batch/v1
 kind: CronJob
 metadata:
+  namespace: linebot
   name: trello-notifier-noon
 spec:
   schedule: "0 12 * * *"
@@ -45,11 +49,13 @@ spec:
           restartPolicy: OnFailure
           containers:
             - name: notifier
-              image: ghcr.io/ferry133/trello-notifier:latest
+              image: ghcr.io/ferry133/linebot:a1b4823
+              imagePullPolicy: Always
+              command: ["python", "/app/trello_line_notifier.py"]
               args: ["noon"]
               envFrom:
                 - secretRef:
-                    name: trello-notifier-secret
+                    name: linebot-secret
               volumeMounts:
                 - name: knowledge
                   mountPath: /app/knowledge
@@ -62,6 +68,7 @@ spec:
 apiVersion: batch/v1
 kind: CronJob
 metadata:
+  namespace: linebot
   name: trello-notifier-evening
 spec:
   schedule: "0 18 * * 1-6"
@@ -75,11 +82,13 @@ spec:
           restartPolicy: OnFailure
           containers:
             - name: notifier
-              image: ghcr.io/ferry133/trello-notifier:latest
+              image: ghcr.io/ferry133/linebot:a1b4823
+              imagePullPolicy: Always
+              command: ["python", "/app/trello_line_notifier.py"]
               args: ["evening"]
               envFrom:
                 - secretRef:
-                    name: trello-notifier-secret
+                    name: linebot-secret
               volumeMounts:
                 - name: knowledge
                   mountPath: /app/knowledge
