@@ -1,0 +1,29 @@
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: linebot-migrate-contacts-v1
+  namespace: linebot
+spec:
+  ttlSecondsAfterFinished: 600
+  template:
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: migrate
+          image: ghcr.io/ferry133/linebot:latest
+          command: ["python", "/app/agents/migrate_contacts.py"]
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: linebot-secret
+                  key: DATABASE_URL
+          volumeMounts:
+            - name: knowledge
+              mountPath: /app/knowledge
+              readOnly: true
+      volumes:
+        - name: knowledge
+          persistentVolumeClaim:
+            claimName: linebot-knowledge-nas

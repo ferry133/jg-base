@@ -5,6 +5,24 @@ metadata:
   name: postgres-migrations
   namespace: db
 data:
+  002_trello_boards.sql: |
+    CREATE TABLE IF NOT EXISTS trello_boards (
+        workspace_id  TEXT NOT NULL,
+        board_id      TEXT NOT NULL,
+        board_name    TEXT NOT NULL,
+        synced_at     TIMESTAMPTZ DEFAULT now(),
+        PRIMARY KEY (workspace_id, board_id)
+    );
+  003_line_users.sql: |
+    CREATE TABLE IF NOT EXISTS line_users (
+        line_id      TEXT PRIMARY KEY,
+        display_name TEXT,
+        picture_url  TEXT,
+        role         TEXT NOT NULL DEFAULT 'visitor',
+        projects     JSONB NOT NULL DEFAULT '[]',
+        created_at   TIMESTAMPTZ DEFAULT now(),
+        updated_at   TIMESTAMPTZ DEFAULT now()
+    );
   001_init.sql: |
     CREATE TABLE IF NOT EXISTS episodes (
         id           SERIAL PRIMARY KEY,
@@ -40,7 +58,7 @@ data:
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: postgres-migrate-v2
+  name: postgres-migrate-v3
   namespace: db
 spec:
   ttlSecondsAfterFinished: 300
@@ -51,11 +69,12 @@ spec:
         - name: migrate
           image: postgres:16
           command:
-            - psql
-            - -v
-            - ON_ERROR_STOP=1
-            - -f
-            - /migrations/001_init.sql
+            - sh
+            - -c
+            - |
+              psql -v ON_ERROR_STOP=1 -f /migrations/001_init.sql &&
+              psql -v ON_ERROR_STOP=1 -f /migrations/002_trello_boards.sql &&
+              psql -v ON_ERROR_STOP=1 -f /migrations/003_line_users.sql
           env:
             - name: PGHOST
               value: postgres.db.svc

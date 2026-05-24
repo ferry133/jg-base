@@ -8,3 +8,4 @@ resources:
   - ./deploy.yaml
   - ./httproute.yaml
   - ./admin.yaml
+  - ./migrate-contacts-job.yaml
