@@ -5,6 +5,7 @@ resources:
   - ./namespace.yaml
   - ./secret.yaml
   - ./knowledge-pvc.yaml
+  - ./jia-homedesign-pvc.yaml
   - ./deploy.yaml
   - ./httproute.yaml
   - ./admin.yaml

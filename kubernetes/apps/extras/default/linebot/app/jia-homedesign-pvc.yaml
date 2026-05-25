@@ -1,0 +1,30 @@
+---
+# NFS PV/PVC — NAS1 jia.homedesign project files (read-write for admin provisioning)
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: linebot-jia-homedesign-nas
+spec:
+  capacity:
+    storage: 100Gi
+  accessModes:
+    - ReadWriteMany
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: ""
+  nfs:
+    server: 10.9.1.12
+    path: /volume2/jia.homedesign
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: linebot-jia-homedesign-nas
+  namespace: linebot
+spec:
+  accessModes:
+    - ReadWriteMany
+  storageClassName: ""
+  resources:
+    requests:
+      storage: 100Gi
+  volumeName: linebot-jia-homedesign-nas

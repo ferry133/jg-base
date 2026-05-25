@@ -22,7 +22,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: admin
-          image: ghcr.io/ferry133/linebot:a1b4823
+          image: ghcr.io/ferry133/linebot:6eb66d5
           imagePullPolicy: Always
           command: ["python", "/app/agents/admin_server.py"]
           envFrom:
@@ -62,10 +62,15 @@ spec:
           volumeMounts:
             - name: knowledge
               mountPath: /app/knowledge
+            - name: jia-homedesign
+              mountPath: /mnt/nas/jia.homedesign
       volumes:
         - name: knowledge
           persistentVolumeClaim:
             claimName: linebot-knowledge-nas
+        - name: jia-homedesign
+          persistentVolumeClaim:
+            claimName: linebot-jia-homedesign-nas
 ---
 apiVersion: v1
 kind: Service
