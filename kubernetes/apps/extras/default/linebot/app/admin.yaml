@@ -22,7 +22,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: admin
-          image: ghcr.io/ferry133/linebot:f20ddeb
+          image: ghcr.io/ferry133/linebot:7ed15ca
           imagePullPolicy: Always
           command: ["python", "/app/agents/admin_server.py"]
           envFrom:
