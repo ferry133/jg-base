@@ -10,7 +10,7 @@ All deployments are operated by ferry133; end users only specify requirements.
 **Architecture:**
 - This repo (`jg-base`, public) — common system manifests, watched by all user clusters via Flux
 - Per-user repo (private) — only `cluster-secrets.sops.yaml` + Kustomizations that reference this repo
-- `ferry133/jg-jiahd` — ferry133's own cluster; kept separate and not changed by this repo
+- `ferry133/jg-jiahd` — ferry133's own primary cluster (jiahd.cc); per-user repo like other user clusters but ferry133-operated
 
 > **修正原則：`jg-base` 與 `jg-cluster-template` 才是主要的 manifest sources。**
 > 任何 bug fix 或功能變更都應套用回這兩個 repo，而非只改 per-user repo（如 jgu2）。
