@@ -4,6 +4,8 @@ kind: ConfigMap
 metadata:
   name: daily-check-script
   namespace: monitoring
+  annotations:
+    kustomize.toolkit.fluxcd.io/substitute: disabled
 data:
   msmtprc.template: |
     defaults
