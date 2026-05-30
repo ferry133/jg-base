@@ -28,7 +28,10 @@ spec:
             - name: check
               image: alpine:3.20
               command:
-                - /scripts/run-check.sh
+                - /bin/sh
+                - -c
+                - |
+                  apk add --no-cache --quiet bash >/dev/null && exec /bin/bash /scripts/run-check.sh
               envFrom:
                 - secretRef:
                     name: daily-check-config
