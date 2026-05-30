@@ -292,6 +292,17 @@ data:
       echo "daily-check from cluster ${CLUSTER_NAME}"
     } > "$BODY_FILE"
 
+    echo "==> Summary"
+    for line in "${SUMMARY[@]}"; do
+      echo "  $line"
+    done
+    if [[ ${#DETAILS[@]} -gt 0 ]]; then
+      echo "==> Details"
+      for line in "${DETAILS[@]}"; do
+        echo "  $line"
+      done
+    fi
+
     echo "==> Sending email to ${NOTIFY_EMAIL_TO}"
     IFS=',' read -ra RECIPIENTS <<< "$NOTIFY_EMAIL_TO"
     if msmtp --file=/tmp/msmtp/msmtprc "${RECIPIENTS[@]/#/ }" < "$BODY_FILE"; then
