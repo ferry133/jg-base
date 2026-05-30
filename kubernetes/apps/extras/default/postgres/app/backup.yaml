@@ -45,9 +45,11 @@ spec:
       template:
         spec:
           restartPolicy: OnFailure
+          # NFS export /volume2/backup1 on the Synology NAS only allows root
+          # (or admin-mapped) writes; UID 999 is rejected. Postgres pod itself
+          # also runs as UID 0 for the same reason. Backup briefly runs as root,
+          # acceptable since the dump already needs DB credentials.
           securityContext:
-            runAsNonRoot: true
-            runAsUser: 999
             seccompProfile:
               type: RuntimeDefault
           containers:
