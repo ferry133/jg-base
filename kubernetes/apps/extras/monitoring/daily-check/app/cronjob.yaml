@@ -1,0 +1,54 @@
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: daily-check
+  namespace: monitoring
+spec:
+  # 0 0 * * * UTC = 08:00 Asia/Taipei
+  schedule: "0 0 * * *"
+  timeZone: "Etc/UTC"
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 600
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      ttlSecondsAfterFinished: 86400
+      template:
+        spec:
+          restartPolicy: Never
+          serviceAccountName: daily-check
+          securityContext:
+            runAsNonRoot: false
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+            - name: check
+              image: alpine:3.20
+              command:
+                - /scripts/run-check.sh
+              envFrom:
+                - secretRef:
+                    name: daily-check-config
+              volumeMounts:
+                - name: scripts
+                  mountPath: /scripts
+              resources:
+                requests:
+                  cpu: 50m
+                  memory: 128Mi
+                limits:
+                  memory: 256Mi
+          volumes:
+            - name: scripts
+              configMap:
+                name: daily-check-script
+                defaultMode: 0755
+                items:
+                  - key: run-check.sh
+                    path: run-check.sh
+                    mode: 0755
+                  - key: msmtprc.template
+                    path: msmtprc.template
