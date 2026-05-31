@@ -93,3 +93,37 @@ spec:
 #    hosts:
 #      - grpctest.dev.mydomain.com
 
+---
+# Sibling nginx ingress on a different hostname to expose omni's main
+# gRPC API (port 8080) bypassing the cloudflared tunnel, which strips
+# HTTP/2 trailers (see openspec change fix-cloudflared-grpc-omni).
+# omnictl must be reconfigured to point at this hostname instead of
+# omni.janncot.com — see /Users/ferry133/.talos/omni/config.
+# DuckDNS auto-wildcards *.janncot.duckdns.org → ferry133's public IP,
+# so no separate DNS record is needed.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  annotations:
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/backend-protocol: "GRPC"
+    cert-manager.io/cluster-issuer: cert-manager-cert-manager-webhook-duckdns-production
+  name: omni-grpc-ing
+spec:
+  ingressClassName: nginx
+  rules:
+  - host: omni-grpc.janncot.duckdns.org
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: omni
+            port:
+              number: 8080
+  tls:
+  - secretName: omni-grpc-janncot-duckdns-org-production-tls
+    hosts:
+      - omni-grpc.janncot.duckdns.org
+
