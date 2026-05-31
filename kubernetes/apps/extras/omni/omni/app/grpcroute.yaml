@@ -1,21 +1,60 @@
 ---
+# Sibling GRPCRoute on omni.janncot.com to ensure HTTP/2 trailers are
+# preserved end-to-end for gRPC service calls. Without this, the existing
+# HTTPRoute serves gRPC traffic too but Envoy's HTTPRoute handling drops
+# response trailers on streaming paths, breaking omnictl PGP auth
+# (see openspec change fix-cloudflared-grpc-omni).
+#
+# Method matches use an explicit allowlist of known gRPC services to avoid
+# accidentally claiming non-gRPC traffic; add new services as Omni introduces
+# them. UI/REST traffic continues to flow through the sibling HTTPRoute
+# in httproute.yaml.
+#
+# Envoy Gateway v1.7.0+ supports GRPCRoute on HTTPS listeners
+# (verified via Gateway status.listeners[].supportedKinds).
 apiVersion: gateway.networking.k8s.io/v1
 kind: GRPCRoute
 metadata:
-  name: omni-siderolink
+  name: omni-grpc
 spec:
-  hostnames: ["omni-siderolink.${SECRET_DOMAIN}"]
+  hostnames: ["omni.${SECRET_DOMAIN}"]
   parentRefs:
     - name: envoy-external
       namespace: network
-      sectionName: http # GRPCRoute only supports http section
+      sectionName: https
   rules:
-    - backendRefs:
+    - matches:
+        - method:
+            service: auth.AuthService
+        - method:
+            service: management.ManagementService
+        - method:
+            service: cluster.ClusterService
+        - method:
+            service: omni.machine.MachineService
+      backendRefs:
         - name: omni
           namespace: omni
-          port: 8090
-#      matches:
-#        - path:
-#            type: PathPrefix
-#            value: /
+          port: 8080
+
+# --- Reference (NOT applied): the previous attempt at a siderolink GRPCRoute
+# --- on http listener. Left as a hint should it become useful; the
+# --- siderolink endpoint already works through the nginx ingress with
+# --- backend-protocol: GRPC, so this is not currently needed.
+# ---
+# apiVersion: gateway.networking.k8s.io/v1
+# kind: GRPCRoute
+# metadata:
+#   name: omni-siderolink
+# spec:
+#   hostnames: ["omni-siderolink.${SECRET_DOMAIN}"]
+#   parentRefs:
+#     - name: envoy-external
+#       namespace: network
+#       sectionName: https
+#   rules:
+#     - backendRefs:
+#         - name: omni
+#           namespace: omni
+#           port: 8090
 
