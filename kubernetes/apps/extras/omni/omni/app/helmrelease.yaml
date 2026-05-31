@@ -13,7 +13,7 @@ spec:
   chart:
     spec:
       chart: omni
-      version: '2.1.1'
+      version: '2.8.1'
       sourceRef:
         kind: HelmRepository
         name: my-helm-repo
@@ -47,7 +47,7 @@ spec:
       # -- Image pull policy for Omni.
       pullPolicy: IfNotPresent
       # -- Tag to use for Omni.
-      tag: "v1.6.4"
+      tag: "v1.8.1"
 
     # -- Set to true to bypass the SemVer check (e.g. if using a custom build or nightly tag).
     skipVersionCheck: false
@@ -76,6 +76,11 @@ spec:
     # For full configuration reference, see the schema at:
     # https://github.com/siderolabs/omni/blob/main/internal/pkg/config/schema.json
     config:
+      # EulaAccept records acceptance of the Sidero Omni EULA (https://siderolabs.com/eula/).
+      # Required since v1.7.0 — Omni refuses to start without it.
+      eulaAccept:
+        name: "ferry133"
+        email: "ferry133@gmail.com"
       # Account contains account-related configuration.
       account:
         # -- Unique identifier and name for this Omni instance.
