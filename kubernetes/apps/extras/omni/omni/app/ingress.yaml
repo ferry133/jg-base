@@ -107,6 +107,10 @@ metadata:
   annotations:
     nginx.ingress.kubernetes.io/ssl-redirect: "true"
     nginx.ingress.kubernetes.io/backend-protocol: "GRPC"
+    # Long-lived streaming gRPC (e.g. AwaitPublicKeyConfirmation waits for
+    # browser-side user click). nginx default proxy timeout is 60s → 504.
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
     cert-manager.io/cluster-issuer: cert-manager-cert-manager-webhook-duckdns-production
   name: omni-grpc-ing
 spec:
