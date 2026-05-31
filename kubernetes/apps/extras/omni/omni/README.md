@@ -246,24 +246,56 @@ kubectl -n omni scale deploy/omni --replicas=1
 
 ## Troubleshooting
 
-### omnictl auth fails with `no such file or directory` + `stream closed without trailers`
+### omnictl must talk to `omni-grpc.janncot.duckdns.org` (not `omni.janncot.com`)
 
-Known limitation as of 2026-05-31.
+**Resolved in `fix-cloudflared-grpc-omni` on 2026-05-31.**
 
-The omnictl PGP-keypair auto-bootstrap depends on streaming gRPC
-(`AwaitPublicKeyConfirmation`). The cloudflared tunnel that proxies
-`omni.janncot.com` is configured without the `service: grpc://` scheme, so
-trailers from the streaming response are stripped at the Cloudflare edge.
-The client treats this as a failure even though the server-side log shows
-`RegisterPublicKey` returned OK.
+Background: the cloudflared tunnel that proxies `omni.janncot.com` strips
+HTTP/2 response trailers on gRPC streams. Verified diagnosis: Envoy access
+logs showed `route_name: grpcroute/omni/omni-grpc` with `response_code: 200`
+and clean `response_flags: -`, but cloudflared returned `context canceled`
+to clients. Tunnel-wide transport changes (`quic → http2`) were declined
+because they would affect 7+ unrelated `*.janncot.com` apps.
 
-**Resolution:** see follow-up OpenSpec change `fix-cloudflared-grpc-omni`.
+**The fix:** a separate nginx ingress at `omni-grpc.janncot.duckdns.org`
+that bypasses cloudflared entirely. nginx with
+`backend-protocol: GRPC` preserves trailers correctly (same pattern as the
+SideroLink endpoint). DuckDNS auto-wildcards so no separate DNS record was
+needed.
 
-**Workaround for downloading talosconfig / cluster artifacts:**
-- Use the Omni UI at https://omni.janncot.com/
-- Navigate to cluster → Download → talosconfig / kubeconfig / cluster template
-- (Browser auth works because UI requests are not affected by the gRPC trailer
-  issue — `Omniconfig` and Auth0 OIDC use unary RPCs only.)
+**`~/.talos/omni/config` must point at the duckdns hostname** for omnictl
+to work:
+
+```yaml
+contexts:
+    default:
+        url: https://omni-grpc.janncot.duckdns.org   # NOT omni.janncot.com
+        auth:
+            siderov1:
+                identity: ferry133@gmail.com
+context: default
+```
+
+Web UI (`https://omni.janncot.com`), Kubernetes API proxy
+(`https://omni-k8s.janncot.com`, used by `kubectl` after `omnictl kubeconfig
+download`), and SideroLink (`https://omni-siderolink.janncot.duckdns.org`,
+used by Talos machines) are unchanged and still flow through their
+respective cloudflared / nginx paths.
+
+If `omnictl` ever needs to be reset:
+
+```sh
+rm -f ~/.talos/keys/default-*.pgp
+omnictl get clusters --omniconfig ~/.talos/omni/config
+# Expect: "Attempting to open URL: ..." → browser opens → Grant Access →
+# "PGP key saved to ..." → cluster listing.
+```
+
+A GRPCRoute (`omni-grpc` in the `omni` namespace) exists on the cloudflared
+path for architectural completeness — it routes correctly at Envoy but
+trailers are still lost upstream. If cloudflared's QUIC trailer handling is
+ever fixed by upstream, the duckdns fallback can be retired and omnictl
+moved back to `omni.janncot.com`.
 
 ### Pod fails to start with EULA error
 

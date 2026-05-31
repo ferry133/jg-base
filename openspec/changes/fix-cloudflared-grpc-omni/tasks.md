@@ -1,59 +1,64 @@
 ## 1. Investigation & Baseline
 
-- [ ] 1.1 Confirm baseline failure is still reproducible after the v1.8.1 upgrade landed: `rm -f ~/.talos/keys/*.pgp && omnictl get clusters --omniconfig ~/.talos/omni/config 2>&1 | tee /tmp/baseline.log`; expect "stream closed without trailers"
-- [ ] 1.2 Confirm baseline server-side behavior is OK: `env KUBECONFIG=~/coding/jcom/kubeconfig kubectl -n omni logs deploy/omni --tail=200 | grep -E 'RegisterPublicKey|new public key registered'` — the most recent entry SHOULD have `grpc.code: OK`, proving the failure is purely transport-layer
-- [ ] 1.3 Enumerate all `*.janncot.com` hostnames currently in use (grep manifests in `~/coding/jg-base ~/coding/jcom ~/coding/jg-jiahd`); list which serve gRPC vs HTTP only — needed to assess blast radius of any zone-level change (resolves OQ-2)
-- [ ] 1.4 Inspect Omni HTTP API to confirm that gRPC service paths (`/<package>.<Service>/<Method>`) do not overlap with REST paths (resolves the D3 wildcard-vs-allowlist assumption)
-- [ ] 1.5 Inspect existing GRPCRoute precedents in the cluster: `kubectl get grpcroute -A` — if any exist, mimic their structure (resolves OQ-4 by example)
+- [x] 1.1 Baseline failure reproduced: 3-line error `stream closed without sending trailers`, no key file written
+- [x] 1.2 Server-side OK confirmed: `RegisterPublicKey` returned `grpc.code: OK` at 02:14:31Z with valid `loginUrl` for public-key-id `59e317b4d5db9ca7...`
+- [x] 1.3 Hostname enumeration (resolves OQ-2): Omni hosts (`omni`, `omni-k8s`, `omni-siderolink` × `.com` + `.duckdns.org`); other `janncot.com` apps are all HTTP-only (cc, claude-code, echo, hb, ttyd, flux-webhook, pbx). Cloudflare gRPC zone-level toggle is non-breaking for HTTP-only traffic per docs → low risk to enable
+- [x] 1.4 Omni gRPC path pattern `/<package>.<Service>/<Method>` does not overlap with UI `/` or REST `/api/...` paths — D3 allowlist approach avoids needing a wildcard match
+- [x] 1.5 No existing GRPCRoute in the cluster (`kubectl get grpcroute -A` → No resources found). Our manifest will be the first; follow Gateway API v1 GRPCRoute spec directly
 
 ## 2. Step 1 — Cloudflare Zone "gRPC" Toggle
 
-- [ ] 2.1 Log into Cloudflare dashboard for `janncot.com` zone; navigate to Network → gRPC. Record current setting (resolves OQ-1)
-- [ ] 2.2 If OFF: enable it. Document the change in this change's notes (the toggle is zone-wide; mention any unexpected behavior on other hosts to watch for)
-- [ ] 2.3 Re-test: `rm -f ~/.talos/keys/*.pgp && omnictl get clusters --omniconfig ~/.talos/omni/config 2>&1`; capture output. If success or registration URL printed → jump to task 5
-- [ ] 2.4 If still failing: capture both client output and the matching server log entry timestamp; proceed to step 3
+- [x] 2.1 Cloudflare zone `janncot.com` Network → gRPC toggle: **already ON** (operator-confirmed 2026-05-31) (resolves OQ-1)
+- [x] 2.2 No change required — toggle was already enabled before this change started
+- [x] 2.3 Re-test confirms same baseline failure (`stream closed without sending trailers`) with toggle ON → Cloudflare edge is not the culprit, trailers are being stripped further down the path
+- [x] 2.4 Proceeding to Step 2 (sibling GRPCRoute at the Envoy Gateway layer)
 
 ## 3. Step 2 — Add Sibling GRPCRoute
 
-- [ ] 3.1 Read `~/coding/omni/deploy/helm/omni/templates/gatewayApi/grpcroute-siderolink.yaml` at the deployed tag (`v1.8.1`) for the canonical Omni GRPCRoute shape (path matches, parentRefs)
-- [ ] 3.2 Design the GRPCRoute manifest: hostname `omni.janncot.com`, parentRef the existing `envoy-external` Gateway https listener, backendRef `omni.omni.svc:8080`, method matches for the four gRPC services from design D3 (`auth.AuthService`, `management.ManagementService`, `cluster.ClusterService`, `omni.machine.MachineService`)
-- [ ] 3.3 Create `kubernetes/apps/extras/omni/omni/app/grpcroute.yaml` containing the new GRPCRoute (sibling to the existing HTTPRoute — D2 decision)
-- [ ] 3.4 Add the new file to `kubernetes/apps/extras/omni/omni/app/kustomization.yaml` if it uses an explicit `resources` list
-- [ ] 3.5 Local validation: `kustomize build kubernetes/apps/extras/omni/omni/app`; ensure both HTTPRoute and GRPCRoute appear in the rendered output
-- [ ] 3.6 Commit on a feature branch in `jg-base`: `feat(omni): add GRPCRoute for omni.janncot.com gRPC services`
-- [ ] 3.7 Push, then force-reconcile: `env KUBECONFIG=~/coding/jcom/kubeconfig flux reconcile source git jg-base -n flux-system && flux reconcile kustomization extras-omni -n flux-system`
-- [ ] 3.8 Wait for the GRPCRoute to become `Accepted=True`: `kubectl -n omni get grpcroute omni -o jsonpath='{.status.parents[*].conditions[?(@.type=="Accepted")].status}'`
-- [ ] 3.9 Re-test omnictl per task 2.3 pattern; capture output. If success or URL printed → jump to task 5
-- [ ] 3.10 If still failing: capture client output + server log + Envoy access logs (`kubectl -n network logs deploy/envoy-omni-* -c envoy --tail=100`); proceed to step 4
+- [x] 3.1 Read upstream `grpcroute-siderolink.yaml` template at v1.8.1; pattern adopted as basis
+- [x] 3.2 Designed: hostname `omni.janncot.com`, parentRef `envoy-external` https listener, backendRef `omni.omni.svc:8080`, method matches for 4 services
+- [x] 3.3 Replaced inactive `omni-siderolink` draft in `kubernetes/apps/extras/omni/omni/app/grpcroute.yaml` with new `omni-grpc` GRPCRoute
+- [x] 3.4 Added `./grpcroute.yaml` to `kustomization.yaml` resources list
+- [x] 3.5 `kustomize build` clean — 1 GRPCRoute + 2 HTTPRoute render in output
+- [x] 3.6 Committed `09aa159 feat(omni): add GRPCRoute for omni.janncot.com gRPC services`
+- [x] 3.7 Pushed + force reconciled
+- [x] 3.8 GRPCRoute status: Accepted=True, ResolvedRefs=True
+- [x] 3.9 Re-test still failed with `stream closed without sending trailers`
+- [x] 3.10 Envoy access log proved request hit GRPCRoute (`route_name: grpcroute/omni/omni-grpc/rule/0`), `response_code: 200`, `response_flags: -` — Envoy is clean. cloudflared logs showed `context canceled` errors → trailer-stripping happens between envoy and cloudflared edge, not at envoy. GRPCRoute kept as architectural intent; proceed to Step 3
 
-## 4. Step 3 — cloudflared Tunnel Ingress Scheme (last resort)
+## 4. Step 3 — cloudflared Tunnel Ingress Scheme (SKIPPED per operator)
 
-- [ ] 4.1 Read current cloudflared `configMap.config.data.config.yaml` in `kubernetes/apps/base/network/cloudflare-tunnel/app/helmrelease.yaml`
-- [ ] 4.2 Decide on the per-host override approach: add a `- hostname: omni.janncot.com` entry BEFORE the catch-all `- hostname: "*.${SECRET_DOMAIN}"`, using either `service: h2c://...` (if Envoy serves HTTP/2 cleartext on a separate port) or keep `https://` but explicitly add `grpc: true` if supported by cloudflared
-- [ ] 4.3 Validate the proposed config syntax against cloudflared docs for the current image tag (`2026.2.0`)
-- [ ] 4.4 Edit the HelmRelease; commit; push; reconcile (`flux reconcile helmrelease cloudflare-tunnel -n network`)
-- [ ] 4.5 Watch cloudflared pod for reload (`kubectl -n network logs deploy/cloudflare-tunnel --tail=50`); confirm no startup errors
-- [ ] 4.6 Re-test omnictl per task 2.3 pattern. If still failing → escalate per R5 (fallback hostname `omni-grpc.janncot.duckdns.org` via nginx with `backend-protocol: GRPC`); document in the runbook and exit this change as "blocked by upstream"
+- [~] 4.1–4.6 **Skipped** — the candidate fix (`TUNNEL_TRANSPORT_PROTOCOL: quic → http2` + `TUNNEL_POST_QUANTUM: true → false`) is tunnel-wide and affects 7+ unrelated apps on the cloudflared catch-all rule. Operator declined the change at the gate; proceeded directly to R5 fallback (Section 4a)
+
+## 4a. R5 Fallback — Separate Hostname via nginx Ingress (the actual fix)
+
+- [x] 4a.1 Determined `*.janncot.duckdns.org` is DuckDNS auto-wildcarded → ferry133's public IP (`1.34.181.95`); no new DNS record needed
+- [x] 4a.2 Added nginx Ingress `omni-grpc-ing` for `omni-grpc.janncot.duckdns.org` → `omni.omni.svc:8080` with `nginx.ingress.kubernetes.io/backend-protocol: "GRPC"` to `kubernetes/apps/extras/omni/omni/app/ingress.yaml`; cert-manager auto-issued cert via DuckDNS DNS01 webhook (~2 min)
+- [x] 4a.3 Pushed `1914f69 feat(omni): add nginx Ingress for omnictl gRPC fallback (R5)`, reconciled
+- [x] 4a.4 First retest: `RegisterPublicKey` succeeded client-side, `WriteKey` saved `.pgp`, `browser.OpenURL` fired → but `AwaitPublicKeyConfirmation` streaming RPC hit nginx's default 60s `proxy-read-timeout` → 504
+- [x] 4a.5 Added `nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"` + `proxy-send-timeout: "3600"` annotations
+- [x] 4a.6 Pushed `fcda246 fix(omni): bump nginx ingress timeouts for streaming gRPC`, reconciled
+- [x] 4a.7 Updated `~/.talos/omni/config` URL: `https://omni.janncot.com → https://omni-grpc.janncot.duckdns.org`
 
 ## 5. Verification
 
-- [ ] 5.1 Re-run validation script with FRESH state: `rm -f ~/.talos/keys/*.pgp && omnictl get clusters --omniconfig ~/.talos/omni/config 2>&1`
-- [ ] 5.2 Output MUST either succeed listing clusters, OR print a URL beginning with `https://omni.janncot.com/`; output MUST NOT contain `no such file or directory` or `server closed the stream without sending trailers`
-- [ ] 5.3 Verify `~/.talos/keys/default-ferry133@gmail.com.pgp` exists with `-rw-------` perms (WriteKey completed) — `ls -la ~/.talos/keys/`
-- [ ] 5.4 If URL was printed: visit it in browser, click Grant Access, then re-run `omnictl get clusters` — MUST list `jgu5-control-planes`
-- [ ] 5.5 Regression: `curl -sI https://omni.janncot.com/` MUST still return `HTTP/2 200` (UI unaffected by gRPC fix)
-- [ ] 5.6 Regression: `omni-siderolink.janncot.duckdns.org` machine connectivity unchanged (visible in Omni UI Machines page)
+- [x] 5.1 Fresh-state run: `rm -f ~/.talos/keys/default-*.pgp && omnictl get clusters --omniconfig ~/.talos/omni/config` against new hostname
+- [x] 5.2 Output: `Public key ... is now registered`, `PGP key saved to ~/.talos/keys/default-ferry133@gmail.com.pgp`, then cluster listing (no `no such file or directory`, no `stream closed`)
+- [x] 5.3 `.pgp` file present (985 bytes, mode 600)
+- [x] 5.4 Browser opened to `omni.janncot.com/authenticate?flow=cli&public-key-id=...`, operator clicked Grant Access, omnictl received confirmation and printed: `default Cluster jgu5 v15 Talos 1.13.2 K8s 1.35.2`
+- [x] 5.5 `curl -sI https://omni.janncot.com/` → `HTTP/2 200` (no UI regression)
+- [x] 5.6 Siderolink ingress still on `10.9.8.6`, unchanged
 
 ## 6. Documentation
 
-- [ ] 6.1 Update `kubernetes/apps/extras/omni/omni/README.md` Troubleshooting section: change the "Known limitation as of 2026-05-31" to "Resolved in fix-cloudflared-grpc-omni (date)"; record which step(s) of D1 actually proved necessary (e.g., "only zone toggle", "zone toggle + GRPCRoute", etc.)
-- [ ] 6.2 Commit: `docs(omni): mark gRPC trailer issue resolved`
+- [x] 6.1 Updated `kubernetes/apps/extras/omni/omni/README.md` Troubleshooting section — replaced the "Known limitation" entry with a resolved-status block recording the R5 fallback (separate hostname + nginx + GRPC backend-protocol + 3600s timeouts), what was tried and rejected (cloudflared transport switch), and the omniconfig change operators must make
+- [ ] 6.2 Commit pending in Phase 7 batch
 
 ## 7. Close Out
 
-- [ ] 7.1 Update memory `~/.claude/projects/-Users-ferry133-coding-jg-base/memory/project_omni_platform.md` — remove the "Known blocker" section; replace with a brief note that the gRPC path works and which layer was the culprit
-- [ ] 7.2 `openspec validate fix-cloudflared-grpc-omni` and `openspec archive fix-cloudflared-grpc-omni` (only after specs scenarios verified passing)
-- [ ] 7.3 Push final state to origin/main
+- [ ] 7.1 Update memory `project_omni_platform.md` — replace "Known blocker" with "Resolved via R5 fallback to omni-grpc.janncot.duckdns.org"
+- [ ] 7.2 Commit + push README + tasks + (later) archive move
+- [ ] 7.3 `openspec validate fix-cloudflared-grpc-omni` + `openspec archive fix-cloudflared-grpc-omni`
 
 ## 8. Rollback (per-step, if any single step regresses traffic)
 
