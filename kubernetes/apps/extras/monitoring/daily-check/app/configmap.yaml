@@ -135,7 +135,12 @@ data:
     if kubectl -n db get cronjob postgres-backup >/dev/null 2>&1; then
       LAST_BACKUP_JOB=$(kubectl -n db get jobs --sort-by=.metadata.creationTimestamp -o json 2>/dev/null | \
         jq -r '[.items[] | select(.metadata.name | startswith("postgres-backup-"))] | last')
-      LAST_STATUS=$(echo "$LAST_BACKUP_JOB" | jq -r '.status.conditions[0].type // "Unknown"')
+      # k8s 1.33+ adds a "SuccessCriteriaMet" condition before "Complete", so
+      # conditions[0] is no longer reliable — match the condition by type instead.
+      LAST_STATUS=$(echo "$LAST_BACKUP_JOB" | jq -r '
+        if   ((.status.conditions // []) | any(.type=="Complete" and .status=="True")) then "Complete"
+        elif ((.status.conditions // []) | any(.type=="Failed"   and .status=="True")) then "Failed"
+        else "Unknown" end')
       LAST_TIME=$(echo "$LAST_BACKUP_JOB" | jq -r '.metadata.creationTimestamp // "never"')
       if [[ "$LAST_STATUS" == "Complete" ]]; then
         record ok "Postgres backup (last: ${LAST_TIME})"
