@@ -71,7 +71,7 @@ kubernetes/
 | `default/mariadb` | MariaDB database | — |
 | `default/mqtt` | MQTT broker | — |
 | `default/postgres` | Shared PostgreSQL | `postgres_password` |
-| `default/synophoto` | Synology Photo Tagger web UI | `synophoto_auth0_*` |
+| `default/synophoto` | Synology photo workflow (GPS tagger + auto-move + AI-curated progress albums). Lives in ns `linebot` to share `linebot-admin` for project metadata (sites table, photo_folder slugs). | `synophoto_flask_secret_key`, `anthropic_api_key` |
 | `default/trello-notifier` | Trello LINE notification bot | Trello/LINE tokens |
 | `default/ttyd` | Web terminal | `ttyd_credential` |
 | `freepbx/freepbx` | FreePBX / Asterisk PBX | `freepbx_mysql_*` |
