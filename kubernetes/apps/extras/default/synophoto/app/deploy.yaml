@@ -3,7 +3,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: synophoto
-  namespace: default
+  namespace: linebot
 spec:
   replicas: 1
   revisionHistoryLimit: 2
@@ -17,13 +17,23 @@ spec:
     spec:
       containers:
         - name: app
-          image: ghcr.io/ferry133/synology-photo-tagger:latest@sha256:db6beda174d29dd117d484a968a67b14cee8ad1997ada0fa81fc868f092c933f
+          image: ghcr.io/ferry133/synology-photo-tagger:latest@sha256:66960d6e9207d1e8f685851f52f545d5ab6c3244df1b864de500366594f25bb6
           imagePullPolicy: Always
           ports:
             - containerPort: 5001
           envFrom:
             - secretRef:
                 name: synophoto-secret
+          env:
+            - name: LINEBOT_BASE_URL
+              value: http://linebot-admin.linebot.svc.cluster.local:8081
+            # Match linebot-admin's code defaults (it doesn't read these from a
+            # secret either). If real creds get deployed via linebot-secret in
+            # the future, change both sides at once.
+            - name: LINEBOT_ADMIN_USER
+              value: admin
+            - name: LINEBOT_ADMIN_PASS
+              value: changeme
           volumeMounts:
             - name: sessions
               mountPath: /root/.syno_sessions
@@ -47,7 +57,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: synophoto
-  namespace: default
+  namespace: linebot
 spec:
   selector:
     app: synophoto
