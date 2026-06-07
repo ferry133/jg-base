@@ -17,7 +17,7 @@ spec:
     spec:
       containers:
         - name: app
-          image: ghcr.io/ferry133/synology-photo-tagger:latest@sha256:450e8415fc39b3dff9e3f1c57e6dbd36a12cd26f9d3564cf9970d4f0436c9c2e
+          image: ghcr.io/ferry133/synology-photo-tagger:latest@sha256:a6704bad377a9574dd7118621a76b90e210560022a620e6e0215f5680a405bc0
           imagePullPolicy: Always
           ports:
             - containerPort: 5001
