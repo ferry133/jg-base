@@ -17,7 +17,7 @@ spec:
     spec:
       containers:
         - name: app
-          image: ghcr.io/ferry133/synology-photo-tagger:latest@sha256:78a7e13ff4f713c595dce34380a81921e2bd9718f98c1b8fc77fb7a1a435edf5
+          image: ghcr.io/ferry133/synology-photo-tagger:latest@sha256:732a208edcc7b367b230bf4cd4299d00b2373a2ddf812355c10e5912d3e22b84
           imagePullPolicy: Always
           ports:
             - containerPort: 5001
@@ -34,6 +34,8 @@ spec:
               value: admin
             - name: LINEBOT_ADMIN_PASS
               value: changeme
+            - name: PROGRESS_ALBUM_MODEL
+              value: claude-haiku-4-5
           volumeMounts:
             - name: sessions
               mountPath: /root/.syno_sessions
