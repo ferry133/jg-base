@@ -4,5 +4,6 @@ kind: Kustomization
 resources:
   - ./secret.yaml
   - ./pvc.yaml
+  - ./showcase-vault-pvc.yaml
   - ./deploy.yaml
   - ./httproute.yaml

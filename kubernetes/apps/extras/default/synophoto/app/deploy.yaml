@@ -17,7 +17,7 @@ spec:
     spec:
       containers:
         - name: app
-          image: ghcr.io/ferry133/synology-photo-tagger:latest@sha256:b93400f05116df7094c5b644bc794895f25f8ebeec03abcab4cda960df053298
+          image: ghcr.io/ferry133/synology-photo-tagger:latest@sha256:3cf4aa350698a3625b8ee9494be5b66731d9bb3dd04f6d2d3c3698cefc333089
           imagePullPolicy: Always
           ports:
             - containerPort: 5001
@@ -36,9 +36,17 @@ spec:
               value: changeme
             - name: PROGRESS_ALBUM_MODEL
               value: claude-haiku-4-5
+            # showcase-album: vault dir (mounted PVC) + public base for the
+            # guest URLs / per-photo thumbnail proxy embedded in markdown.
+            - name: SHOWCASE_VAULT_DIR
+              value: /app/showcase-vault
+            - name: SHOWCASE_PUBLIC_BASE_URL
+              value: https://synophoto.jiahd.cc
           volumeMounts:
             - name: sessions
               mountPath: /root/.syno_sessions
+            - name: showcase-vault
+              mountPath: /app/showcase-vault
           resources:
             requests:
               cpu: 50m
@@ -54,6 +62,9 @@ spec:
         - name: sessions
           persistentVolumeClaim:
             claimName: synophoto-sessions
+        - name: showcase-vault
+          persistentVolumeClaim:
+            claimName: synophoto-showcase-vault
 ---
 apiVersion: v1
 kind: Service

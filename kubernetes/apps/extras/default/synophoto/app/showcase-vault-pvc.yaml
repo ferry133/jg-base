@@ -1,0 +1,38 @@
+---
+# NFS PV/PVC — showcase-album Obsidian vault.
+#
+# Read-write, shared between the synophoto pod (mounts at /app/showcase-vault)
+# and the SA's Mac (mounts the same NFS export directly for Obsidian editing).
+#
+# ⚠️ OPS PREREQUISITE (openspec ai-showcase-album task 0.1): the NFS export
+#    below must exist on the NAS before this PVC will bind. Confirm the
+#    export path on the NAS matches. Confirmed target: new NAS 10.9.2.13,
+#    export /volume3/showcase-vault (read-write to cluster subnet + SA Mac).
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: synophoto-showcase-vault
+spec:
+  capacity:
+    storage: 5Gi
+  accessModes:
+    - ReadWriteMany
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: ""
+  nfs:
+    server: 10.9.2.13
+    path: /volume3/showcase-vault
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: synophoto-showcase-vault
+  namespace: linebot
+spec:
+  accessModes:
+    - ReadWriteMany
+  storageClassName: ""
+  resources:
+    requests:
+      storage: 5Gi
+  volumeName: synophoto-showcase-vault
