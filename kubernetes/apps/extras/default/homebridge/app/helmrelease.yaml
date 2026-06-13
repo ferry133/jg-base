@@ -19,7 +19,10 @@ spec:
   values:
     replicaCount: 1
     image:
-      tag: latest
+      # Chart default points at archived ghcr.io/oznu/homebridge (Node 18).
+      # Switch to maintained official image (Ubuntu 24.04, current Node).
+      repository: homebridge/homebridge
+      tag: "2026-06-05"
     env:
       TZ: "Asia/Taipei"
     hostNetwork: true
