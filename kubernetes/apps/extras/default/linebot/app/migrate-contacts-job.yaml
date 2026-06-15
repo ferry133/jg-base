@@ -11,7 +11,7 @@ spec:
       restartPolicy: OnFailure
       containers:
         - name: migrate
-          image: ghcr.io/ferry133/linebot:40b9c90
+          image: ghcr.io/ferry133/linebot:db27387
           command: ["python", "/app/agents/migrate_contacts.py"]
           env:
             - name: DATABASE_URL
