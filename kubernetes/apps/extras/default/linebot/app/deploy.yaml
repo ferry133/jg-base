@@ -23,7 +23,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: gateway
-          image: ghcr.io/ferry133/linebot:8ab2fd9
+          image: ghcr.io/ferry133/linebot:40b9c90
           imagePullPolicy: Always
           command: ["python", "/app/gateway/line_gateway.py"]
           ports:
@@ -87,7 +87,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: agent
-          image: ghcr.io/ferry133/linebot:8ab2fd9
+          image: ghcr.io/ferry133/linebot:40b9c90
           imagePullPolicy: Always
           command: ["python", "/app/agents/trello_agent.py"]
           env:
@@ -130,7 +130,7 @@ spec:
               type: RuntimeDefault
           containers:
             - name: sync
-              image: ghcr.io/ferry133/linebot:8ab2fd9
+              image: ghcr.io/ferry133/linebot:40b9c90
               command: ["python", "/app/agents/trello_board_sync.py"]
               envFrom:
                 - secretRef:
@@ -170,7 +170,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: agent
-          image: ghcr.io/ferry133/linebot:8ab2fd9
+          image: ghcr.io/ferry133/linebot:40b9c90
           imagePullPolicy: Always
           command: ["python", "/app/agents/customer_service.py"]
           env:
