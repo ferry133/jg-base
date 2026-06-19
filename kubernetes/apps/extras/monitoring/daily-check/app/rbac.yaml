@@ -10,6 +10,10 @@ kind: ClusterRole
 metadata:
   name: daily-check
 rules:
+  # delete is needed to purge ghost pods (terminal-phase pods of replica controllers)
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["delete"]
   - apiGroups: [""]
     resources:
       - nodes
