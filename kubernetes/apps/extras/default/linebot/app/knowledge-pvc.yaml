@@ -12,8 +12,8 @@ spec:
   persistentVolumeReclaimPolicy: Retain
   storageClassName: ""
   nfs:
-    server: 10.9.1.12
-    path: /volume2/knowledge
+    server: 10.9.2.13
+    path: /volume3/knowledge
 ---
 apiVersion: v1
 kind: PersistentVolumeClaim
