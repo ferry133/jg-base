@@ -1,0 +1,106 @@
+---
+# NFS PV/PVC — NAS backup share (separate from the live-DB sc-nas share, so it
+# can be ShareSync'd offsite without two-way-syncing live DB files).
+# server templated per-cluster; path is the dedicated backup1 export.
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: claudecode-postgres-backup-nas
+spec:
+  capacity:
+    storage: 50Gi
+  accessModes:
+    - ReadWriteMany
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: ""
+  nfs:
+    server: ${NAS_SERVER}
+    path: /volume2/backup1
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: postgres-backup-nas
+  namespace: claudecode
+spec:
+  accessModes:
+    - ReadWriteMany
+  storageClassName: ""
+  resources:
+    requests:
+      storage: 50Gi
+  volumeName: claudecode-postgres-backup-nas
+---
+# CronJob — daily pg_dump at 02:00 UTC+8 (18:00 UTC), retain 14 days
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: postgres-backup
+  namespace: claudecode
+spec:
+  schedule: "0 18 * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          restartPolicy: OnFailure
+          # postgres image runs as root by default; the NAS backup share is
+          # world-writable but root keeps this consistent with the DB pod.
+          securityContext:
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+            - name: backup
+              image: postgres:16-alpine
+              command:
+                - /bin/sh
+                - -c
+                - |
+                  set -e
+                  DEST="/backup/${CLUSTER_NAME}-claudecode-postgres"
+                  FILENAME="claudecode-$(date +%Y%m%d).sql.gz"
+                  mkdir -p "$DEST"
+                  pg_dump -h "$PGHOST" -U "$PGUSER" "$PGDATABASE" | gzip > "$DEST/$FILENAME"
+                  echo "Backup written: $DEST/$FILENAME ($(du -sh $DEST/$FILENAME | cut -f1))"
+                  # Retain last 14 days
+                  find "$DEST" -name "claudecode-*.sql.gz" -mtime +14 -delete
+                  echo "Cleanup done. Files kept:"
+                  ls -lh "$DEST"
+              env:
+                - name: PGHOST
+                  value: postgres.claudecode.svc
+                - name: PGDATABASE
+                  valueFrom:
+                    secretKeyRef:
+                      name: postgres-secret
+                      key: POSTGRES_DB
+                - name: PGUSER
+                  valueFrom:
+                    secretKeyRef:
+                      name: postgres-secret
+                      key: POSTGRES_USER
+                - name: PGPASSWORD
+                  valueFrom:
+                    secretKeyRef:
+                      name: postgres-secret
+                      key: POSTGRES_PASSWORD
+              volumeMounts:
+                - name: backup
+                  mountPath: /backup
+              resources:
+                requests:
+                  cpu: 10m
+                  memory: 64Mi
+                limits:
+                  memory: 256Mi
+              securityContext:
+                allowPrivilegeEscalation: false
+                capabilities:
+                  drop: ["ALL"]
+          volumes:
+            - name: backup
+              persistentVolumeClaim:
+                claimName: postgres-backup-nas

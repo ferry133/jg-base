@@ -8,3 +8,4 @@ resources:
   - ./freepbx-pvcs.yaml
   - ./freepbx.yaml
   - ./httproute.yaml
+  - ./backup.yaml

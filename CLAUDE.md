@@ -89,6 +89,19 @@ task template:reset          # remove all generated dirs (DESTRUCTIVE)
 
 Flux decrypts at runtime via `kubernetes/components/sops/` (referenced in Kustomizations).
 
+## NAS / NFS Storage 慣例
+
+⚠️ **掛 NAS NFS 的 pod 必須以 root 執行**(`runAsUser: 0` / `runAsGroup: 0` / `runAsNonRoot: false`)。
+
+Synology NAS 的 NFS export 只授權給 **root (uid 0)**。非 root UID(例如 `runAsUser: 1000`)掛載後,目錄會顯示成 `d---------`(mode **000**)並 **Permission denied** —— 即使 root 看同一個目錄是 `drwxrwxrwx` (777)、資料都在。
+
+- **成因**:不是 NFS squash(DSM squash「no mapping」也一樣)。是資料夾上的 **Synology ACL** 只授權 admin,NFSv4 server 依「請求端 UID」逐一計算有效權限。`fsGroup` / client 端 `chmod` 都繞不過(root 本來就看到 777),**只有以 uid 0 執行**才能存取。
+- **慣例**:`mariadb`、`ttyd`、`postgres` + `postgres-backup` 都跑 root。新增任何掛 NAS export 的 app/pod 時務必比照,否則上線即 Permission denied。
+- **案例**:`linebot`(`linebot-admin`、`customer-service-agent`)原本跑 `uid 1000`,2026-06-20 NAS 遷移後 `jia.homedesign`、`knowledge` 變 admin-only ACL → 讀不到;改跑 root 後修復(commit `ab2eb39`,fix 處留有 inline 註解)。
+- **替代解**:若不想跑 root,可在 NAS 端把該共用資料夾的 ACL/權限開放給 users(對齊舊 NAS),pod 即可維持非 root。
+
+**DB 備份**:每個 DB app(`extras/default/postgres`、`extras/claudecode/postgres`、`extras/freepbx/freepbx`)各自帶 `backup.yaml`(`pg_dump` / `mariadb-dump` CronJob),輸出到獨立的 `backup1` 共用資料夾(與 live-DB share 分開,才能單獨 ShareSync 異地)。備份 PV 用 `${NAS_SERVER}` 模板化,目的地子目錄用 `${CLUSTER_NAME}-<ns>-<db>` 命名。
+
 ---
 
 *Flux GitOps structure and cluster network addresses: see `.claude/rules/flux-network.md` (auto-loaded when editing `kubernetes/`).*
