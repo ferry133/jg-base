@@ -16,7 +16,7 @@ spec:
           restartPolicy: OnFailure
           containers:
             - name: notifier
-              image: ghcr.io/ferry133/linebot:ee50c52
+              image: ghcr.io/ferry133/linebot:131b0ac
               imagePullPolicy: Always
               command: ["python", "/app/trello_line_notifier.py"]
               args: ["morning"]
@@ -49,7 +49,7 @@ spec:
           restartPolicy: OnFailure
           containers:
             - name: notifier
-              image: ghcr.io/ferry133/linebot:ee50c52
+              image: ghcr.io/ferry133/linebot:131b0ac
               imagePullPolicy: Always
               command: ["python", "/app/trello_line_notifier.py"]
               args: ["noon"]
@@ -82,7 +82,7 @@ spec:
           restartPolicy: OnFailure
           containers:
             - name: notifier
-              image: ghcr.io/ferry133/linebot:ee50c52
+              image: ghcr.io/ferry133/linebot:131b0ac
               imagePullPolicy: Always
               command: ["python", "/app/trello_line_notifier.py"]
               args: ["evening"]
