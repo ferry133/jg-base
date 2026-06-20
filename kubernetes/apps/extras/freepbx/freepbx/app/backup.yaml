@@ -60,9 +60,17 @@ spec:
                   DEST="/backup/${CLUSTER_NAME}-freepbx-mariadb"
                   FILENAME="freepbx-$(date +%Y%m%d).sql.gz"
                   mkdir -p "$DEST"
+                  # Dump to a temp file first so a failed mariadb-dump (set -e)
+                  # aborts the job instead of silently producing an empty .gz.
+                  # Compress to .partial then atomically rename.
+                  TMP="$(mktemp)"
+                  trap 'rm -f "$TMP"' EXIT
                   mariadb-dump -h "$DBHOST" -u root -p"$MYSQL_ROOT_PASSWORD" \
                     --single-transaction --routines --triggers --events \
-                    --databases asterisk | gzip > "$DEST/$FILENAME"
+                    --databases asterisk > "$TMP"
+                  [ -s "$TMP" ]
+                  gzip -c "$TMP" > "$DEST/$FILENAME.partial"
+                  mv "$DEST/$FILENAME.partial" "$DEST/$FILENAME"
                   echo "Backup written: $DEST/$FILENAME ($(du -sh $DEST/$FILENAME | cut -f1))"
                   # Retain last 14 days
                   find "$DEST" -name "freepbx-*.sql.gz" -mtime +14 -delete

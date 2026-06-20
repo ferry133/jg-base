@@ -9,3 +9,4 @@ resources:
   - ./freepbx.yaml
   - ./httproute.yaml
   - ./backup.yaml
+  - ./file-backup.yaml

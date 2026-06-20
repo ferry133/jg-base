@@ -63,7 +63,15 @@ spec:
                   FILENAME="linebot-$(date +%Y%m%d).sql.gz"
                   DEST="/backup/linebot"
                   mkdir -p "$DEST"
-                  pg_dump -h "$PGHOST" -U "$PGUSER" "$PGDATABASE" | gzip > "$DEST/$FILENAME"
+                  # Dump to a temp file first so a failed pg_dump (set -e) aborts
+                  # the job instead of silently producing an empty .gz. Compress
+                  # to .partial then atomically rename so only complete backups appear.
+                  TMP="$(mktemp)"
+                  trap 'rm -f "$TMP"' EXIT
+                  pg_dump -h "$PGHOST" -U "$PGUSER" "$PGDATABASE" > "$TMP"
+                  [ -s "$TMP" ]
+                  gzip -c "$TMP" > "$DEST/$FILENAME.partial"
+                  mv "$DEST/$FILENAME.partial" "$DEST/$FILENAME"
                   echo "Backup written: $DEST/$FILENAME ($(du -sh $DEST/$FILENAME | cut -f1))"
                   # Retain last 14 days
                   find "$DEST" -name "linebot-*.sql.gz" -mtime +14 -delete

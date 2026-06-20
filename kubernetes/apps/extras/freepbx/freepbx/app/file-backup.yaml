@@ -1,0 +1,70 @@
+---
+# CronJob — daily tar of FreePBX persistent-state PVCs (config/data) to the
+# backup1 NAS share. Skips www (regenerable web app code) and usr (modules).
+# FreePBX keeps config in these file PVCs, not the (currently empty) DB.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: freepbx-file-backup
+  namespace: freepbx
+spec:
+  schedule: "0 20 * * *"  # 04:00 UTC+8 = 20:00 UTC
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          restartPolicy: OnFailure
+          # NAS sc-nas dirs are root-owned; read them as root (see CLAUDE.md
+          # "NAS / NFS Storage 慣例").
+          securityContext:
+            runAsNonRoot: false
+            runAsUser: 0
+            runAsGroup: 0
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+            - name: backup
+              image: busybox:1.36
+              command:
+                - /bin/sh
+                - -c
+                - |
+                  set -e
+                  DEST="/backup/${CLUSTER_NAME}-freepbx-files"
+                  FILENAME="freepbx-files-$(date +%Y%m%d).tar.gz"
+                  mkdir -p "$DEST"
+                  # tar to a .partial on the same NFS dir (atomic rename), so a
+                  # failed/partial tar never appears as a valid backup.
+                  PARTIAL="$DEST/.$FILENAME.partial"
+                  trap 'rm -f "$PARTIAL"' EXIT
+                  tar czf "$PARTIAL" -C /src etc var data certs
+                  [ -s "$PARTIAL" ]
+                  mv "$PARTIAL" "$DEST/$FILENAME"
+                  echo "Backup written: $DEST/$FILENAME ($(du -sh $DEST/$FILENAME | cut -f1))"
+                  # Retain last 14 days
+                  find "$DEST" -name "freepbx-files-*.tar.gz" -mtime +14 -delete
+                  echo "Cleanup done. Files kept:"
+                  ls -lh "$DEST"
+              volumeMounts:
+                - { name: etc, mountPath: /src/etc, readOnly: true }
+                - { name: var, mountPath: /src/var, readOnly: true }
+                - { name: data, mountPath: /src/data, readOnly: true }
+                - { name: certs, mountPath: /src/certs, readOnly: true }
+                - { name: backup, mountPath: /backup }
+              resources:
+                requests:
+                  cpu: 10m
+                  memory: 64Mi
+                limits:
+                  memory: 256Mi
+          volumes:
+            - { name: etc, persistentVolumeClaim: { claimName: freepbx-etc } }
+            - { name: var, persistentVolumeClaim: { claimName: freepbx-var } }
+            - { name: data, persistentVolumeClaim: { claimName: freepbx-data } }
+            - { name: certs, persistentVolumeClaim: { claimName: freepbx-certs } }
+            - name: backup
+              persistentVolumeClaim:
+                claimName: mariadb-backup-nas
