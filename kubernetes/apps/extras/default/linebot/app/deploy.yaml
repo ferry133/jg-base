@@ -163,9 +163,12 @@ spec:
       labels:
         app: customer-service-agent
     spec:
+      # NAS NFS export (knowledge) only grants access to root (uid 1000 sees
+      # the dir as d--------- 000). Run as root like mariadb/ttyd/postgres.
       securityContext:
-        runAsNonRoot: true
-        runAsUser: 1000
+        runAsNonRoot: false
+        runAsUser: 0
+        runAsGroup: 0
         seccompProfile:
           type: RuntimeDefault
       containers:
