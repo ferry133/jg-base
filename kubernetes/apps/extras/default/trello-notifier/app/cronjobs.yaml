@@ -1,11 +1,17 @@
 ---
+# 單一每日批次（取代原 morning/noon/evening 三個 CronJob）。
+# 一次評估全部觸發條件 #1–#9，主動 push 僅送 role=vendor；主管/客戶改 Rich Menu on-demand 拉取。
+# 排程：08:00 台北、週日至週五（cron 0-5；週六不送）。#6 逾期在所有執行日皆呈現（含週日）。
+# ⚠️ image 標籤必須在 linebot 程式碼 commit + CI build 後改成新的 short sha；
+#    舊 sha + args ["daily"] 會落入舊碼 usage 分支而「不發送」。三檔（此檔、linebot deploy.yaml、
+#    admin.yaml）的 sha 必須一起改（見 linebot CLAUDE.md 警告）。
 apiVersion: batch/v1
 kind: CronJob
 metadata:
   namespace: linebot
-  name: trello-notifier-morning
+  name: trello-notifier-daily
 spec:
-  schedule: "0 9 * * 1-6"
+  schedule: "0 8 * * 0-5"
   timeZone: "Asia/Taipei"
   concurrencyPolicy: Forbid
   jobTemplate:
@@ -16,76 +22,10 @@ spec:
           restartPolicy: OnFailure
           containers:
             - name: notifier
-              image: ghcr.io/ferry133/linebot:913be6a
+              image: ghcr.io/ferry133/linebot:40df5b7
               imagePullPolicy: Always
               command: ["python", "/app/trello_line_notifier.py"]
-              args: ["morning"]
-              envFrom:
-                - secretRef:
-                    name: linebot-secret
-              volumeMounts:
-                - name: knowledge
-                  mountPath: /app/knowledge
-                  readOnly: true
-          volumes:
-            - name: knowledge
-              persistentVolumeClaim:
-                claimName: linebot-knowledge-nas
----
-apiVersion: batch/v1
-kind: CronJob
-metadata:
-  namespace: linebot
-  name: trello-notifier-noon
-spec:
-  schedule: "0 12 * * *"
-  timeZone: "Asia/Taipei"
-  concurrencyPolicy: Forbid
-  jobTemplate:
-    spec:
-      ttlSecondsAfterFinished: 3600
-      template:
-        spec:
-          restartPolicy: OnFailure
-          containers:
-            - name: notifier
-              image: ghcr.io/ferry133/linebot:913be6a
-              imagePullPolicy: Always
-              command: ["python", "/app/trello_line_notifier.py"]
-              args: ["noon"]
-              envFrom:
-                - secretRef:
-                    name: linebot-secret
-              volumeMounts:
-                - name: knowledge
-                  mountPath: /app/knowledge
-                  readOnly: true
-          volumes:
-            - name: knowledge
-              persistentVolumeClaim:
-                claimName: linebot-knowledge-nas
----
-apiVersion: batch/v1
-kind: CronJob
-metadata:
-  namespace: linebot
-  name: trello-notifier-evening
-spec:
-  schedule: "0 18 * * 1-6"
-  timeZone: "Asia/Taipei"
-  concurrencyPolicy: Forbid
-  jobTemplate:
-    spec:
-      ttlSecondsAfterFinished: 3600
-      template:
-        spec:
-          restartPolicy: OnFailure
-          containers:
-            - name: notifier
-              image: ghcr.io/ferry133/linebot:913be6a
-              imagePullPolicy: Always
-              command: ["python", "/app/trello_line_notifier.py"]
-              args: ["evening"]
+              args: ["daily"]
               envFrom:
                 - secretRef:
                     name: linebot-secret
