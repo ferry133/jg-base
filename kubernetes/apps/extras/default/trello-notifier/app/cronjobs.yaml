@@ -22,7 +22,7 @@ spec:
           restartPolicy: OnFailure
           containers:
             - name: notifier
-              image: ghcr.io/ferry133/linebot:4db99c2
+              image: ghcr.io/ferry133/linebot:9803392
               imagePullPolicy: Always
               command: ["python", "/app/trello_line_notifier.py"]
               args: ["daily"]
