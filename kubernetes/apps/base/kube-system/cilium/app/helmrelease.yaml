@@ -9,7 +9,10 @@ spec:
     name: cilium
   interval: 1h
   values:
-    autoDirectNodeRoutes: true
+    # tunnel/VXLAN mode (not native) so the cluster works across subnets and is
+    # compatible with Talos KubeSpan. autoDirectNodeRoutes installs direct routes
+    # that assume all nodes share one L2 segment → must be false for cross-subnet.
+    autoDirectNodeRoutes: false
     bpf:
       masquerade: true
       # Ref: https://github.com/siderolabs/talos/issues/10002
@@ -35,7 +38,7 @@ spec:
       enabled: false
     ipam:
       mode: kubernetes
-    ipv4NativeRoutingCIDR: "10.42.0.0/16"
+    # ipv4NativeRoutingCIDR removed — only used in native routing mode (now tunnel).
     k8sServiceHost: 127.0.0.1
     k8sServicePort: 7445
     kubeProxyReplacement: true
@@ -44,7 +47,10 @@ spec:
       enabled: true
     loadBalancer:
       algorithm: maglev
-      mode: "dsr"
+      # snat (was dsr): Cilium DSR is NOT supported with vxlan tunnel mode (DSR over
+      # tunneling needs geneve + dsrDispatch). snat is the compatible choice.
+      # Trade-off: LoadBalancer services no longer preserve the client source IP at L4.
+      mode: "snat"
     localRedirectPolicies:
       enabled: true
     operator:
@@ -62,7 +68,11 @@ spec:
         enabled: true
         trustCRDsExist: true
     rollOutCiliumPods: true
-    routingMode: native
+    routingMode: tunnel
+    tunnelProtocol: vxlan
+    # MTU headroom: VXLAN (50B) rides over KubeSpan WireGuard (1420 = 1500-80):
+    # 1420 - 50 = 1370. Conservative; also safe on clusters not (yet) using KubeSpan.
+    MTU: 1370
     securityContext:
       capabilities:
         ciliumAgent:
