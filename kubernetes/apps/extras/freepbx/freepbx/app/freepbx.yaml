@@ -18,6 +18,36 @@ spec:
     spec:
       hostNetwork: true
       dnsPolicy: ClusterFirstWithHostNet
+      initContainers:
+        # 等外部 mariadb 真的可連、且 asterisk DB/帳號就緒，才放行主容器。
+        # 否則 freepbx 的 10-freepbx init 會比 mariadb 先跑、連不到 DB 而中止安裝，
+        # 留下一個空的 asterisk 資料庫 → Asterisk 沒有設定 → SIP 5060 不會監聽。
+        - name: wait-for-mariadb
+          image: mariadb:latest
+          command:
+            - sh
+            - -c
+            - |
+              echo "Waiting for mariadb at $DBHOST:$DBPORT (db=$DBNAME)..."
+              until mariadb -h"$DBHOST" -P"$DBPORT" -u"$DBUSER" -p"$DBPASS" "$DBNAME" -e "SELECT 1" >/dev/null 2>&1; do
+                echo "  mariadb not ready, retrying in 3s..."
+                sleep 3
+              done
+              echo "mariadb is ready."
+          env:
+            - name: DBHOST
+              value: "mariadb.freepbx.svc.cluster.local"
+            - name: DBPORT
+              value: "3306"
+            - name: DBUSER
+              value: "asterisk"
+            - name: DBNAME
+              value: "asterisk"
+            - name: DBPASS
+              valueFrom:
+                secretKeyRef:
+                  name: freepbx-secret
+                  key: mysql-password
       containers:
         - name: freepbx
           image: tiredofit/freepbx:latest
