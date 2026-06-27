@@ -24,6 +24,9 @@ spec:
         # 留下一個空的 asterisk 資料庫 → Asterisk 沒有設定 → SIP 5060 不會監聽。
         - name: wait-for-mariadb
           image: mariadb:latest
+          # mariadb image 已在節點 cache；registry mirror (10.9.8.10:29999) 目前不穩，
+          # 用 IfNotPresent 取用 cache、不依賴 mirror。
+          imagePullPolicy: IfNotPresent
           command:
             - sh
             - -c
@@ -50,7 +53,10 @@ spec:
                   key: mysql-password
       containers:
         - name: freepbx
-          image: tiredofit/freepbx:latest
+          # digest-pin（節點已 cache 此 digest）+ IfNotPresent：registry mirror
+          # (10.9.8.10:29999) 目前不穩，避免重啟時依賴 mirror 重拉而 ErrImagePull。
+          image: tiredofit/freepbx:latest@sha256:8c914c97c8307b87e383af620e6ff993de87a63e5214461ee350a01760d58e2d
+          imagePullPolicy: IfNotPresent
           env:
             - name: TZ
               value: "Asia/Taipei"
