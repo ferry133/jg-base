@@ -4,12 +4,15 @@ apiVersion: v1
 metadata:
   name: mariadb-data
   namespace: freepbx
-  annotations:
-    nfs.io/storage-path: "freepbx-mariadb"
 spec:
+  # InnoDB 在 NFS 上會撞 "Retry attempts for reading partial data failed"
+  # → CREATE TABLE 直接 errno 168。改用 local-path（單節點 RWO 沒問題）。
+  # FreePBX schema bootstrap 失敗的根因，2026-06-27/28 排查確認。
+  # mariadb-backup CronJob 把 dump 寫到獨立的 NAS PVC（mariadb-backup-nas），
+  # 所以 live DB 在 local-path、備份在 NAS 的 split 沒問題。
   accessModes:
-    - ReadWriteMany
-  storageClassName: sc-nas
+    - ReadWriteOnce
+  storageClassName: local-path
   resources:
     requests:
       storage: 10Gi
