@@ -72,6 +72,19 @@ spec:
               value: "asterisk"
             - name: DBPORT
               value: "3306"
+            # tiredofit/freepbx 的 cont-init scripts 讀的是有底線的版本
+            # （DB_HOST/DB_NAME/DB_PORT/DB_EMBEDDED）。沒設這幾個 → 預設 走
+            # embedded mariadb 流程 → schema 從未對外部 mariadb bootstrap →
+            # asterisk daemon 載不到設定 → SIP 5060 不會 listen。
+            # 上面的 DBHOST/DBPORT/DBUSER/DBPASS/DBNAME 留給其他 script + 文件閱讀慣性。
+            - name: DB_EMBEDDED
+              value: "FALSE"
+            - name: DB_HOST
+              value: "mariadb.freepbx.svc.cluster.local"
+            - name: DB_NAME
+              value: "asterisk"
+            - name: DB_PORT
+              value: "3306"
             - name: DBENGINE
               value: "mysql"
             - name: CDRDBNAME
