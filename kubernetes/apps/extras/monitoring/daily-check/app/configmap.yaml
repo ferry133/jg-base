@@ -130,18 +130,23 @@ data:
       record fail "Pods abnormal" "$(echo "$ABNORMAL_PODS" | head -10 | tr '\n' '; ')"
     fi
 
-    # Pods with high restart count (using start time as proxy for 24h)
-    HIGH_RESTART=$(kubectl get pods -A -o json 2>/dev/null | jq -r '
+    # Pods that restarted within the last 24h (recency-based, NOT lifetime total).
+    # k8s only exposes cumulative .restartCount, so a long-lived-but-stable pod would
+    # trip a ">N lifetime" check forever. Gate on the most recent restart time
+    # (lastState.terminated.finishedAt) so this reflects *current* instability.
+    RECENT_RESTART=$(kubectl get pods -A -o json 2>/dev/null | jq -r '
       .items[] |
       select(.status.containerStatuses != null) |
       . as $p |
       ($p.status.containerStatuses | map(.restartCount) | add) as $total |
-      select($total > 5) |
-      "\($p.metadata.namespace)/\($p.metadata.name): \($total) restarts"' | head -10)
-    if [[ -z "$HIGH_RESTART" ]]; then
-      record ok "No pods with excessive restarts"
+      ([ $p.status.containerStatuses[] | .lastState.terminated.finishedAt // empty ]
+        | map(fromdateiso8601) | max // 0) as $last |
+      select($total > 0 and $last > (now - 86400)) |
+      "\($p.metadata.namespace)/\($p.metadata.name): \($total) total, last \(((now - $last)/3600)|floor)h ago"' | head -10)
+    if [[ -z "$RECENT_RESTART" ]]; then
+      record ok "No pods restarted in last 24h"
     else
-      record warn "Pods with >5 restarts (lifetime)" "$(echo "$HIGH_RESTART" | tr '\n' '; ')"
+      record warn "Pods restarted in last 24h" "$(echo "$RECENT_RESTART" | tr '\n' '; ')"
     fi
 
     # 5. PVCs all Bound

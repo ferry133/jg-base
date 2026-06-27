@@ -36,7 +36,7 @@ No cross-cluster checks. Each cluster is self-contained for operability.
 | 2 | Flux Kustomizations | Any non-`Ready=True` |
 | 3 | HelmReleases | Any non-`Ready=True` |
 | 4 | Pod state | Any pod not in `Running`/`Completed`/`Succeeded` |
-| 5 | Pod restarts | Pods with >5 total restarts (warning) |
+| 5 | Pod restarts (last 24h) | Any pod that restarted within the last 24h (warning; recency-based, not lifetime total) |
 | 6 | PVCs | Any not `Bound` |
 | 7 | Postgres backup | Last `postgres-backup-*` Job status not `Complete` (if `db` ns exists) |
 | 8 | Postgres pod | Deployment `postgres` not ReadyReplicas=1 (if exists) |
@@ -78,7 +78,7 @@ Counts:   <N> FAIL, <N> WARN, <N> OK
 
 === Issue Details ===
   [FAIL] Postgres backup: ...
-  [WARN] Pods with >5 restarts (lifetime): ...
+  [WARN] Pods restarted in last 24h: ...
 ```
 
 ## Enable on a new cluster
