@@ -138,6 +138,11 @@ spec:
   http2:
     onInvalidMessage: TerminateStream
   http3: {}
+  # Default UnescapeAndRedirect 307-redirects paths containing %2F, breaking
+  # APIs with encoded slashes in path params (e.g. homebridge UI routes for
+  # scoped plugins like @homebridge-plugins/homebridge-ewelink).
+  path:
+    escapedSlashesAction: KeepUnchanged
   targetSelectors:
     - group: gateway.networking.k8s.io
       kind: Gateway
