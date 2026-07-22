@@ -12,11 +12,12 @@ spec:
   values:
     controllers:
       main:
+        strategy: Recreate
         containers:
           app:
             image:
               repository: ghcr.io/ferry133/claude-code
-              tag: latest
+              tag: af43027
             envFrom:
               - secretRef:
                   name: claude-code-secret
@@ -45,6 +46,8 @@ spec:
                 memory: 1Gi
 
     defaultPodOptions:
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet
       securityContext:
         runAsUser: 1000
         runAsGroup: 1000
