@@ -5,3 +5,7 @@ metadata:
   name: claudecode
   annotations:
     kustomize.toolkit.fluxcd.io/prune: disabled
+  labels:
+    # claude-code (base instance) runs with hostNetwork: true; baseline/
+    # restricted PodSecurity blocks host namespaces.
+    pod-security.kubernetes.io/enforce: privileged
