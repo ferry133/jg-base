@@ -34,16 +34,9 @@ spec:
             - tunnel
             - --no-autoupdate
             - --loglevel
-            - debug
+            - info
             - --metrics
             - 0.0.0.0:2000
-            # QUIC (default) is UDP-based; some home routers/ISPs fragment or
-            # drop larger QUIC datagrams, which silently truncates big origin
-            # responses and surfaces as a 520 at the Cloudflare edge while
-            # small responses (e.g. auth challenges) always succeed. HTTP/2
-            # runs over TCP and avoids that failure mode.
-            - --protocol
-            - http2
             - run
           livenessProbe:
             httpGet:
