@@ -55,19 +55,17 @@ spec:
       securityContext:
         runAsUser: 1000
         runAsGroup: 1000
-
-    podLabels:
-      hostnetwork-group: claude-code
-
-    # hostNetwork pods all bind :7681 on the node -- hard-require spreading
-    # across nodes so this and any claude-code/cc instance never collide.
-    affinity:
-      podAntiAffinity:
-        requiredDuringSchedulingIgnoredDuringExecution:
-          - labelSelector:
-              matchLabels:
-                hostnetwork-group: claude-code
-            topologyKey: kubernetes.io/hostname
+      labels:
+        hostnetwork-group: claude-code
+      # hostNetwork pods all bind :7681 on the node -- hard-require spreading
+      # across nodes so this and any claude-code/cc instance never collide.
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchLabels:
+                  hostnetwork-group: claude-code
+              topologyKey: kubernetes.io/hostname
 
     service:
       app:
