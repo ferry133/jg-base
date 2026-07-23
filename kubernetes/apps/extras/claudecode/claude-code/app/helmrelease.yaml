@@ -17,7 +17,7 @@ spec:
           app:
             image:
               repository: ghcr.io/ferry133/claude-code
-              tag: af43027
+              tag: 8328b34
             envFrom:
               - secretRef:
                   name: claude-code-secret
@@ -38,6 +38,10 @@ spec:
               runAsUser: 1000
               runAsGroup: 1000
               runAsNonRoot: true
+              allowPrivilegeEscalation: false
+              capabilities:
+                drop: ["ALL"]
+                add: ["NET_RAW"] # nmap/masscan/arp-scan/tcpdump/fping raw sockets
             resources:
               requests:
                 cpu: 50m
