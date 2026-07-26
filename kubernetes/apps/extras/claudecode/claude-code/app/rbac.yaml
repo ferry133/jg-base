@@ -1,0 +1,24 @@
+---
+# Shared by every claude-code instance (claude_instances). cluster-admin
+# (user-confirmed 2026-07-26) so the web terminal stays a full rescue path
+# when Omni/SideroLink is down — it reaches the cluster via Cloudflare
+# Tunnel, independent of Omni. The only gate in front of this SA is ttyd
+# basic auth on <instance>.<domain>; keep ttyd_credential strong.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: claude-code
+  namespace: claudecode
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: claudecode-claude-code
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: cluster-admin
+subjects:
+  - kind: ServiceAccount
+    name: claude-code
+    namespace: claudecode
