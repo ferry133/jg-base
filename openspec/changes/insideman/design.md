@@ -1,0 +1,70 @@
+## Context
+
+**Vision (not scoped to this change):** "insideman" is an AI agent resident on the client's own site, meant to act as a fully skillful onsite IT employee — the client effectively gets their own virtual IT staff member, capable of independently working through whatever problem actually comes up (network, application, infrastructure, hardware-adjacent, anything), not just a fixed menu of pre-built tools. Remote instruction from the operating company is a fallback/escalation path, not the primary mode of operation — the goal is an agent capable enough that the company only needs to step in occasionally, not run every troubleshooting session by hand. Talos/Omni diagnostics are one class of problem among many an onsite IT employee would need to handle; they are not the definition of the role.
+
+This change is one incremental capability slice toward that vision — see Non-Goals for what else the full vision implies and why it's sequenced separately, not excluded.
+
+`claude_instances` pods (`cc.<client-domain>`, etc.) run a Claude Code CLI + ttyd web terminal (`ghcr.io/ferry133/claude-code`, source repo `k8scc`) as the current implementation of this resident insideman for remote client support — see 2026-07-27 jg-jiahd Omni incident for the motivating case for *this specific slice*. The pod already runs `hostNetwork: true` with a network-diagnostics toolkit (nmap/arp-scan/tcpdump/masscan, `CAP_NET_RAW`) for LAN-level troubleshooting — itself an earlier slice of the same broader vision, not Talos-related at all, which is proof the insideman's capability set is already expected to span more than one problem domain.
+
+Two credential-isolation precedents already exist in this pod and inform this design:
+- **Container-level isolation**: the `oauth2-proxy` sidecar (added for OIDC login mode) is a second container in the same pod, reachable only via loopback (`127.0.0.1`) since `hostNetwork: true` puts both containers in the same network namespace. Its own secrets (`OAUTH2_PROXY_CLIENT_SECRET` etc.) are mounted into its own container env, not the `app` container's.
+- **Secret plumbing**: `cluster.yaml` → CUE-validated (`cluster.schema.cue`) → rendered by makejinja into `cluster-secrets.sops.yaml` (SOPS-encrypted) → Flux `postBuild.substituteFrom` rewrites `${VAR}` references into app-level Secrets (e.g. `claude-code-secret`) → `secretKeyRef` env vars on a specific container. Multi-line secret blobs already have a working precedent: `OMNI_GPG_KEY_B64: "#{ omni_gpg_key | default('') | b64encode }#"` — base64-collapsed at render time because Flux's `${VAR}` substitution corrupts multi-line values (this is why `claudecode_allowed_emails` deliberately bypasses the Secret/Flux-var path entirely and renders straight into a ConfigMap instead).
+
+What does NOT exist: any mechanism for a Claude Code instance to query the client cluster's **Talos** layer (node health, etcd member status, SideroLink/KubeSpan link state, service logs) without the operator manually copying their own break-glass talosconfig into a pod — confirmed live-blocked twice by the security-review classifier during the 2026-07-27 incident, requiring explicit one-time human authorization each time. Omni itself offers no scoping for talosconfig issuance (`omnictl talosconfig --help`: only `--break-glass`, `-c`, `-f`, `-m` — no role/scope flag; confirmed via `omnictl get users -o yaml` that both existing identities hold the global `Admin` role with empty `scopes: []`). Talos's own native RBAC (`os:reader`/`os:operator`/`os:admin` client-cert roles, independent of Omni, via `talosctl config new --roles=...`) is unused anywhere in this stack today.
+
+Separately, the existing `claude-code` ServiceAccount (used by the `app` container for Kubernetes API access) is deliberately shared cluster-wide and bound to `cluster-admin` (`jg-base/kubernetes/apps/extras/claudecode/claude-code/app/rbac.yaml`, comment: "so the web terminal stays a full rescue path when Omni/SideroLink is down" — user-confirmed 2026-07-26). This design does not touch that decision; it only adds a new, separately-scoped credential for Talos specifically, in a new isolated container.
+
+## Goals / Non-Goals
+
+**Goals:**
+- Give each client's resident Claude Code instance the ability to run read-only Talos diagnostics (node status, etcd members, network link status, service logs) against its own cluster, without any credential crossing the remote-operator boundary.
+- Make the credential exposure a hard, server-enforced boundary (Talos rejects mutating RPCs from an `os:reader` cert) rather than a policy/trust boundary.
+- Isolate the credential from the `app` container's shell — the terminal user/agent must not be able to `cat` it.
+- Reuse existing patterns (sidecar container, SOPS secret pipeline, base64-wrapped multi-line secrets) rather than inventing new infrastructure where avoidable.
+
+**Non-Goals:**
+- Mutating Talos operations (reboot, upgrade, config apply). These remain the existing manual, ephemeral break-glass workflow with explicit per-use human authorization. Not addressed by this change.
+- Changing the existing shared `cluster-admin` Kubernetes RBAC for the `app` container.
+- Per-cluster scoping at the Omni layer (Omni doesn't support it; this design routes around Omni entirely for the scoped credential, using Talos's native cert issuance instead).
+- Other capability slices of the broader insideman vision (private per-client skills/knowledge base, router-device MCP, application-level troubleshooting beyond what the agent can already do with its general shell/tools, audit logging pipeline, credential-elevation UX for mutating operations). These are **not excluded from the insideman vision** — they're simply separate, later changes. This change's scope is deliberately narrow (Talos read-only diagnostics only) so it ships and gets validated on its own; it should not be read as defining the ceiling of what insideman is meant to become.
+
+## Decisions
+
+**1. New sidecar container (`talos-mcp`), same image as `app`, different `command`.**
+Rather than a new image/repo, reuse `ghcr.io/ferry133/claude-code` for both containers and override `command` at the Kubernetes container-spec level (bjw-s app-template supports per-container `command`/`args`). `talos-mcp` runs `python3 /usr/local/bin/talos_mcp_server.py` directly, bypassing `entrypoint.sh`'s ttyd-launch logic entirely.
+- *Alternative considered*: separate minimal image just for the MCP server. Rejected for this first slice — adds a second CI pipeline/GHCR package for marginal benefit; the isolation property comes from the container boundary (separate filesystem/env per container in the pod), not from image separation. Revisit if the MCP server's dependency footprint diverges significantly from the `app` image.
+
+**2. Talos-native `os:reader` client certificate, bootstrapped from break-glass, not from Omni.**
+Since Omni has no scoping mechanism, generate the scoped cert directly against the cluster's own Talos CA: `talosctl config new --roles=os:reader <output>` using the operator's existing break-glass talosconfig for the one-time signing authority. This is a manual, per-client onboarding step (not automated in `task configure`) — output gets base64-encoded and pasted into that client's `cluster.yaml`.
+- *Alternative considered*: wait for/request Omni to add per-cluster role scoping. Rejected — no such feature exists in the deployed Omni v1.8.1, and `ClusterPermissions.omni.sidero.dev` (a resource type that appears registered but returns `Unimplemented` on `get`) suggests it isn't reliably available even in principle yet.
+- *Alternative considered*: give `talos-mcp` the full break-glass credential and rely purely on the MCP tool surface (i.e., just don't implement a `reboot` tool) to enforce read-only-ness. Rejected — this is a policy boundary, not a server-enforced one; a bug in the MCP server or a sufficiently creative tool call could still issue a mutating RPC. `os:reader` makes this impossible at the Talos API level regardless of what the MCP server code does.
+
+**3. Secret carried as a single base64-blob key, following the `OMNI_GPG_KEY_B64` precedent.**
+New `cluster-secrets.sops.yaml.j2` key `TALOS_MCP_CONFIG_B64: "#{ talos_mcp_config | default('') | b64encode }#"`, `talos_mcp_config` being the raw multi-line `os:reader` talosconfig YAML pasted into `cluster.yaml`. Substituted into a new key on the existing `claude-code-secret` (or a dedicated one — see Open Questions), mounted into the `talos-mcp` container's own env/volume only. The `app` and `oauth2-proxy` containers get no `secretKeyRef`/volume reference to this key at all.
+- *Alternative considered*: mount as a Secret volume file directly instead of base64-in-env. Also viable and arguably cleaner (avoids an in-container decode step) — final call deferred to implementation, see Open Questions.
+
+**4. MCP registration as a remote HTTP/SSE server, not a local stdio subprocess.**
+The existing `memory` MCP server pattern (stdio, `command`+`args` spawned as a subprocess of `claude` inside `claude-session`) cannot provide isolation — a subprocess spawned by the `app` container's own process tree has no filesystem/credential separation from it. `talos-mcp` instead runs as a long-lived process in its own container, exposing MCP over HTTP/SSE bound to `127.0.0.1:<port>`; `claude-session` registers it in `settings.json` as a remote MCP server entry (URL-based, not command-based) — new pattern for this codebase, first use of Claude Code's remote-MCP config shape here.
+
+**5. Read-only tool surface only; mutating tools not implemented.**
+`talos_mcp_server.py` exposes exactly: `get_node_status`, `get_etcd_members`, `get_link_status`, `get_service_logs`. No `reboot`/`upgrade`/`apply_config` tools are written at all in this change — not gated-but-present, simply absent. Combined with the `os:reader` cert, this is defense in depth: even if a future change accidentally added a mutating tool here, the credential would reject the call server-side.
+
+## Risks / Trade-offs
+
+- **[Risk]** `os:reader` role's exact permission surface in Talos v1.13.2 hasn't been verified against every tool this design proposes (e.g., does `os:reader` cover `get_service_logs`, which may touch more sensitive log content than node/etcd status?) → **Mitigation**: verify each planned MCP tool's underlying `talosctl` subcommand against an `os:reader` cert during implementation (jg-jiahd is available as a live test cluster); drop any tool that requires a broader role rather than widening the cert.
+- **[Risk]** Manual per-client bootstrap step (mint cert, paste into `cluster.yaml`) is easy to forget or get wrong during onboarding, silently leaving a client without this capability → **Mitigation**: document the step clearly in `cluster.sample.yaml` next to `claude_instances`; not automating this in `task configure` is intentional for this first slice (see Open Questions) but should be revisited if client onboarding volume grows.
+- **[Risk]** A single long-lived `os:reader` cert per client, once minted, has no expiry mechanism defined here → same standing-credential trade-off as the existing shared `cluster-admin` SA, just narrower in capability. Rotation/expiry is not designed in this change.
+- **[Trade-off]** Reusing the `app` image for `talos-mcp` means every image rebuild redeploys both containers together, even when only one changed. Acceptable for now given shared CI/build simplicity; revisit if `talosctl` version pinning needs to move independently of the Claude Code CLI/toolkit version.
+
+## Migration Plan
+
+1. Build and verify `talos-mcp` + `talos_mcp_server.py` against jg-jiahd using the already-available break-glass config (bootstrap one `os:reader` cert manually, no `cluster.yaml`/pipeline changes yet) — fastest path to validate the MCP server and tool surface work at all before touching the templated pipeline.
+2. Once verified, wire the pipeline changes (CUE schema, `cluster-secrets.sops.yaml.j2`, `instances/helmrelease.yaml.j2`) in `jg-cluster-template`, mirror to `jg-jiahd`'s rendered output (same two-repo sync convention used throughout this codebase for `claude_instances`).
+3. Roll out to jg-jiahd's `cc` instance end-to-end via `task configure` + Flux reconcile, confirm the sidecar comes up, MCP registers, and the agent can call the new tools from within a real ttyd session.
+4. No rollback complexity beyond removing the sidecar container block and secret key — the change is purely additive to the existing pod spec (new container, new secret key, new `claude-session` registration block guarded by presence of the new env/mount, matching the existing `claudecode_auth0_domain`-gated conditional pattern already used for oauth2-proxy).
+
+## Open Questions
+
+- Dedicated `talos-mcp-secret` vs. adding the key to the existing `claude-code-secret`? Existing precedent (`claude-code-secret`) mixes concerns (ttyd creds, OAuth, DB URL) already; a dedicated secret keeps the Talos credential's blast radius/RBAC visibly separate but adds another object to the pipeline. Lean toward dedicated, final call at implementation time.
+- Base64-env vs. Secret-volume-file for the credential inside `talos-mcp`? Both work; volume-file avoids an in-container decode step and matches how a real `talosconfig` file is conventionally consumed by `talosctl`. Lean toward volume-file, final call at implementation time.
+- Should the manual cert-bootstrap step eventually move into `task configure` (auto-mint via a stored admin credential) once the pattern is proven for more than one client? Deferred — out of scope for this first slice per Non-Goals.
