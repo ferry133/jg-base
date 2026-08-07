@@ -84,6 +84,33 @@ spec:
         group: kustomize.toolkit.fluxcd.io
         kind: Kustomization
 ---
+# ── claude-code instances — base app, always present ──────────────────────────
+# claude-code itself comes from jg-base apps/base/claudecode via
+# cluster-apps-base above. Only the per-instance HelmReleases live in this
+# repo, rendered from claude_instances (default ["im"] -> im.<domain>).
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: claude-code-instances
+  namespace: flux-system
+spec:
+  decryption:
+    provider: sops
+  interval: 1h
+  path: ./kubernetes/apps/base/claudecode/claude-code/instances
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: flux-system
+    namespace: flux-system
+  postBuild:
+    substituteFrom:
+      - name: cluster-secrets
+        kind: Secret
+  dependsOn:
+    - name: cluster-apps-base
+---
+
 # ── Extras — uncomment as needed ──────────────────────────────────────────────
 
 # extras/mqtt — Mosquitto MQTT broker for agent inter-communication
@@ -120,29 +147,6 @@ spec:
 #     provider: sops
 #   interval: 1h
 #   path: ./kubernetes/apps/extras/default/postgres
-#   prune: true
-#   sourceRef:
-#     kind: GitRepository
-#     name: jg-base
-#     namespace: flux-system
-#   postBuild:
-#     substituteFrom:
-#       - name: cluster-secrets
-#         kind: Secret
-#   dependsOn:
-#     - name: cluster-apps-base
-# ---
-# extras/claude-code — Claude Code web IDE (requires NAS)
-# apiVersion: kustomize.toolkit.fluxcd.io/v1
-# kind: Kustomization
-# metadata:
-#   name: extras-claude-code
-#   namespace: flux-system
-# spec:
-#   decryption:
-#     provider: sops
-#   interval: 1h
-#   path: ./kubernetes/apps/extras/claudecode
 #   prune: true
 #   sourceRef:
 #     kind: GitRepository

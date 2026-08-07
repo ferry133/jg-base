@@ -33,10 +33,16 @@ data:
     : "${CLUSTER_NAME:?required}"
     : "${SMTP_HOST:?required}"
     : "${SMTP_PORT:?required}"
-    : "${SMTP_USERNAME:?required}"
-    : "${SMTP_PASSWORD:?required}"
-    : "${SMTP_FROM:?required}"
-    : "${NOTIFY_EMAIL_TO:?required}"
+
+    # daily-check is a base app, so it lands on clusters whose cluster.yaml has
+    # no daily_check_* values yet. Skip quietly instead of failing a Job every
+    # day: there is nowhere to send the report until those are filled in.
+    if [[ -z "${SMTP_USERNAME:-}" || -z "${SMTP_PASSWORD:-}" || -z "${SMTP_FROM:-}" || -z "${NOTIFY_EMAIL_TO:-}" ]]; then
+      echo "daily-check is not configured for cluster ${CLUSTER_NAME}: set" \
+           "daily_check_smtp_username / _password / _from / _notify_email_to" \
+           "in cluster.yaml, then re-run task configure. Skipping this run."
+      exit 0
+    fi
     NAS_SERVER="${NAS_SERVER:-}"
     HEALTHCHECKS_PING_URL="${HEALTHCHECKS_PING_URL:-}"
     ENDPOINTS_TO_PROBE="${ENDPOINTS_TO_PROBE:-}"

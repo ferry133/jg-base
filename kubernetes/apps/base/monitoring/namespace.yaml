@@ -1,0 +1,12 @@
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: monitoring
+  annotations:
+    # Owned by cluster-apps-base since daily-check moved out of extras
+    # (2026-08-07). Never prune: on clusters migrating from the extra, the
+    # old daily-check Kustomization still carries this namespace in its
+    # inventory and would otherwise delete it — along with everything in it
+    # — the moment its app/ path stops rendering namespace.yaml.
+    kustomize.toolkit.fluxcd.io/prune: disabled

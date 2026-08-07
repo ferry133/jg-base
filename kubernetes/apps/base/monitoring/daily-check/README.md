@@ -83,19 +83,18 @@ Counts:   <N> FAIL, <N> WARN, <N> OK
 
 ## Enable on a new cluster
 
-Standard three-repo workflow (see top-level `CLAUDE.md`):
+This is a **base app** (since 2026-08-07): the CronJob is installed on every
+cluster with no `extras:` entry needed. What is still per-cluster is *where the
+report goes* — until the SMTP fields below are set, each run exits 0 immediately
+with a "not configured" log line and sends nothing.
 
-1. **jg-base** — already provides the extra (this directory)
+1. **jg-base** — already provides the app (this directory)
 
 2. **jg-cluster-template** — already declares the fields in `cluster.schema.cue`
    and `cluster-secrets.sops.yaml.j2`
 
 3. **Per-user repo** (`cluster.yaml`):
    ```yaml
-   extras:
-     - monitoring/daily-check
-     # ... other extras
-
    # ── monitoring/daily-check ────────────────────────────────────────────────
    daily_check_smtp_username: "you@gmail.com"
    daily_check_smtp_password: "16char-gmail-app-password"  # no spaces
@@ -185,11 +184,13 @@ kubectl -n monitoring patch cronjob daily-check --type merge -p '{"spec":{"suspe
 
 To re-enable: `"suspend":false` (or remove the field; Flux will reset on next sync).
 
-### Remove from a cluster
+### Disable on a cluster
 
-In per-user `cluster.yaml`, delete `- monitoring/daily-check` from `extras:`,
-run `task configure --yes`, commit, push. Flux will prune the namespace and
-all resources (the `monitoring` namespace was created by this extra).
+There is no per-cluster opt-out any more — this is a base app. To stop the
+reports, either clear the `daily_check_*` fields in the per-user `cluster.yaml`
+(each run then exits 0 without sending) or suspend the CronJob as above.
+The `monitoring` namespace is owned by `cluster-apps-base` and carries
+`kustomize.toolkit.fluxcd.io/prune: disabled`, so it is never auto-removed.
 
 ## Troubleshooting
 
@@ -290,18 +291,18 @@ fails on non-2xx/3xx codes.
 ## File layout
 
 ```
-monitoring/
-├── daily-check/
-│   ├── README.md                  (this file)
-│   ├── ks.yaml                    (inner Flux Kustomization, targetNamespace=monitoring)
-│   ├── kustomization.yaml         (kustomize wrapper for ks.yaml)
-│   └── app/
-│       ├── kustomization.yaml     (resource list)
-│       ├── namespace.yaml         (monitoring namespace)
-│       ├── rbac.yaml              (SA + ClusterRole + ClusterRoleBinding)
-│       ├── secret.yaml            (daily-check-config; Flux substitutes vars)
-│       ├── configmap.yaml         (run-check.sh + msmtprc.template)
-│       └── cronjob.yaml           (the CronJob itself)
+kubernetes/apps/base/monitoring/
+├── kustomization.yaml             (namespace.yaml + daily-check/ks.yaml)
+├── namespace.yaml                 (monitoring namespace; prune: disabled)
+└── daily-check/
+    ├── README.md                  (this file)
+    ├── ks.yaml                    (inner Flux Kustomization, targetNamespace=monitoring)
+    └── app/
+        ├── kustomization.yaml     (resource list)
+        ├── rbac.yaml              (SA + ClusterRole + ClusterRoleBinding)
+        ├── secret.yaml            (daily-check-config; Flux substitutes vars)
+        ├── configmap.yaml         (run-check.sh + msmtprc.template)
+        └── cronjob.yaml           (the CronJob itself)
 ```
 
 ## Security notes

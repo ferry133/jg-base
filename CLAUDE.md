@@ -36,9 +36,28 @@ All deployments are operated by ferry133; end users only specify requirements.
 **Planned directory structure** (restructuring in progress):
 ```
 kubernetes/apps/
-  base/     ← installed on every cluster (cert-manager, kube-system, network, flux-system, storage ns)
-  extras/   ← optional per-user selection (claude-code, trello-notifier, storage/nfs-subdir, ...)
+  base/     ← installed on every cluster (cert-manager, kube-system, network, flux-system,
+              storage, claudecode, monitoring)
+  extras/   ← optional per-user selection (trello-notifier, freepbx, omni, ...)
 ```
+
+**`base/claudecode/claude-code` is a base app** — every cluster ships one Claude Code
+web terminal at `im.<domain>` (jg-jiahd pins its own to `cc.jiahd.cc` — the reference
+deployment — via an explicit `claude_instances: ["cc"]`),
+so ferry133 always has a remote support path into the cluster that does not depend on
+Omni/SideroLink. Shared pieces (namespace, `cluster-admin` SA, OCIRepository, secrets)
+live here in `jg-base`; the per-instance HelmReleases are still rendered into the
+per-user repo from `claude_instances` (default `["im"]`) because the instance names and
+the optional `oauth2-proxy` / `talos-mcp` sidecars are template-time *structure*.
+`extras/claudecode/postgres` stays opt-in.
+
+**`base/monitoring/daily-check` is a base app** — every cluster runs its own daily
+health-check CronJob (08:00 Asia/Taipei) that emails a report via Gmail SMTP and pings
+healthchecks.io as a dead-man switch. Nothing is per-cluster *structure* here, so the
+whole app lives in `jg-base`; only the destination (`daily_check_*` in `cluster.yaml`)
+varies. A cluster with those fields unset runs the Job and exits 0 with a "not
+configured" log line rather than failing daily — see the guard at the top of
+`run-check.sh` in `app/configmap.yaml`.
 
 Config is generated from Jinja2 templates in `templates/` using [makejinja](https://github.com/mirkolenz/makejinja), driven by `cluster.yaml` and `nodes.yaml`.
 
