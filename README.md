@@ -85,66 +85,60 @@ kubernetes/
 | `omni/omni` | Sidero Omni cluster manager | `omni_gpg_key` + `storage/local-path-provisioner` |
 | `storage/local-path-provisioner` | Local-path storage class (`local-path`) | — |
 
-## Migration: `monitoring/daily-check` extra → base (2026-08-07)
+## Migration: `claude-code` + `daily-check` extras → base (2026-08-07)
 
-Only affects clusters that already had `monitoring/daily-check` in `extras:`
-(jg-jiahd, jcom). The inner `daily-check` Kustomization keeps its name, so it is simply
-adopted by `cluster-apps-base` — but `namespace.yaml` moved out of `app/` up to
-`base/monitoring/`, and the old Kustomization still lists the `monitoring` namespace in
-its inventory. Stamp the annotation on the live object **before** pushing so that
-inventory drop can't cascade into deleting the namespace and everything in it:
+New clusters need nothing. Clusters that already ran either app as an extra
+(jg-jiahd, jcom) need one pre-push step — **already applied to both on 2026-08-08**,
+so for those two only the push and re-render remain.
+
+Nothing is recreated by this move — the object names are unchanged, so the new owners
+adopt the existing objects in place:
+
+| Object | before | after |
+|---|---|---|
+| `Kustomization/claude-code` | owned by `extras-claude-code` | owned by `cluster-apps-base` |
+| `Kustomization/daily-check` | owned by `extras-daily-check` | owned by `cluster-apps-base` |
+| `HelmRelease/cc` | owned by `extras-claude-code-instances` | owned by `claude-code-instances` |
+| `Namespace/monitoring` | in `daily-check`'s inventory (from `app/`) | owned by `cluster-apps-base` |
+
+The one hazard is timing: the parent `flux-system` Kustomization deletes the old
+`extras-*` Kustomizations, and their finalizers prune whatever still carries their
+ownership labels at that instant. For `HelmRelease/cc` that would mean a Helm uninstall,
+taking the `claude-config` / `claude-workspace` PVCs with it.
+
+**Pre-push step — annotate the objects that must survive.** Do this before pushing;
+it is order-independent and permanent (Flux never owns this annotation's field, so
+reconciles do not strip it), which is why it is preferred over suspending
+`flux-system` and patching `spec.prune: false` — Flux *does* own `spec.prune` and
+reverts that patch on the next reconcile.
 
 ```sh
-kubectl annotate namespace monitoring \
-  kustomize.toolkit.fluxcd.io/prune=disabled --overwrite
+A=kustomize.toolkit.fluxcd.io/prune=disabled
+kubectl -n claudecode  annotate helmrelease   cc          $A --overwrite
+kubectl -n flux-system annotate kustomization claude-code $A --overwrite
+kubectl -n flux-system annotate kustomization daily-check $A --overwrite
+kubectl                annotate namespace     monitoring  $A --overwrite
+kubectl                annotate namespace     claudecode  $A --overwrite
 ```
 
-Then drop `- monitoring/daily-check` from the per-user `cluster.yaml` `extras:` list
-(the renderer skips it either way), `task configure --yes`, push. Verify with:
+Then push jg-base, and in the per-user repo drop `- claudecode/claude-code` and
+`- monitoring/daily-check` from `cluster.yaml`'s `extras:` list (belt-and-braces — the
+renderer skips both either way), `task configure --yes`, commit, push.
 
 ```sh
-kubectl -n flux-system get kustomization daily-check
-kubectl -n monitoring get cronjob,secret,configmap
-```
-
-## Migration: `claudecode/claude-code` extra → base (2026-08-07)
-
-New clusters need nothing. Clusters that **already** ran claude-code as an extra must be
-migrated in order, because the Flux Kustomizations are renamed
-(`extras-claude-code` → `claude-code`, `extras-claude-code-instances` →
-`claude-code-instances`) and a stale Kustomization's finalizer prunes its inventory —
-which would delete the HelmRelease **and its `claude-config` / `claude-workspace` PVCs**
-before the new ones adopt them. The `claudecode` namespace itself is safe
-(`kustomize.toolkit.fluxcd.io/prune: disabled`).
-
-```sh
-# 1. freeze the per-user entry point so the old specs can't be re-applied
-flux -n flux-system suspend kustomization flux-system
-
-# 2. stop the old Kustomizations from pruning anything on delete
-kubectl -n flux-system patch kustomization extras-claude-code-instances \
-  --type=merge -p '{"spec":{"prune":false}}'
-kubectl -n flux-system patch kustomization extras-claude-code \
-  --type=merge -p '{"spec":{"prune":false}}'
-
-# 3. in the per-user repo: drop "- claudecode/claude-code" from cluster.yaml's
-#    extras list, re-render, push. Push jg-base first if it isn't pushed yet.
-task configure --yes && git add -A && git commit && git push
-
-# 4. let Flux take it from here
-flux -n flux-system resume kustomization flux-system
 flux reconcile source git jg-base
-
-# 5. verify, then clean up any leftovers Flux didn't already remove
-kubectl -n flux-system get kustomization claude-code claude-code-instances
-kubectl -n claudecode get pod,pvc
+kubectl -n flux-system get kustomization claude-code claude-code-instances daily-check
+kubectl -n claudecode  get pod,pvc
+kubectl -n monitoring  get cronjob,secret,configmap
+# once the new owners are confirmed, remove any leftovers Flux did not prune
 kubectl -n flux-system delete kustomization \
-  extras-claude-code-instances extras-claude-code --ignore-not-found
+  extras-claude-code extras-claude-code-instances extras-daily-check --ignore-not-found
 ```
 
-Step 3's `cluster.yaml` edit is belt-and-braces: the renderer already skips
-`claudecode/claude-code` if it is still listed, so a repo that hasn't been cleaned up
-will not emit a Kustomization pointing at the removed `extras/` path.
+Second safety net, already in place: `sc-nas` is provisioned by nfs-subdir with
+`archiveOnDelete: "true"`, so even a real PVC delete only *renames* the directory on the
+NAS to `archived-pvc-<uid>` under `${NAS_PATH}`. The `cc` terminal's data is recoverable
+by hand in the worst case.
 
 ## Bootstrap Order
 
