@@ -87,12 +87,11 @@ kubernetes/
 
 ## Migration: `claude-code` + `daily-check` extras → base (2026-08-07)
 
-New clusters need nothing. Clusters that already ran either app as an extra
-(jg-jiahd, jcom) need one pre-push step — **already applied to both on 2026-08-08**,
-so for those two only the push and re-render remain.
+New clusters need nothing. jg-jiahd and jcom were migrated on 2026-08-08 — read the
+post-mortem below before repeating this on any other cluster.
 
-Nothing is recreated by this move — the object names are unchanged, so the new owners
-adopt the existing objects in place:
+Nothing *should* be recreated by the move: every object name is unchanged, so the new
+owners can adopt the existing objects in place.
 
 | Object | before | after |
 |---|---|---|
@@ -101,44 +100,70 @@ adopt the existing objects in place:
 | `HelmRelease/cc` | owned by `extras-claude-code-instances` | owned by `claude-code-instances` |
 | `Namespace/monitoring` | in `daily-check`'s inventory (from `app/`) | owned by `cluster-apps-base` |
 
-The one hazard is timing: the parent `flux-system` Kustomization deletes the old
-`extras-*` Kustomizations, and their finalizers prune whatever still carries their
-ownership labels at that instant. For `HelmRelease/cc` that would mean a Helm uninstall,
-taking the `claude-config` / `claude-workspace` PVCs with it.
+The hazard is timing. The parent `flux-system` Kustomization applies the new ks.yaml and
+prunes the old `extras-*` Kustomizations in the same reconcile. If an old Kustomization's
+finalizer runs before the new owner has reconciled and adopted the object, the finalizer
+prunes it. For `HelmRelease/cc` that means a Helm **uninstall**, taking the
+`claude-config` / `claude-workspace` PVCs with it.
 
-**Pre-push step — annotate the objects that must survive.** Do this before pushing;
-it is order-independent and permanent (Flux never owns this annotation's field, so
-reconciles do not strip it), which is why it is preferred over suspending
-`flux-system` and patching `spec.prune: false` — Flux *does* own `spec.prune` and
-reverts that patch on the next reconcile.
+### Do this — suspend the parent, then disable prune on the old Kustomizations
 
 ```sh
-A=kustomize.toolkit.fluxcd.io/prune=disabled
-kubectl -n claudecode  annotate helmrelease   cc          $A --overwrite
-kubectl -n flux-system annotate kustomization claude-code $A --overwrite
-kubectl -n flux-system annotate kustomization daily-check $A --overwrite
-kubectl                annotate namespace     monitoring  $A --overwrite
-kubectl                annotate namespace     claudecode  $A --overwrite
-```
+# 1. freeze the parent so it cannot prune, and so it cannot revert step 2
+flux -n flux-system suspend kustomization flux-system
 
-Then push jg-base, and in the per-user repo drop `- claudecode/claude-code` and
-`- monitoring/daily-check` from `cluster.yaml`'s `extras:` list (belt-and-braces — the
-renderer skips both either way), `task configure --yes`, commit, push.
+# 2. spec.prune: false on every old Kustomization being retired
+for k in extras-claude-code extras-claude-code-instances extras-daily-check; do
+  kubectl -n flux-system patch kustomization $k --type=merge -p '{"spec":{"prune":false}}'
+done
 
-```sh
+# 3. push jg-base; in the per-user repo drop "- claudecode/claude-code" and
+#    "- monitoring/daily-check" from cluster.yaml's extras, task configure --yes, push
+# 4. unfreeze — the parent now deletes the old Kustomizations, whose finalizers
+#    honour spec.prune: false and cascade nothing
+flux -n flux-system resume kustomization flux-system
 flux reconcile source git jg-base
+
+# 5. verify
 kubectl -n flux-system get kustomization claude-code claude-code-instances daily-check
-kubectl -n claudecode  get pod,pvc
-kubectl -n monitoring  get cronjob,secret,configmap
-# once the new owners are confirmed, remove any leftovers Flux did not prune
-kubectl -n flux-system delete kustomization \
-  extras-claude-code extras-claude-code-instances extras-daily-check --ignore-not-found
+kubectl -n claudecode  get helmrelease,pod,pvc
+kubectl -n monitoring  get cronjob
 ```
 
-Second safety net, already in place: `sc-nas` is provisioned by nfs-subdir with
-`archiveOnDelete: "true"`, so even a real PVC delete only *renames* the directory on the
-NAS to `archived-pvc-<uid>` under `${NAS_PATH}`. The `cc` terminal's data is recoverable
-by hand in the worst case.
+### Do NOT rely on `kustomize.toolkit.fluxcd.io/prune: disabled` alone
+
+Annotating the live objects looks attractive — no suspend, no ordering constraint — but
+**it does not survive**. kustomize-controller applies with server-side apply and
+force-conflicts, so the moment the *new* owner applies the object from git (the git
+manifests carry no such annotation) it takes over `metadata.annotations` and the
+annotation is gone. Verified on 2026-08-08: all five annotated objects on both clusters
+read back with an empty annotation after the migration.
+
+On jg-jiahd the race happened to fall the safe way and `HelmRelease/cc` was never
+touched — same object since 2026-06-04, Helm revision unchanged, pod not restarted.
+On jcom it fell the other way: `cc` was pruned, Helm uninstalled, and both PVCs deleted.
+
+The annotation is still worth setting as a second line of defence — it costs nothing and
+covers the window before the new owner's first apply. It is not a substitute for step 1.
+
+### If PVCs are lost anyway: recover from the nfs-subdir archive
+
+`sc-nas` runs nfs-subdir with `archiveOnDelete: "true"`, so a PVC delete **renames** the
+directory under `${NAS_PATH}` to `archived-<pathPattern-name>` instead of removing it.
+This is what saved jcom.
+
+```sh
+# from a root pod with the provisioner root mounted (NAS exports allow uid 0 only)
+ls -Ad /nas/archived-*
+# confirm the archive is from the deletion you are recovering: ctime, not mtime,
+# is the rename timestamp
+stat -c '%z  %n' /nas/archived-<cluster>-<ns>-<pvc-name>
+# copy back into the freshly provisioned directory, preserving uid/gid/timestamps
+cp -a /nas/archived-<cluster>-<ns>-<pvc-name>/. /nas/<cluster>-<ns>-<pvc-name>/
+```
+
+Scale the workload to 0 before copying, and keep the `archived-` directory until the
+restore is verified from inside the pod.
 
 ## Bootstrap Order
 
