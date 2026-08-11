@@ -1,6 +1,18 @@
-## ADDED Requirements
+# talos-mcp-sidecar Specification
+
+## Purpose
+
+Isolated, read-only Talos API access for `claude_instances` pods: a per-cluster
+`os:reader`-scoped credential, a `talos-mcp` sidecar container that holds it, an MCP
+server exposing read-only diagnostic tools, and the secret-provisioning pipeline that
+carries the credential from `cluster.yaml` into the running sidecar. Lets a client's
+resident Claude Code agent self-diagnose Talos-layer issues without the operator's
+shared break-glass credential ever crossing the remote-operator boundary.
+
+## Requirements
 
 ### Requirement: Isolated Talos credential per client
+
 Each `claude_instances` pod that has a Talos MCP sidecar enabled SHALL hold a Talos client credential whose role ceiling is `os:reader`, resolving only to that client's own cluster, distinct from the operator's shared break-glass credential.
 
 #### Scenario: Credential is cluster-specific
@@ -12,6 +24,7 @@ Each `claude_instances` pod that has a Talos MCP sidecar enabled SHALL hold a Ta
 - **THEN** the call is rejected server-side by the credential's `os:reader` role ceiling, independent of what the calling code requests
 
 ### Requirement: Credential isolated from the agent shell
+
 The Talos credential — both the talosconfig file and the Omni service-account key and endpoint it needs in order to authenticate — SHALL be mounted only into the `talos-mcp` sidecar container's own filesystem/environment, never into the `app` container where the terminal user and Claude Code agent process run.
 
 #### Scenario: Agent shell cannot read the credential
@@ -23,6 +36,7 @@ The Talos credential — both the talosconfig file and the Omni service-account 
 - **THEN** it is bound to a loopback address reachable only from other containers in the same pod, not from the client's LAN or the public internet
 
 ### Requirement: Read-only Talos diagnostic tools available via MCP
+
 The `app` container's Claude Code agent SHALL have access, via a registered remote MCP server, to read-only Talos diagnostic tools: node status, etcd member list, network link status (SideroLink/KubeSpan), and service logs.
 
 #### Scenario: Agent queries node status without operator involvement
@@ -34,6 +48,7 @@ The `app` container's Claude Code agent SHALL have access, via a registered remo
 - **THEN** it receives link state and etcd membership data sufficient to distinguish "node/cluster unhealthy" from "management-plane connectivity issue," without the remote operator generating or transmitting any Talos credential
 
 ### Requirement: No mutating Talos capability introduced
+
 This capability SHALL NOT provide any tool or code path capable of issuing a mutating Talos API call.
 
 #### Scenario: No reboot/upgrade/apply-config tool exists
