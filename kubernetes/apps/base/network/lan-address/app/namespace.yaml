@@ -1,0 +1,13 @@
+---
+# Its own namespace so that `privileged` covers this one probe and nothing else.
+# The alternative — labelling `network` — would raise cloudflared, envoy and
+# k8s-gateway to the same level for the sake of a component none of them needs.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: lan-address
+  labels:
+    # arping needs a raw socket, and it has to leave the node's own NIC to reach
+    # the LAN at all, so the pod runs with hostNetwork and NET_RAW. Talos admits
+    # at `baseline` by default, which forbids both.
+    pod-security.kubernetes.io/enforce: privileged

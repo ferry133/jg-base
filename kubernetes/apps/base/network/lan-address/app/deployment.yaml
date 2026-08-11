@@ -7,7 +7,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: lan-address-probe
-  namespace: network
+  namespace: lan-address
 spec:
   replicas: 1
   strategy:
