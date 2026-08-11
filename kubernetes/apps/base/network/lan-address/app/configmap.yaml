@@ -1,0 +1,104 @@
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: lan-address-probe
+  namespace: network
+data:
+  probe.sh: |
+    #!/bin/sh
+    # Find one free address on the customer's LAN and publish it as a
+    # CiliumLoadBalancerIPPool. That pool is the only thing this component
+    # exports: a later DHCP lease-holder implementation replaces this script and
+    # nothing else, because no Service annotation, template or schema names it.
+    #
+    # ARP can only show that nobody answers right now. It cannot show that the
+    # address is outside the router's DHCP range, so a device that is currently
+    # switched off can still collide later. That is why the chosen address is
+    # re-checked on every pass rather than picked once.
+    set -eu
+
+    POOL="${POOL_NAME:-pool-discovered}"
+    INTERVAL="${PROBE_INTERVAL_SECONDS:-300}"
+    # Scan downward from the top of the subnet: routers hand out DHCP leases
+    # from the low end far more often than the high end, so the top is the
+    # likeliest place to find something that stays free.
+    SCAN_FROM="${SCAN_FROM:-254}"
+    SCAN_TO="${SCAN_TO:-200}"
+
+    log() { echo "[$(date -u '+%Y-%m-%dT%H:%M:%SZ')] $*"; }
+
+    if [ -z "${NODE_CIDR:-}" ]; then
+      log "FATAL: NODE_CIDR is not set"; exit 1
+    fi
+    case "$NODE_CIDR" in
+      */24) : ;;
+      *) log "FATAL: NODE_CIDR $NODE_CIDR is not a /24; this probe only walks the last octet"
+         exit 1 ;;
+    esac
+
+    IFACE="$(ip -o -4 route show "$NODE_CIDR" 2>/dev/null | awk '{print $3; exit}')"
+    if [ -z "$IFACE" ]; then
+      log "FATAL: no interface carries a route for $NODE_CIDR"; exit 1
+    fi
+    PREFIX="$(echo "$NODE_CIDR" | cut -d/ -f1 | cut -d. -f1-3)"
+    # Every address this node itself holds, so the probe never claims one.
+    SELF="$(ip -o -4 addr show | awk '{print $4}' | cut -d/ -f1 | tr '\n' ' ')"
+    log "interface=$IFACE subnet=$NODE_CIDR self=[$SELF]"
+
+    # busybox arping -D exits 0 when nothing replied (address looks free) and
+    # non-zero when some host answered for it.
+    is_free() {
+      case " $SELF " in *" $1 "*) return 1 ;; esac
+      [ "$1" != "$PREFIX.1" ] || return 1   # conventionally the gateway
+      arping -D -q -c 2 -w 3 -I "$IFACE" "$1" >/dev/null 2>&1
+    }
+
+    current_pool_address() {
+      kubectl get ciliumloadbalancerippool "$POOL" \
+        -o jsonpath='{.spec.blocks[0].start}' 2>/dev/null || true
+    }
+
+    publish() {
+      cat <<EOF | kubectl apply --server-side --force-conflicts -f - >/dev/null
+    apiVersion: cilium.io/v2
+    kind: CiliumLoadBalancerIPPool
+    metadata:
+      name: $POOL
+      labels:
+        app.kubernetes.io/managed-by: lan-address-probe
+    spec:
+      allowFirstLastIPs: "No"
+      blocks:
+        - start: "$1"
+          stop: "$1"
+    EOF
+    }
+
+    while :; do
+      chosen=""
+      # Prefer the address already published: re-probing it keeps the choice
+      # stable across restarts, which is what stops a reboot from silently
+      # moving every LAN-facing service to a new address.
+      existing="$(current_pool_address)"
+      if [ -n "$existing" ] && is_free "$existing"; then
+        chosen="$existing"
+        log "keeping $chosen (still unanswered)"
+      else
+        [ -z "$existing" ] || log "WARNING: $existing now answers ARP — reselecting"
+        for last in $(seq "$SCAN_FROM" -1 "$SCAN_TO"); do
+          cand="$PREFIX.$last"
+          if is_free "$cand"; then chosen="$cand"; break; fi
+        done
+        if [ -n "$chosen" ]; then
+          log "selected $chosen (was ${existing:-none})"
+        fi
+      fi
+
+      if [ -n "$chosen" ]; then
+        publish "$chosen"
+      else
+        log "ERROR: no free address in $PREFIX.$SCAN_TO-$SCAN_FROM; leaving pool untouched"
+      fi
+      sleep "$INTERVAL"
+    done

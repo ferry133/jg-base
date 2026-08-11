@@ -9,3 +9,5 @@ resources:
   - ./cloudflare-tunnel/ks.yaml
   - ./envoy-gateway/ks.yaml
   - ./k8s-gateway/ks.yaml
+  # Suspended except on appliance — see its ks.yaml.
+  - ./lan-address/ks.yaml

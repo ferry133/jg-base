@@ -1,0 +1,61 @@
+---
+# A Deployment rather than a CronJob: an appliance powered on for the first time
+# should not wait for a schedule tick before it has an address, and the loop
+# doubles as the ongoing collision watch — ARP proves only that nobody answered
+# at the moment it asked.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: lan-address-probe
+  namespace: network
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: lan-address-probe
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: lan-address-probe
+    spec:
+      serviceAccountName: lan-address-probe
+      # ARP has to go out of the node's own NIC onto the customer's LAN; from
+      # inside the pod network there is nothing to ask.
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: probe
+          image: alpine:3.20
+          command:
+            - /bin/sh
+            - -c
+            - apk add --no-cache --quiet kubectl >/dev/null && exec /bin/sh /scripts/probe.sh
+          env:
+            - name: NODE_CIDR
+              value: "${NODE_CIDR}"
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: false
+            capabilities:
+              drop: ["ALL"]
+              # Raw sockets are what arping needs; nothing else here does.
+              add: ["NET_RAW"]
+          volumeMounts:
+            - name: scripts
+              mountPath: /scripts
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              memory: 128Mi
+      volumes:
+        - name: scripts
+          configMap:
+            name: lan-address-probe
+            defaultMode: 0755

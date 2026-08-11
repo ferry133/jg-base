@@ -1,0 +1,23 @@
+---
+# Suspended from the per-user repo on any profile that declares its addresses in
+# cluster.yaml. Only an appliance discovers one, because only an appliance is
+# expected to land on a LAN nobody has surveyed.
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: lan-address-probe
+  namespace: flux-system
+spec:
+  interval: 1h
+  path: ./kubernetes/apps/base/network/lan-address/app
+  postBuild:
+    substituteFrom:
+      - name: cluster-secrets
+        kind: Secret
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: jg-base
+    namespace: flux-system
+  targetNamespace: network
+  wait: false
