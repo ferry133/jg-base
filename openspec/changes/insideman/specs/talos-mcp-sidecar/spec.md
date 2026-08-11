@@ -1,18 +1,18 @@
 ## ADDED Requirements
 
 ### Requirement: Isolated Talos credential per client
-Each `claude_instances` pod that has a Talos MCP sidecar enabled SHALL hold a Talos client credential scoped to the `os:reader` role, unique to that client's own cluster, distinct from the operator's shared break-glass credential.
+Each `claude_instances` pod that has a Talos MCP sidecar enabled SHALL hold a Talos client credential whose role ceiling is `os:reader`, resolving only to that client's own cluster, distinct from the operator's shared break-glass credential.
 
 #### Scenario: Credential is cluster-specific
-- **WHEN** a Talos credential is bootstrapped for a client during onboarding
-- **THEN** the resulting client certificate is scoped to that client's own Talos cluster CA and cannot authenticate against any other cluster's Talos API
+- **WHEN** a Talos credential is bootstrapped for a client during onboarding — a dedicated Omni service account holding the Omni `Reader` role, plus the talosconfig `omnictl` issues for that identity against that one cluster
+- **THEN** the credential resolves only to that client's own cluster and cannot reach any other cluster's Talos API
 
 #### Scenario: Credential role is read-only
-- **WHEN** the `talos-mcp` sidecar's credential attempts a mutating Talos API call (e.g. reboot, config apply, upgrade)
-- **THEN** the Talos API server rejects the call based on the `os:reader` role embedded in the client certificate, independent of what the calling code requests
+- **WHEN** the `talos-mcp` sidecar's credential attempts a mutating or admin-only Talos API call (e.g. reboot, config apply, upgrade, client-certificate minting)
+- **THEN** the call is rejected server-side by the credential's `os:reader` role ceiling, independent of what the calling code requests
 
 ### Requirement: Credential isolated from the agent shell
-The Talos credential SHALL be mounted only into the `talos-mcp` sidecar container's own filesystem/environment, never into the `app` container where the terminal user and Claude Code agent process run.
+The Talos credential — both the talosconfig file and the Omni service-account key and endpoint it needs in order to authenticate — SHALL be mounted only into the `talos-mcp` sidecar container's own filesystem/environment, never into the `app` container where the terminal user and Claude Code agent process run.
 
 #### Scenario: Agent shell cannot read the credential
 - **WHEN** a user or the Claude Code agent runs a shell command inside the `app` container (e.g. `cat`, `env`, `ls`)
