@@ -5,4 +5,10 @@ metadata:
   name: storage
   annotations:
     kustomize.toolkit.fluxcd.io/prune: disabled
+  labels:
+    # local-path-provisioner creates a short-lived helper pod here that mounts a
+    # hostPath to create the volume's directory. Talos admits pods at `baseline`
+    # by default, which forbids hostPath — so provisioning fails, the claim sits
+    # Pending, and nothing about the provisioner itself looks wrong.
+    pod-security.kubernetes.io/enforce: privileged
 
