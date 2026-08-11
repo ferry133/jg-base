@@ -7,7 +7,7 @@ spec:
   gatewayClassName: envoy
   infrastructure:
     annotations:
-      lbipam.cilium.io/ips: "10.9.8.8"
+      lbipam.cilium.io/ips: "${OMNI_UDP_LB_IP:=10.9.8.8}"
   listeners:
   - name: wireguard-udp
     protocol: UDP

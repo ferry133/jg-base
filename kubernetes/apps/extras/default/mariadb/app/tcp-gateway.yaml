@@ -7,7 +7,7 @@ spec:
   gatewayClassName: envoy
   infrastructure:
     annotations:
-      lbipam.cilium.io/ips: "10.9.1.2"
+      lbipam.cilium.io/ips: "${MARIADB_LB_IP:=10.9.1.2}"
   listeners:
   - name: mariadb-tcp
     protocol: TCP
