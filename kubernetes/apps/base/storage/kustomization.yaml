@@ -5,4 +5,11 @@ kind: Kustomization
 
 resources:
   - ./namespace.yaml
+  # Installed on every cluster and never suspended. It is not the alternative
+  # to NFS — it is the node-local tier, and a cluster with a NAS still needs
+  # one: PostgreSQL on NFS is wrong on fsync and lock semantics no matter how
+  # much space the NAS has. `storage_backend` in cluster.yaml picks which class
+  # is the *default*, not which provisioners exist.
+  - ./local-path-provisioner/ks.yaml
+  # Suspended from the per-user repo when the cluster has no NAS.
   - ./nfs-subdir/ks.yaml

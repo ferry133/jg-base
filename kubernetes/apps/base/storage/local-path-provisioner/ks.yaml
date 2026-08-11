@@ -6,7 +6,7 @@ metadata:
   namespace: flux-system
 spec:
   interval: 1h
-  path: ./kubernetes/apps/extras/storage/local-path-provisioner/app
+  path: ./kubernetes/apps/base/storage/local-path-provisioner/app
   prune: true
   sourceRef:
     kind: GitRepository

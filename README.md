@@ -33,7 +33,7 @@ kubernetes/
       monitoring/
         daily-check/    ← daily health-check CronJob → email + healthchecks.io
       network/          ← cloudflare-dns, cloudflare-tunnel, envoy-gateway, k8s-gateway
-      storage/          ← nfs-subdir (sc-nas storage class)
+      storage/          ← local-path-provisioner (always) + nfs-subdir (only with a NAS)
     extras/             ← opt-in per user (selected via cluster.yaml)
       claudecode/
         postgres/       ← dedicated PostgreSQL for claude-code
@@ -53,9 +53,7 @@ kubernetes/
       network/
         cloudflare-tunnel-lan/
       omni/
-        omni/           ← Sidero Omni (requires storage/local-path-provisioner)
-      storage/
-        local-path-provisioner/
+        omni/           ← Sidero Omni
   components/
     sops/               ← cluster-secrets Flux component
   flux/
@@ -67,6 +65,9 @@ kubernetes/
 > `claudecode/claude-code` is **not** an extra any more — it is a base app installed on
 > every cluster (one instance at `im.<domain>` by default, renamed via `claude_instances`).
 > Only its optional dedicated database is still opt-in.
+>
+> `storage/local-path-provisioner` is **not** an extra either, as of 2026-08-11 — every
+> cluster gets the `local-path` class, NAS or not. See the migration note below.
 
 | Extra | Description | Requires |
 |-------|-------------|----------|
@@ -82,8 +83,7 @@ kubernetes/
 | `freepbx/freepbx` | FreePBX / Asterisk PBX | `freepbx_mysql_*` |
 | `ingress-nginx/ingress-nginx` | Nginx ingress controller | — |
 | `network/cloudflare-tunnel-lan` | Cloudflare tunnel for LAN access | — |
-| `omni/omni` | Sidero Omni cluster manager | `omni_gpg_key` + `storage/local-path-provisioner` |
-| `storage/local-path-provisioner` | Local-path storage class (`local-path`) | — |
+| `omni/omni` | Sidero Omni cluster manager | `omni_gpg_key` |
 
 ## Migration: `claude-code` + `daily-check` extras → base (2026-08-07)
 
@@ -164,6 +164,45 @@ cp -a /nas/archived-<cluster>-<ns>-<pvc-name>/. /nas/<cluster>-<ns>-<pvc-name>/
 
 Scale the workload to 0 before copying, and keep the `archived-` directory until the
 restore is verified from inside the pod.
+
+## Migration: `local-path-provisioner` extra → base (2026-08-11)
+
+`local-path` is not the alternative to NFS — it is the node-local tier, and a cluster
+with a NAS still needs one. PostgreSQL on NFS is wrong on fsync and lock semantics no
+matter how big the NAS is, so the DB has to land somewhere else, and until now a cluster
+with `storage_backend: nfs` had nowhere to put it. So the provisioner is installed
+everywhere and never suspended; `storage_backend` selects which class is *default*.
+
+Clusters affected: any whose `cluster.yaml` lists `storage/local-path-provisioner` in
+`extras:`, plus any `storage_backend: local-path` cluster (the per-user template used to
+add the extra implicitly). New clusters need nothing.
+
+| Object | before | after |
+|---|---|---|
+| `Kustomization/local-path-provisioner` | owned by `extras-local-path-provisioner`, path `apps/extras/…` | owned by `cluster-apps-base`, path `apps/base/…` |
+| `HelmRelease/local-path-provisioner` | owned by `Kustomization/local-path-provisioner` | **unchanged** |
+
+Same race as the 2026-08-07 migration above, and the same fix — the inner Kustomization
+keeps its name, so the new owner can adopt it in place, but only if it reconciles before
+the old owner's finalizer prunes it:
+
+```sh
+flux -n flux-system suspend kustomization flux-system
+kubectl -n flux-system patch kustomization extras-local-path-provisioner \
+  --type=merge -p '{"spec":{"prune":false}}'
+# push jg-base, then drop "- storage/local-path-provisioner" from the per-user
+# repo's extras: and re-run `task configure --yes`, push
+flux -n flux-system resume kustomization flux-system
+# once cluster-apps-base owns it, delete the retired shell
+kubectl -n flux-system delete kustomization extras-local-path-provisioner
+```
+
+**No data is at risk here**, unlike the claude-code migration: a Helm uninstall of this
+release removes the StorageClass, Deployment and RBAC, but local-path PVs are plain
+hostPath directories that no controller touches while their PVC still exists. Bound
+volumes keep serving through the window — the kubelet mounts them without the
+provisioner. What *does* break in that window is provisioning: any new PVC naming
+`local-path` sits Pending until the class is back.
 
 ## Bootstrap Order
 
