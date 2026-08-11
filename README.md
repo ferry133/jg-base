@@ -106,29 +106,54 @@ finalizer runs before the new owner has reconciled and adopted the object, the f
 prunes it. For `HelmRelease/cc` that means a Helm **uninstall**, taking the
 `claude-config` / `claude-workspace` PVCs with it.
 
-### Do this — suspend the parent, then disable prune on the old Kustomizations
+### Do this — retire the old Kustomization through git, in two pushes
+
+> Corrected 2026-08-11. The recipe that stood here (suspend the parent, then
+> `kubectl patch spec.prune=false`) was written after the jcom incident and **never
+> tested**. It was tried for the first time during the local-path migration and did not
+> work: the release was uninstalled anyway. Two independent reasons, below.
+
+The retiring Kustomization has to stop cascading **before** the commit that removes it
+lands, and the only place that survives is git.
 
 ```sh
-# 1. freeze the parent so it cannot prune, and so it cannot revert step 2
-flux -n flux-system suspend kustomization flux-system
+# 1. in the per-user repo, set deletionPolicy: Orphan on the Kustomization being
+#    retired — edit the rendered ks.yaml (or the template that emits it), push,
+#    and wait for it to actually apply:
+kubectl -n flux-system get kustomization extras-claude-code \
+  -o jsonpath='{.spec.deletionPolicy}{"\n"}'      # must read: Orphan
 
-# 2. spec.prune: false on every old Kustomization being retired
-for k in extras-claude-code extras-claude-code-instances extras-daily-check; do
-  kubectl -n flux-system patch kustomization $k --type=merge -p '{"spec":{"prune":false}}'
-done
-
-# 3. push jg-base; in the per-user repo drop "- claudecode/claude-code" and
-#    "- monitoring/daily-check" from cluster.yaml's extras, task configure --yes, push
-# 4. unfreeze — the parent now deletes the old Kustomizations, whose finalizers
-#    honour spec.prune: false and cascade nothing
-flux -n flux-system resume kustomization flux-system
+# 2. only now push jg-base, and in the per-user repo drop the entry from
+#    cluster.yaml's extras: — task configure --yes, push
 flux reconcile source git jg-base
 
-# 5. verify
+# 3. verify the new owner adopted the objects, then clear the retired shell
 kubectl -n flux-system get kustomization claude-code claude-code-instances daily-check
 kubectl -n claudecode  get helmrelease,pod,pvc
-kubectl -n monitoring  get cronjob
 ```
+
+#### Why `spec.prune: false` does nothing here
+
+`prune` is not the field that governs deletion. From the CRD:
+
+> `deletionPolicy` … Valid values are (`MirrorPrune`, `Delete`, `WaitForTermination`,
+> `Orphan`). **`MirrorPrune` mirrors the Prune field** (orphan if false, delete if true).
+> Defaults to `MirrorPrune`.
+
+`prune` only reaches the deletion path *through* `MirrorPrune`. Every Kustomization this
+template generates explicitly sets `deletionPolicy: WaitForTermination`, so `prune` is
+never consulted when the object is deleted — patching it to `false` is a no-op that
+reads back exactly as though it worked.
+
+#### Why live-patching either field is futile anyway
+
+Both fields are declared in git, so the parent's next server-side apply reverts whatever
+was patched in. Suspending the parent to prevent that is not reliable either: it holds
+while you watch it, but any reconcile already in flight still lands, and on this stack
+`Kustomization/flux-system` is `app.kubernetes.io/managed-by: flux-operator` — a second
+controller with its own opinion about that object's spec.
+
+Set it in git, confirm it applied, and only then push the removal.
 
 ### Do NOT rely on `kustomize.toolkit.fluxcd.io/prune: disabled` alone
 
@@ -182,20 +207,9 @@ add the extra implicitly). New clusters need nothing.
 | `Kustomization/local-path-provisioner` | owned by `extras-local-path-provisioner`, path `apps/extras/…` | owned by `cluster-apps-base`, path `apps/base/…` |
 | `HelmRelease/local-path-provisioner` | owned by `Kustomization/local-path-provisioner` | **unchanged** |
 
-Same race as the 2026-08-07 migration above, and the same fix — the inner Kustomization
-keeps its name, so the new owner can adopt it in place, but only if it reconciles before
-the old owner's finalizer prunes it:
-
-```sh
-flux -n flux-system suspend kustomization flux-system
-kubectl -n flux-system patch kustomization extras-local-path-provisioner \
-  --type=merge -p '{"spec":{"prune":false}}'
-# push jg-base, then drop "- storage/local-path-provisioner" from the per-user
-# repo's extras: and re-run `task configure --yes`, push
-flux -n flux-system resume kustomization flux-system
-# once cluster-apps-base owns it, delete the retired shell
-kubectl -n flux-system delete kustomization extras-local-path-provisioner
-```
+Same race as the 2026-08-07 migration above — the inner Kustomization keeps its name, so
+the new owner can adopt it in place, but only if it reconciles before the old owner's
+finalizer prunes it. Use the two-push recipe above.
 
 **No data is at risk here**, unlike the claude-code migration: a Helm uninstall of this
 release removes the StorageClass, Deployment and RBAC, but local-path PVs are plain
@@ -203,6 +217,19 @@ hostPath directories that no controller touches while their PVC still exists. Bo
 volumes keep serving through the window — the kubelet mounts them without the
 provisioner. What *does* break in that window is provisioning: any new PVC naming
 `local-path` sits Pending until the class is back.
+
+That is what made jgt-omni the right cluster to test the runbook on, and it is just as
+well: the old recipe failed there and the release *was* uninstalled. Recovery was one
+`flux reconcile source git jg-base` — the PVCs never noticed. Observed sequence:
+
+```
+extras-local-path-provisioner pruned  → child Kustomization deleted
+  → HelmRelease uninstalled           → StorageClass local-path gone, pod Terminating
+  → PVCs im-claude-config / im-claude-workspace  still Bound throughout
+cluster-apps-base reconciled on the new jg-base revision
+  → Kustomization/local-path-provisioner recreated at the base path
+  → StorageClass back, provisioner 1/1 Running
+```
 
 ## Bootstrap Order
 
