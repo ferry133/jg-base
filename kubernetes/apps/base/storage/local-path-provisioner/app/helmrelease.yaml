@@ -20,6 +20,11 @@ spec:
     storageClass:
       create: true
       name: local-path
+      # nfs-subdir claims the cluster default whenever it runs, and it only
+      # runs on an NFS cluster — so the two never both claim it. Without this,
+      # a cluster with no NAS has no default class at all and every PVC that
+      # omits storageClassName sits Pending with nothing to point at.
+      defaultClass: ${LOCAL_PATH_IS_DEFAULT:=false}
     nodePathMap:
       - node: DEFAULT_PATH_FOR_NON_LISTED_NODES
         paths:

@@ -7,6 +7,9 @@ metadata:
 spec:
   accessModes:
     - ReadWriteOnce
+  # Named explicitly rather than left to the cluster default: on an NFS cluster
+  # the default is sc-nas, which is where a database must not be.
+  storageClassName: ${DB_STORAGE_CLASS:=sc-nas}
   resources:
     requests:
       storage: 5Gi

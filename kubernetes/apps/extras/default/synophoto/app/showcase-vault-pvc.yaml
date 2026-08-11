@@ -20,7 +20,7 @@ spec:
   persistentVolumeReclaimPolicy: Retain
   storageClassName: ""
   nfs:
-    server: 10.9.2.13
+    server: ${NAS_SERVER}
     path: /volume3/showcase-vault
 ---
 apiVersion: v1

@@ -5,7 +5,7 @@ metadata:
   name: postgres-data
 spec:
   accessModes: [ReadWriteOnce]
-  storageClassName: sc-nas
+  storageClassName: ${DB_STORAGE_CLASS:=sc-nas}
   resources:
     requests:
       storage: 5Gi
