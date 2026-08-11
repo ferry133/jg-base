@@ -1,39 +1,29 @@
 ---
-# The whole node CIDR, and therefore every address on the customer's LAN.
+# Exactly the addresses this cluster assigns, rendered by the per-user repo from
+# cluster.yaml as one single-address range each.
 #
-# Nothing has gone wrong yet only because every LoadBalancer Service this repo
-# ships pins its address with `lbipam.cilium.io/ips` (or spec.loadBalancerIP),
-# so automatic allocation has never once run. The first Service that forgets to
-# pin gets x.x.x.1 — the default gateway on every cluster here — and l2-policy
-# below announces it, because it has no serviceSelector. That is safety by
-# coincidence, so `pool-narrow` replaces this one wherever the per-user repo can
-# enumerate the addresses actually in use.
+# It was two pools until 2026-08-12 — a wide one covering the node CIDR, kept
+# enabled by default, plus a narrow one that took over once a cluster could
+# enumerate its addresses. That cannot work: the narrow pool is by definition a
+# subset of the wide one, and Cilium rejects any overlap between pools with
+# `PoolConflict=cidr_overlap` regardless of `disabled`. The narrow pool never
+# allocated a single address; the Services kept working only because Cilium does
+# not revoke an address once assigned, so the breakage was invisible until a
+# Service was recreated.
 #
-# Left enabled by default: a cluster whose cluster-secrets predates
-# LB_POOL_WIDE_DISABLED keeps exactly today's behaviour rather than silently
-# losing every LoadBalancer address.
+# So there is one pool, and every cluster must supply its blocks. The empty
+# default is not a safe fallback — an empty pool hands out nothing — it exists
+# only so the manifest stays valid; a cluster reaching it has not been rendered
+# by a current template.
+#
+# A cluster that has not narrowed supplies its whole node CIDR here, which is
+# today's behaviour written out explicitly rather than hardcoded.
 apiVersion: cilium.io/v2
 kind: CiliumLoadBalancerIPPool
 metadata:
   name: pool
 spec:
-  disabled: ${LB_POOL_WIDE_DISABLED:=false}
   allowFirstLastIPs: "No"
-  blocks:
-    - cidr: "${NODE_CIDR}"
----
-# Exactly the addresses this cluster actually assigns, one single-address range
-# each, rendered by the per-user repo from cluster.yaml.
-#
-# Empty when the per-user repo has not been migrated — an empty pool simply has
-# nothing to hand out, and `pool` above is still enabled in that case. Cilium
-# prefers the oldest matching pool, so this one only ever wins because `pool` is
-# disabled, never by being narrower.
-apiVersion: cilium.io/v2
-kind: CiliumLoadBalancerIPPool
-metadata:
-  name: pool-narrow
-spec:
   blocks: ${LB_POOL_BLOCKS:=[]}
 ---
 # Still v2alpha1: only CiliumLoadBalancerIPPool graduated to v2. The clusters
