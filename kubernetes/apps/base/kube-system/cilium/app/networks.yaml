@@ -36,7 +36,9 @@ metadata:
 spec:
   blocks: ${LB_POOL_BLOCKS:=[]}
 ---
-apiVersion: cilium.io/v2
+# Still v2alpha1: only CiliumLoadBalancerIPPool graduated to v2. The clusters
+# serve no v2 for this kind, and applying one fails the whole dry-run.
+apiVersion: cilium.io/v2alpha1
 kind: CiliumL2AnnouncementPolicy
 metadata:
   name: l2-policy
