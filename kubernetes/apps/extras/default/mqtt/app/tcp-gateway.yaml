@@ -8,8 +8,8 @@ spec:
   infrastructure:
     annotations:
       lbipam.cilium.io/ips: "${MQTT_LB_IP}"
-      lbipam.cilium.io/sharing-key: "${LAN_SHARING_KEY:=}"
-      lbipam.cilium.io/sharing-cross-namespace: "${LAN_SHARING_CROSS_NAMESPACE:=}"
+      lbipam.cilium.io/sharing-key: "${LAN_SHARING_KEY:=mqtt}"
+      lbipam.cilium.io/sharing-cross-namespace: "${LAN_SHARING_CROSS_NAMESPACE:=*}"
   listeners:
   - name: mqtt-tcp
     protocol: TCP
