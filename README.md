@@ -145,6 +145,24 @@ template generates explicitly sets `deletionPolicy: WaitForTermination`, so `pru
 never consulted when the object is deleted — patching it to `false` is a no-op that
 reads back exactly as though it worked.
 
+#### When step 1 can be skipped
+
+The Orphan step exists to survive one race: the removal landing before the new owner has
+adopted the object. If adoption has *already* happened, the race is over and the wrapper
+can simply be deleted. Check the object, not the clock:
+
+```sh
+kubectl -n flux-system get kustomization <object> \
+  -o jsonpath='{.metadata.labels.kustomize\.toolkit\.fluxcd\.io/name}{"\n"}'
+# prints the new owner  → safe to remove the old wrapper from git directly
+# prints the old owner  → do step 1 first
+```
+
+Flux's garbage collection compares that label against the pruning Kustomization's own
+identity and skips anything it does not own. Verified on jcom 2026-08-11: the retired
+`extras-local-path-provisioner` was removed with no Orphan step and the `local-path`
+StorageClass kept its 88-day age — never deleted, never recreated.
+
 #### Why live-patching either field is futile anyway
 
 Both fields are declared in git, so the parent's next server-side apply reverts whatever
