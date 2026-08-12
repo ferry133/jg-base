@@ -333,6 +333,36 @@ data:
       fi
     fi
 
+    # 18. DNS rebinding protection.
+    #
+    # Internal names are published as ordinary A records pointing at an RFC1918
+    # address. Many routers refuse to return a private answer from an upstream
+    # resolver — that is DNS rebinding protection — and a LAN client behind such
+    # a router cannot resolve them however correct the record is.
+    #
+    # Asking the router directly is the only detection that works here: the
+    # alternative, having clients report, requires the customer to run something,
+    # and a zero-IT customer is exactly who cannot. The node sits on the same LAN
+    # behind the same router, so what it sees is what they would see.
+    if [[ -n "${NODE_DEFAULT_GATEWAY:-}" ]] && command -v dig >/dev/null 2>&1; then
+      INTERNAL_NAME="internal.${SECRET_DOMAIN}"
+      PUBLIC_ANS=$(dig +short +time=3 +tries=1 @1.1.1.1 "$INTERNAL_NAME" A 2>/dev/null | head -1)
+      if [[ -z "$PUBLIC_ANS" ]]; then
+        : # nothing published yet — nothing to test, stay quiet
+      elif [[ ! "$PUBLIC_ANS" =~ ^(10\.|172\.(1[6-9]|2[0-9]|3[01])\.|192\.168\.) ]]; then
+        : # public record is not RFC1918; rebinding protection cannot apply
+      else
+        ROUTER_ANS=$(dig +short +time=3 +tries=1 "@${NODE_DEFAULT_GATEWAY}" "$INTERNAL_NAME" A 2>/dev/null | head -1)
+        if [[ "$ROUTER_ANS" == "$PUBLIC_ANS" ]]; then
+          record ok "Router returns internal address (${PUBLIC_ANS})"
+        elif [[ -z "$ROUTER_ANS" ]]; then
+          record warn "DNS rebinding protection likely" "router ${NODE_DEFAULT_GATEWAY} returns nothing for ${INTERNAL_NAME} while public DNS returns ${PUBLIC_ANS}; LAN clients cannot resolve internal names — set dns_fallback: true in cluster.yaml to deploy k8s-gateway"
+        else
+          record warn "Router answer differs" "router ${NODE_DEFAULT_GATEWAY} returns ${ROUTER_ANS} for ${INTERNAL_NAME}, public DNS returns ${PUBLIC_ANS}"
+        fi
+      fi
+    fi
+
     echo "==> Compiling report"
     if [[ $FAIL_COUNT -gt 0 ]]; then
       STATUS_TAG="❌ ${FAIL_COUNT} FAIL"

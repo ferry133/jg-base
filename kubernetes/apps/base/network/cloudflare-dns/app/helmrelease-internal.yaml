@@ -1,0 +1,49 @@
+---
+# A second external-dns, publishing the internal gateway's hostnames as plain A
+# records pointing at the shared LAN address.
+#
+# This is what lets a LAN client resolve an internal name using whatever
+# resolver its router handed it — no router change, no device change, which is
+# the only kind of instruction a zero-IT customer can follow. Measured
+# 2026-08-12: Cloudflare accepts an RFC1918 target on a DNS-only record and
+# 1.1.1.1 and 8.8.8.8 both return it.
+#
+# Two things it must not share with the external instance:
+#
+#   txtOwnerId  both run `policy: sync` over the same zone. With one owner id,
+#               each would consider the other's records orphaned and delete
+#               them on its next full sync.
+#   proxying    Cloudflare rejects a proxied record whose target is RFC1918
+#               (error 9003, "not allowed for a proxied record"), so
+#               --cloudflare-proxied is deliberately absent here.
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: &app cloudflare-dns-internal
+spec:
+  chartRef:
+    kind: OCIRepository
+    name: cloudflare-dns
+  interval: 1h
+  values:
+    fullnameOverride: *app
+    provider: cloudflare
+    env:
+      - name: CF_API_TOKEN
+        valueFrom:
+          secretKeyRef:
+            name: &secret cloudflare-dns-secret
+            key: api-token
+    extraArgs:
+      - --cloudflare-dns-records-per-page=1000
+      - --gateway-name=envoy-internal
+    triggerLoopOnEvent: true
+    policy: sync
+    sources: ["gateway-httproute"]
+    txtPrefix: k8s-internal.
+    txtOwnerId: internal
+    domainFilters: ["${SECRET_DOMAIN}"]
+    serviceMonitor:
+      enabled: true
+    podAnnotations:
+      secret.reloader.stakater.com/reload: *secret
