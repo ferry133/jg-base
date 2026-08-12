@@ -59,7 +59,19 @@ data:
         -o jsonpath='{.spec.blocks[0].start}' 2>/dev/null || true
     }
 
+    # The pool carries the reselection history as annotations, because the pool
+    # is the only thing this component publishes and a log line inside a pod
+    # nobody is watching is not a record. daily-check reads these.
     publish() {
+      _addr="$1"; _prev="${2:-}"
+      _since="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+      if [ -n "$_prev" ] && [ "$_prev" != "$_addr" ]; then
+        _prev_ann="lan-address.jg-base/previous: \"$_prev\""
+        _at_ann="lan-address.jg-base/reselected-at: \"$_since\""
+      else
+        _prev_ann="lan-address.jg-base/previous: \"\""
+        _at_ann="lan-address.jg-base/reselected-at: \"\""
+      fi
       cat <<EOF | kubectl apply --server-side --force-conflicts -f - >/dev/null
     apiVersion: cilium.io/v2
     kind: CiliumLoadBalancerIPPool
@@ -67,11 +79,15 @@ data:
       name: $POOL
       labels:
         app.kubernetes.io/managed-by: lan-address-probe
+      annotations:
+        lan-address.jg-base/confirmed-at: "$_since"
+        $_prev_ann
+        $_at_ann
     spec:
       allowFirstLastIPs: "No"
       blocks:
-        - start: "$1"
-          stop: "$1"
+        - start: "$_addr"
+          stop: "$_addr"
     EOF
     }
 
@@ -96,7 +112,7 @@ data:
       fi
 
       if [ -n "$chosen" ]; then
-        publish "$chosen"
+        publish "$chosen" "$existing"
       else
         log "ERROR: no free address in $PREFIX.$SCAN_TO-$SCAN_FROM; leaving pool untouched"
       fi

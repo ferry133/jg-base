@@ -41,6 +41,46 @@ spec:
     name: envoy
     namespace: network
 ---
+# envoy-external only: its Service type has to be settable independently of
+# envoy-internal, and the EnvoyProxy referenced by the GatewayClass applies to
+# every Gateway that uses the class.
+#
+# Under `appliance` this becomes ClusterIP. Nothing on the LAN connects to the
+# external gateway — cloudflared reaches it at
+# envoy-external.network.svc.cluster.local:443 — so a LoadBalancer address there
+# is one more address taken from the customer's network for nobody.
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: EnvoyProxy
+metadata:
+  name: envoy-external
+  namespace: network
+spec:
+  logging:
+    level:
+      default: info
+  provider:
+    type: Kubernetes
+    kubernetes:
+      envoyDeployment:
+        replicas: 2
+        container:
+          imageRepository: mirror.gcr.io/envoyproxy/envoy
+          resources:
+            requests:
+              cpu: 100m
+            limits:
+              memory: 1Gi
+      envoyService:
+        type: ${ENVOY_EXTERNAL_SERVICE_TYPE:=LoadBalancer}
+        externalTrafficPolicy: Cluster
+  shutdown:
+    drainTimeout: 180s
+  telemetry:
+    metrics:
+      prometheus:
+        compression:
+          type: Zstd
+---
 apiVersion: gateway.networking.k8s.io/v1
 kind: Gateway
 metadata:
@@ -50,9 +90,17 @@ metadata:
 spec:
   gatewayClassName: envoy
   infrastructure:
+    parametersRef:
+      group: gateway.envoyproxy.io
+      kind: EnvoyProxy
+      name: envoy-external
     annotations:
       external-dns.alpha.kubernetes.io/hostname: external.${SECRET_DOMAIN}
-      lbipam.cilium.io/ips: "${CLOUDFLARE_GATEWAY_ADDR}"
+      # Read only while the Service is a LoadBalancer. Under `appliance` it is a
+      # ClusterIP and LB-IPAM never looks at it, which is why the placeholder is
+      # harmless there — and why it must stay non-empty regardless: an empty
+      # annotation value is null to the Gateway CRD and fails validation.
+      lbipam.cilium.io/ips: "${CLOUDFLARE_GATEWAY_ADDR:=0.0.0.0}"
   listeners:
     - name: http
       protocol: HTTP

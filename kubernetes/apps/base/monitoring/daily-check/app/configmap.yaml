@@ -289,6 +289,50 @@ data:
       record fail "Flux GitRepository sources" "$(echo "$BAD_GIT" | tr '\n' ' ')"
     fi
 
+    # 16. LoadBalancer address assignment.
+    #
+    # Cilium's own message is misleading here and must not be forwarded as-is.
+    # A port collision on a shared address reports reason=out_of_ips with
+    # "pools ... ran out of allocatable IPs", which sends the reader looking for
+    # a pool that is too small when the real cause is that another Service
+    # already claimed that port on that address. Under the single-address LAN
+    # design those two causes are indistinguishable from the message alone, so
+    # the explanation has to come from here.
+    UNSATISFIED=$(kubectl get svc -A -o json 2>/dev/null | jq -r '
+      .items[]
+      | select(.spec.type=="LoadBalancer")
+      | select(.status.conditions[]? | select(.type=="cilium.io/IPAMRequestSatisfied" and .status!="True"))
+      | "\(.metadata.namespace)/\(.metadata.name)=\(
+          [.status.conditions[]? | select(.type=="cilium.io/IPAMRequestSatisfied") | .reason][0] // "unknown")"')
+    if [[ -z "$UNSATISFIED" ]]; then
+      record ok "LoadBalancer addresses assigned"
+    else
+      HINT=""
+      if grep -q "out_of_ips" <<<"$UNSATISFIED"; then
+        HINT=" (out_of_ips usually means a port clash on the shared address, not a small pool)"
+      fi
+      if grep -q "already_allocated_incompatible_service" <<<"$UNSATISFIED"; then
+        HINT="${HINT} (incompatible_service usually means a missing lbipam.cilium.io/sharing-cross-namespace)"
+      fi
+      record fail "LoadBalancer addresses" "$(echo "$UNSATISFIED" | tr '\n' ' ')${HINT}"
+    fi
+
+    # 17. Discovered LAN address — appliance only; absent elsewhere by design.
+    if kubectl get ciliumloadbalancerippool pool-discovered >/dev/null 2>&1; then
+      DISC=$(kubectl get ciliumloadbalancerippool pool-discovered -o json 2>/dev/null)
+      DISC_ADDR=$(jq -r '.spec.blocks[0].start // "none"' <<<"$DISC")
+      DISC_PREV=$(jq -r '.metadata.annotations["lan-address.jg-base/previous"] // ""' <<<"$DISC")
+      DISC_AT=$(jq -r '.metadata.annotations["lan-address.jg-base/reselected-at"] // ""' <<<"$DISC")
+      if [[ -n "$DISC_PREV" ]]; then
+        # A reselection means every LAN-facing service moved address. Anything
+        # that cached the old one — a pinned MQTT broker, a HomeKit pairing —
+        # has to be repointed, so this is reported rather than logged quietly.
+        record warn "LAN address reselected" "now ${DISC_ADDR}, was ${DISC_PREV} (at ${DISC_AT}); LAN clients holding the old address need repointing"
+      else
+        record ok "LAN address stable (${DISC_ADDR})"
+      fi
+    fi
+
     echo "==> Compiling report"
     if [[ $FAIL_COUNT -gt 0 ]]; then
       STATUS_TAG="❌ ${FAIL_COUNT} FAIL"

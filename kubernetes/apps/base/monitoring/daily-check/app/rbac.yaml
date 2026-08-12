@@ -24,6 +24,10 @@ rules:
       - services
       - namespaces
     verbs: ["get", "list"]
+  # The discovered LAN address and its reselection history live on the pool.
+  - apiGroups: ["cilium.io"]
+    resources: ["ciliumloadbalancerippools"]
+    verbs: ["get", "list"]
   - apiGroups: ["apps"]
     resources:
       - deployments
