@@ -363,6 +363,37 @@ data:
       fi
     fi
 
+    # 19. Off-site backup freshness.
+    #
+    # An appliance is one disk. A backup that silently stopped running is
+    # indistinguishable from one that never existed until the day it is needed,
+    # so staleness is a FAIL — which withholds the dead-man ping and surfaces it
+    # even if the mail itself never arrives.
+    LAST_BACKUP=$(kubectl -n monitoring get jobs -o json 2>/dev/null | jq -r '
+      [.items[]
+       | select(.metadata.name | startswith("offsite-backup"))
+       | select(.status.succeeded == 1)
+       | .status.completionTime] | sort | last // ""')
+    if [[ -n "${BACKUP_R2_BUCKET:-}" ]]; then
+      if [[ -z "$LAST_BACKUP" ]]; then
+        record fail "Off-site backup" "configured but has never completed successfully"
+      else
+        AGE_H=$(( ( $(date -u +%s) - $(date -u -d "$LAST_BACKUP" +%s 2>/dev/null || echo 0) ) / 3600 ))
+        if (( AGE_H > 48 )); then
+          record fail "Off-site backup stale" "last success ${AGE_H}h ago (${LAST_BACKUP})"
+        elif (( AGE_H > 26 )); then
+          record warn "Off-site backup late" "last success ${AGE_H}h ago"
+        else
+          record ok "Off-site backup fresh (${AGE_H}h ago)"
+        fi
+      fi
+    else
+      # Not configured is a statement about this cluster, not a fault: a
+      # prosumer/full cluster may have its own backups. Appliance validation
+      # requires backup_r2_* precisely so this branch cannot be reached there.
+      record ok "Off-site backup not configured"
+    fi
+
     echo "==> Compiling report"
     if [[ $FAIL_COUNT -gt 0 ]]; then
       STATUS_TAG="❌ ${FAIL_COUNT} FAIL"

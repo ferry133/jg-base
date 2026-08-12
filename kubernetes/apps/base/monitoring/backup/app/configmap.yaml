@@ -1,0 +1,111 @@
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: offsite-backup
+  namespace: monitoring
+data:
+  backup.sh: |
+    #!/bin/bash
+    # Off-site backup: databases, encrypted to the
+    # cluster's own age public key, pushed to Cloudflare R2.
+    #
+    # An appliance is a single node on a single disk. Losing that disk loses the
+    # database and every bit of context the agent has accumulated for that
+    # customer, none of which is reconstructible. That is why backup_r2_* is
+    # required under the appliance profile rather than optional.
+    #
+    # Encrypted to a public key, not a shared secret: R2 holds ciphertext that
+    # the operator who owns the R2 account cannot read. Decryption travels with
+    # age.key, which is what changes hands at handover.
+    set -uo pipefail
+
+    log() { echo "[$(date -u '+%Y-%m-%dT%H:%M:%SZ')] $*"; }
+
+    if [[ -z "${BACKUP_R2_BUCKET:-}" || -z "${BACKUP_R2_ENDPOINT:-}" \
+       || -z "${BACKUP_R2_ACCESS_KEY_ID:-}" || -z "${BACKUP_R2_SECRET_ACCESS_KEY:-}" ]]; then
+      log "off-site backup not configured — set backup_r2_* in cluster.yaml"
+      exit 0
+    fi
+    if [[ -z "${BACKUP_AGE_RECIPIENT:-}" ]]; then
+      # Refusing is the point: uploading readable data to someone else's object
+      # store is worse than not uploading, so this is a failure, not a skip.
+      log "FATAL: BACKUP_AGE_RECIPIENT is empty; refusing to upload unencrypted data"
+      exit 1
+    fi
+
+    STAMP="$(date -u '+%Y%m%dT%H%M%SZ')"
+    WORK="$(mktemp -d)"
+    trap 'rm -rf "$WORK"' EXIT
+    STAGE="$WORK/${CLUSTER_NAME}-${STAMP}"
+    mkdir -p "$STAGE"
+    FAILED=0
+
+    # --- databases -----------------------------------------------------------
+    # Dumped through the API rather than read off disk: a file-level copy of a
+    # running PostgreSQL data directory is not a backup, it is a torn page.
+    dump_db() {
+      local ns="$1" deploy="$2" out="$3"
+      kubectl -n "$ns" get deploy "$deploy" >/dev/null 2>&1 || return 0
+      log "dumping ${ns}/${deploy}"
+      if kubectl -n "$ns" exec "deploy/${deploy}" -- sh -c \
+           'pg_dump -U "$POSTGRES_USER" "$POSTGRES_DB"' > "$STAGE/${out}.sql" 2>"$WORK/err"; then
+        if [[ -s "$STAGE/${out}.sql" ]]; then
+          log "  $(wc -c <"$STAGE/${out}.sql") bytes"
+        else
+          log "  ERROR: dump is empty"; rm -f "$STAGE/${out}.sql"; FAILED=1
+        fi
+      else
+        log "  ERROR: $(tail -1 "$WORK/err")"; rm -f "$STAGE/${out}.sql"; FAILED=1
+      fi
+    }
+    dump_db db postgres default-postgres
+    dump_db claudecode postgres claudecode-postgres
+
+    # The agent workspace is deliberately NOT here (D8): its files are working
+    # copies that can be recreated, while the context the agent accumulates per
+    # customer cannot — and that lives in the database, so the dumps above
+    # already cover it. A PVC in another namespace cannot be mounted from here
+    # either, so backing it up would mean putting this job in claudecode, which
+    # is the wrong place for it.
+    #
+    # Nothing here reads kubernetes manifests. Those live in git, which is
+    # already the authoritative copy; restoring them from an archive would be
+    # restoring a stale snapshot of something git holds correctly.
+
+    if [[ -z "$(ls -A "$STAGE")" ]]; then
+      log "nothing to back up"; exit "$FAILED"
+    fi
+
+    # --- encrypt then upload -------------------------------------------------
+    ARCHIVE="$WORK/${CLUSTER_NAME}-${STAMP}.tar.gz"
+    tar -czf "$ARCHIVE" -C "$WORK" "${CLUSTER_NAME}-${STAMP}" || { log "FATAL: archive failed"; exit 1; }
+    age -r "$BACKUP_AGE_RECIPIENT" -o "${ARCHIVE}.age" "$ARCHIVE" \
+      || { log "FATAL: encryption failed"; exit 1; }
+    rm -f "$ARCHIVE"
+    log "encrypted: $(wc -c <"${ARCHIVE}.age") bytes"
+
+    export AWS_ACCESS_KEY_ID="$BACKUP_R2_ACCESS_KEY_ID"
+    export AWS_SECRET_ACCESS_KEY="$BACKUP_R2_SECRET_ACCESS_KEY"
+    export AWS_DEFAULT_REGION=auto
+    KEY="${CLUSTER_NAME}/${CLUSTER_NAME}-${STAMP}.tar.gz.age"
+    if aws s3 cp --endpoint-url "$BACKUP_R2_ENDPOINT" --only-show-errors \
+         "${ARCHIVE}.age" "s3://${BACKUP_R2_BUCKET}/${KEY}"; then
+      log "uploaded s3://${BACKUP_R2_BUCKET}/${KEY}"
+    else
+      log "FATAL: upload failed"; exit 1
+    fi
+
+    # --- retention -----------------------------------------------------------
+    KEEP="${BACKUP_RETAIN_DAYS:-30}"
+    CUTOFF="$(date -u -d "${KEEP} days ago" '+%Y%m%d' 2>/dev/null || date -u '+%Y%m%d')"
+    aws s3 ls --endpoint-url "$BACKUP_R2_ENDPOINT" "s3://${BACKUP_R2_BUCKET}/${CLUSTER_NAME}/" 2>/dev/null \
+      | awk '{print $4}' | while read -r name; do
+          [[ "$name" =~ -([0-9]{8})T ]] || continue
+          if [[ "${BASH_REMATCH[1]}" < "$CUTOFF" ]]; then
+            aws s3 rm --endpoint-url "$BACKUP_R2_ENDPOINT" --only-show-errors \
+              "s3://${BACKUP_R2_BUCKET}/${CLUSTER_NAME}/${name}" && log "pruned $name"
+          fi
+        done
+
+    exit "$FAILED"

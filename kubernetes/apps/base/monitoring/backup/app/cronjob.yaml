@@ -1,0 +1,70 @@
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: offsite-backup-config
+  namespace: monitoring
+type: Opaque
+stringData:
+  CLUSTER_NAME: "${CLUSTER_NAME}"
+  BACKUP_AGE_RECIPIENT: "${BACKUP_AGE_RECIPIENT:=}"
+  BACKUP_R2_BUCKET: "${BACKUP_R2_BUCKET:=}"
+  BACKUP_R2_ENDPOINT: "${BACKUP_R2_ENDPOINT:=}"
+  BACKUP_R2_ACCESS_KEY_ID: "${BACKUP_R2_ACCESS_KEY_ID:=}"
+  BACKUP_R2_SECRET_ACCESS_KEY: "${BACKUP_R2_SECRET_ACCESS_KEY:=}"
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: offsite-backup
+  namespace: monitoring
+spec:
+  # 18:00 UTC = 02:00 Asia/Taipei, ahead of the 08:00 health check so a failure
+  # is reported the same morning rather than a day late.
+  schedule: "0 18 * * *"
+  timeZone: "Etc/UTC"
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 3600
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      ttlSecondsAfterFinished: 172800
+      template:
+        spec:
+          restartPolicy: Never
+          serviceAccountName: offsite-backup
+          securityContext:
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+            - name: backup
+              image: alpine:3.20
+              command:
+                - /bin/sh
+                - -c
+                - |
+                  apk add --no-cache --quiet bash age aws-cli kubectl postgresql16-client >/dev/null \
+                    && exec /bin/bash /scripts/backup.sh
+              envFrom:
+                - secretRef:
+                    name: offsite-backup-config
+              volumeMounts:
+                - name: scripts
+                  mountPath: /scripts
+              resources:
+                requests:
+                  cpu: 50m
+                  memory: 128Mi
+                limits:
+                  memory: 1Gi
+              securityContext:
+                allowPrivilegeEscalation: false
+                capabilities:
+                  drop: ["ALL"]
+          volumes:
+            - name: scripts
+              configMap:
+                name: offsite-backup
+                defaultMode: 0755
