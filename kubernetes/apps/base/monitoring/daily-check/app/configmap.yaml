@@ -333,33 +333,25 @@ data:
       fi
     fi
 
-    # 18. DNS rebinding protection.
+    # 18. Can the LAN still resolve internal names?
     #
-    # Internal names are published as ordinary A records pointing at an RFC1918
-    # address. Many routers refuse to return a private answer from an upstream
-    # resolver — that is DNS rebinding protection — and a LAN client behind such
-    # a router cannot resolve them however correct the record is.
+    # The operator points the router's DNS at k8s-gateway once during
+    # installation (D32). Nothing in the cluster can enforce that it stays
+    # pointed there: a router reset, a replacement unit, or an ISP-pushed config
+    # silently takes every internal name down while every component here stays
+    # green. Asking the router directly is the only way to see it.
     #
-    # Asking the router directly is the only detection that works here: the
-    # alternative, having clients report, requires the customer to run something,
-    # and a zero-IT customer is exactly who cannot. The node sits on the same LAN
-    # behind the same router, so what it sees is what they would see.
-    if [[ -n "${NODE_DEFAULT_GATEWAY:-}" ]] && command -v dig >/dev/null 2>&1; then
+    # Public DNS is not consulted, because Cloudflare will not publish the
+    # RFC1918 answer at all (D29) — there is nothing there to compare against.
+    if [[ -n "${NODE_DEFAULT_GATEWAY:-}" && -n "${SECRET_DOMAIN:-}" ]] && command -v dig >/dev/null 2>&1; then
       INTERNAL_NAME="internal.${SECRET_DOMAIN}"
-      PUBLIC_ANS=$(dig +short +time=3 +tries=1 @1.1.1.1 "$INTERNAL_NAME" A 2>/dev/null | head -1)
-      if [[ -z "$PUBLIC_ANS" ]]; then
-        : # nothing published yet — nothing to test, stay quiet
-      elif [[ ! "$PUBLIC_ANS" =~ ^(10\.|172\.(1[6-9]|2[0-9]|3[01])\.|192\.168\.) ]]; then
-        : # public record is not RFC1918; rebinding protection cannot apply
+      ROUTER_ANS=$(dig +short +time=3 +tries=1 "@${NODE_DEFAULT_GATEWAY}" "$INTERNAL_NAME" A 2>/dev/null | head -1)
+      if [[ "$ROUTER_ANS" =~ ^(10\.|172\.(1[6-9]|2[0-9]|3[01])\.|192\.168\.) ]]; then
+        record ok "LAN resolves internal names (${ROUTER_ANS})"
+      elif [[ -z "$ROUTER_ANS" ]]; then
+        record fail "LAN cannot resolve internal names" "router ${NODE_DEFAULT_GATEWAY} returns nothing for ${INTERNAL_NAME} — its DNS is no longer pointed at k8s-gateway, so every internal hostname is down on the LAN even though the cluster is healthy. See docs/operations/router-dns.md"
       else
-        ROUTER_ANS=$(dig +short +time=3 +tries=1 "@${NODE_DEFAULT_GATEWAY}" "$INTERNAL_NAME" A 2>/dev/null | head -1)
-        if [[ "$ROUTER_ANS" == "$PUBLIC_ANS" ]]; then
-          record ok "Router returns internal address (${PUBLIC_ANS})"
-        elif [[ -z "$ROUTER_ANS" ]]; then
-          record warn "DNS rebinding protection likely" "router ${NODE_DEFAULT_GATEWAY} returns nothing for ${INTERNAL_NAME} while public DNS returns ${PUBLIC_ANS}; LAN clients cannot resolve internal names — set dns_fallback: true in cluster.yaml to deploy k8s-gateway"
-        else
-          record warn "Router answer differs" "router ${NODE_DEFAULT_GATEWAY} returns ${ROUTER_ANS} for ${INTERNAL_NAME}, public DNS returns ${PUBLIC_ANS}"
-        fi
+        record warn "LAN resolves internal names to an unexpected address" "router returned ${ROUTER_ANS} for ${INTERNAL_NAME}"
       fi
     fi
 
