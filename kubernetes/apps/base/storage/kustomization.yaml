@@ -13,3 +13,5 @@ resources:
   - ./local-path-provisioner/ks.yaml
   # Suspended from the per-user repo when the cluster has no NAS.
   - ./nfs-subdir/ks.yaml
+  # Suspended unless storage_backend is "replicated" — see its ks.yaml.
+  - ./longhorn/ks.yaml

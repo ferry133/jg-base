@@ -1,0 +1,59 @@
+---
+# Replicated block storage, so a stateful workload on a multi-node cluster is
+# not pinned to whichever node happened to schedule it first (D13).
+#
+# NOT installed by simply existing: this needs node-level changes that no
+# manifest can make — the iscsi-tools and util-linux-tools Talos system
+# extensions, and a /var/lib/longhorn mount with rshared propagation. Without
+# them the pods come up and fail to attach anything. See
+# docs/operations/replicated-storage.md before enabling.
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: longhorn
+  namespace: longhorn-system
+spec:
+  interval: 1h
+  timeout: 15m
+  chart:
+    spec:
+      chart: longhorn
+      version: "1.12.0"
+      sourceRef:
+        kind: HelmRepository
+        name: longhorn
+        namespace: longhorn-system
+      interval: 1h
+  install:
+    crds: CreateReplace
+  upgrade:
+    crds: CreateReplace
+  values:
+    defaultSettings:
+      # Talos mounts the writable filesystem at /var; anything outside it is
+      # read-only or wiped on upgrade.
+      defaultDataPath: /var/lib/longhorn
+      # Two replicas on a three-node cluster: one node can be down or draining
+      # and the volume still has a copy plus somewhere to rebuild onto. Three
+      # would cost 3x the space to protect a database measured in megabytes.
+      defaultReplicaCount: 2
+      # Do not put a replica on a node that is filling up — a full node is how a
+      # replicated volume degrades into a single copy without anyone noticing.
+      storageMinimalAvailablePercentage: 15
+      # Talos nodes are rebooted for upgrades far more often than a general
+      # server, and a drain that waits forever for a volume is worse than one
+      # that reports it.
+      nodeDrainPolicy: block-for-eviction-if-contains-last-replica
+    persistence:
+      # Not the cluster default. Bulk data does not need replication, and making
+      # this the default would quietly move every existing PVC onto it.
+      defaultClass: false
+      defaultClassReplicaCount: 2
+      reclaimPolicy: Retain
+    longhornUI:
+      replicas: 1
+    csi:
+      attacherReplicaCount: 1
+      provisionerReplicaCount: 1
+      resizerReplicaCount: 1
+      snapshotterReplicaCount: 1

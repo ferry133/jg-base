@@ -1,0 +1,12 @@
+---
+# Longhorn's manager and instance-manager mount host paths, use iSCSI devices
+# and need to see mount propagation from the node. Talos admits at `baseline`
+# by default, which forbids all of that — the same wall the local-path helper
+# pod hit in 05b1501, and it fails just as quietly: pods pending, nothing about
+# the release itself looking wrong.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: longhorn-system
+  labels:
+    pod-security.kubernetes.io/enforce: privileged
