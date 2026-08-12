@@ -101,8 +101,15 @@ data:
     CUTOFF="$(date -u -d "${KEEP} days ago" '+%Y%m%d' 2>/dev/null || date -u '+%Y%m%d')"
     aws s3 ls --endpoint-url "$BACKUP_R2_ENDPOINT" "s3://${BACKUP_R2_BUCKET}/${CLUSTER_NAME}/" 2>/dev/null \
       | awk '{print $4}' | while read -r name; do
-          [[ "$name" =~ -([0-9]{8})T ]] || continue
-          if [[ "${BASH_REMATCH[1]}" < "$CUTOFF" ]]; then
+          # sed, not a bash regex capture. This script is a ConfigMap and Flux
+          # runs envsubst over it before it is applied; a BASH_REMATCH capture
+          # written with a numeric index reads as a variable name containing a
+          # bracket, which fails to parse and takes the whole manifest with it.
+          # (Array expansions using @ survive — daily-check has used them for
+          # months — so it is the numeric index specifically.)
+          stamp="$(echo "$name" | sed -n 's/.*-\([0-9]\{8\}\)T.*/\1/p')"
+          [ -n "$stamp" ] || continue
+          if [[ "$stamp" < "$CUTOFF" ]]; then
             aws s3 rm --endpoint-url "$BACKUP_R2_ENDPOINT" --only-show-errors \
               "s3://${BACKUP_R2_BUCKET}/${CLUSTER_NAME}/${name}" && log "pruned $name"
           fi
