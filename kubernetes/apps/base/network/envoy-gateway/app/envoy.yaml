@@ -130,7 +130,7 @@ spec:
   infrastructure:
     annotations:
       external-dns.alpha.kubernetes.io/hostname: internal.${SECRET_DOMAIN}
-      lbipam.cilium.io/ips: "${CLUSTER_GATEWAY_ADDR}"
+      lbipam.cilium.io/ips: "${CLUSTER_GATEWAY_ADDR:=0.0.0.0}"
       lbipam.cilium.io/sharing-key: "${LAN_SHARING_KEY:=envoy-internal}"
       lbipam.cilium.io/sharing-cross-namespace: "${LAN_SHARING_CROSS_NAMESPACE:=network}"
   listeners:
