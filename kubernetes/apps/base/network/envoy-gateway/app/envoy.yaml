@@ -123,12 +123,8 @@ apiVersion: gateway.networking.k8s.io/v1
 kind: Gateway
 metadata:
   name: envoy-internal
-  # Deliberately no external-dns target annotation. With one, every internal
-  # route became a CNAME to internal.<domain>, a name only k8s-gateway could
-  # answer — so the record existed in public DNS and resolved to nothing there.
-  # Without it, external-dns uses the Gateway's own status.addresses and
-  # publishes an A record straight to the shared LAN address, which is what
-  # lets a LAN client resolve it through the resolver its router handed out.
+  annotations:
+    external-dns.alpha.kubernetes.io/target: internal.${SECRET_DOMAIN}
 spec:
   gatewayClassName: envoy
   infrastructure:
