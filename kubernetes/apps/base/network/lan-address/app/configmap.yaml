@@ -7,19 +7,36 @@ metadata:
 data:
   probe.sh: |
     #!/bin/sh
-    # Find one free address on the customer's LAN and publish it as a
+    # Find free addresses on the customer's LAN and publish them as a
     # CiliumLoadBalancerIPPool. That pool is the only thing this component
     # exports: a later DHCP lease-holder implementation replaces this script and
     # nothing else, because no Service annotation, template or schema names it.
     #
-    # ARP can only show that nobody answers right now. It cannot show that the
+    # Two addresses, not one. The LAN-facing services (envoy-internal,
+    # k8s-gateway, mqtt) share a single address through Cilium's sharing key,
+    # but envoy-external cannot join that group: it listens on the same 80/443
+    # as envoy-internal, and Cilium only shares an address between services
+    # whose ports do not collide.
+    #
+    # Giving envoy-external a ClusterIP instead was tried and is worse.
+    # k8s-gateway answers a hostname from whatever address its parent Gateway
+    # holds, so every externally-routed name resolved to a ClusterIP no LAN
+    # client can reach — measured on jgt-appliance, im.janncot.cc answered
+    # 10.98.111.177. Attaching those routes to envoy-internal as well is not a
+    # fix either: k8s-gateway then returns both addresses and clients pick at
+    # random, and moving them off envoy-external entirely would delete the
+    # public records external-dns publishes from it, taking the remote-support
+    # path down with them.
+    #
+    # ARP can only show that nobody answers right now. It cannot show that an
     # address is outside the router's DHCP range, so a device that is currently
-    # switched off can still collide later. That is why the chosen address is
+    # switched off can still collide later. That is why the chosen addresses are
     # re-checked on every pass rather than picked once.
     set -eu
 
     POOL="${POOL_NAME:-pool-discovered}"
     INTERVAL="${PROBE_INTERVAL_SECONDS:-300}"
+    WANTED="${ADDRESS_COUNT:-2}"
     # Scan downward from the top of the subnet: routers hand out DHCP leases
     # from the low end far more often than the high end, so the top is the
     # likeliest place to find something that stays free.
@@ -54,24 +71,32 @@ data:
       arping -D -q -c 2 -w 3 -I "$IFACE" "$1" >/dev/null 2>&1
     }
 
-    current_pool_address() {
+    current_pool_addresses() {
       kubectl get ciliumloadbalancerippool "$POOL" \
-        -o jsonpath='{.spec.blocks[0].start}' 2>/dev/null || true
+        -o jsonpath='{range .spec.blocks[*]}{.start} {end}' 2>/dev/null || true
     }
 
     # The pool carries the reselection history as annotations, because the pool
     # is the only thing this component publishes and a log line inside a pod
     # nobody is watching is not a record. daily-check reads these.
     publish() {
-      _addr="$1"; _prev="${2:-}"
+      _addrs="$1"; _prev="${2:-}"
       _since="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
-      if [ -n "$_prev" ] && [ "$_prev" != "$_addr" ]; then
+      if [ -n "$_prev" ] && [ "$_prev" != "$_addrs" ]; then
         _prev_ann="lan-address.jg-base/previous: \"$_prev\""
         _at_ann="lan-address.jg-base/reselected-at: \"$_since\""
       else
         _prev_ann="lan-address.jg-base/previous: \"\""
         _at_ann="lan-address.jg-base/reselected-at: \"\""
       fi
+      # One single-address block per address, so the pool reads as the list of
+      # addresses this cluster holds rather than a range it may grow into.
+      _blocks=""
+      for _a in $_addrs; do
+        _blocks="$_blocks
+        - start: \"$_a\"
+          stop: \"$_a\""
+      done
       cat <<EOF | kubectl apply --server-side --force-conflicts -f - >/dev/null
     apiVersion: cilium.io/v2
     kind: CiliumLoadBalancerIPPool
@@ -85,33 +110,49 @@ data:
         $_at_ann
     spec:
       allowFirstLastIPs: "No"
-      blocks:
-        - start: "$_addr"
-          stop: "$_addr"
+      blocks:$_blocks
     EOF
     }
 
     while :; do
       chosen=""
-      # Prefer the address already published: re-probing it keeps the choice
-      # stable across restarts, which is what stops a reboot from silently
-      # moving every LAN-facing service to a new address.
-      existing="$(current_pool_address)"
-      if [ -n "$existing" ] && is_free "$existing"; then
-        chosen="$existing"
-        log "keeping $chosen (still unanswered)"
-      else
-        [ -z "$existing" ] || log "WARNING: $existing now answers ARP — reselecting"
-        for last in $(seq "$SCAN_FROM" -1 "$SCAN_TO"); do
-          cand="$PREFIX.$last"
-          if is_free "$cand"; then chosen="$cand"; break; fi
-        done
-        if [ -n "$chosen" ]; then
-          log "selected $chosen (was ${existing:-none})"
+      count=0
+      existing="$(current_pool_addresses | tr -s ' ' | sed 's/ $//')"
+      # Keep the addresses already published, in the order they were published:
+      # re-probing them keeps the choice stable across restarts, which is what
+      # stops a reboot from silently moving every LAN-facing service. Order
+      # matters because Cilium hands out a pool's blocks in order, so preserving
+      # it keeps each service on the address it already has.
+      for addr in $existing; do
+        if is_free "$addr"; then
+          chosen="${chosen:+$chosen }$addr"
+          count=$((count + 1))
+        else
+          log "WARNING: $addr now answers ARP — reselecting"
         fi
+      done
+      [ -z "$existing" ] || [ "$count" -eq "$WANTED" ] || \
+        log "keeping [$chosen], looking for $((WANTED - count)) more"
+      # Fill up to WANTED from the top of the subnet.
+      if [ "$count" -lt "$WANTED" ]; then
+        for last in $(seq "$SCAN_FROM" -1 "$SCAN_TO"); do
+          [ "$count" -lt "$WANTED" ] || break
+          cand="$PREFIX.$last"
+          case " $chosen " in *" $cand "*) continue ;; esac
+          if is_free "$cand"; then
+            chosen="${chosen:+$chosen }$cand"
+            count=$((count + 1))
+            log "selected $cand"
+          fi
+        done
       fi
 
-      if [ -n "$chosen" ]; then
+      if [ "$count" -eq "$WANTED" ]; then
+        publish "$chosen" "$existing"
+      elif [ "$count" -gt 0 ]; then
+        # Publishing a short list still beats publishing nothing: the services
+        # that fit come up, and the ones that do not are visibly <pending>.
+        log "WARNING: only $count of $WANTED addresses free in $PREFIX.$SCAN_TO-$SCAN_FROM"
         publish "$chosen" "$existing"
       else
         log "ERROR: no free address in $PREFIX.$SCAN_TO-$SCAN_FROM; leaving pool untouched"
