@@ -76,6 +76,11 @@ data:
         -o jsonpath='{range .spec.blocks[*]}{.start} {end}' 2>/dev/null || true
     }
 
+    current_annotation() {
+      kubectl get ciliumloadbalancerippool "$POOL" \
+        -o jsonpath="{.metadata.annotations.lan-address\.jg-base/$1}" 2>/dev/null || true
+    }
+
     # The pool carries the reselection history as annotations, because the pool
     # is the only thing this component publishes and a log line inside a pod
     # nobody is watching is not a record. daily-check reads these.
@@ -86,8 +91,13 @@ data:
         _prev_ann="lan-address.jg-base/previous: \"$_prev\""
         _at_ann="lan-address.jg-base/reselected-at: \"$_since\""
       else
-        _prev_ann="lan-address.jg-base/previous: \"\""
-        _at_ann="lan-address.jg-base/reselected-at: \"\""
+        # Carry the last reselection forward instead of blanking it. publish
+        # runs every INTERVAL — minutes — while daily-check reads these once a
+        # day, so overwriting them on an uneventful pass erased the record long
+        # before anything could report it. Server-side apply owns these fields,
+        # so they have to be restated to survive.
+        _prev_ann="lan-address.jg-base/previous: \"$(current_annotation previous)\""
+        _at_ann="lan-address.jg-base/reselected-at: \"$(current_annotation reselected-at)\""
       fi
       # One single-address block per address, so the pool reads as the list of
       # addresses this cluster holds rather than a range it may grow into.
