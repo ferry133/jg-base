@@ -48,8 +48,18 @@ so ferry133 always has a remote support path into the cluster that does not depe
 Omni/SideroLink. Shared pieces (namespace, `cluster-admin` SA, OCIRepository, secrets)
 live here in `jg-base`; the per-instance HelmReleases are still rendered into the
 per-user repo from `claude_instances` (default `["im"]`) because the instance names and
-the optional `oauth2-proxy` / `talos-mcp` sidecars are template-time *structure*.
+the `oauth2-proxy` / `talos-mcp` sidecars are template-time *structure*.
 `extras/claudecode/postgres` stays opt-in.
+
+**Auth0 OIDC is the default gate** in front of every instance (`claudecode_auth0`,
+default true, in `jg-cluster-template`). The shared Auth0 application's
+domain/client_id/client_secret come from a gitignored `auth0.json` in each cluster
+directory; the oauth2-proxy cookie secret is derived from `age.key` + `cluster_name`.
+Two things this costs, both real: the instance is unreachable until that cluster's
+`https://<instance>.<domain>/oauth2/callback` is registered in the Auth0 application
+(OIDC mode binds ttyd to loopback — there is no fallback), and the rescue path now
+depends on Auth0 being up. A cluster that cannot accept that sets
+`claudecode_auth0: false` and supplies `ttyd_credential`.
 
 **`base/monitoring/daily-check` is a base app** — every cluster runs its own daily
 health-check CronJob (08:00 Asia/Taipei) that emails a report via Gmail SMTP and pings

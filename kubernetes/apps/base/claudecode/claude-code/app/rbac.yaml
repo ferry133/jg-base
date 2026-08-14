@@ -2,8 +2,13 @@
 # Shared by every claude-code instance (claude_instances). cluster-admin
 # (user-confirmed 2026-07-26) so the web terminal stays a full rescue path
 # when Omni/SideroLink is down — it reaches the cluster via Cloudflare
-# Tunnel, independent of Omni. The only gate in front of this SA is ttyd
-# basic auth on <instance>.<domain>; keep ttyd_credential strong.
+# Tunnel, independent of Omni.
+#
+# The only gate in front of this SA is whatever fronts <instance>.<domain>:
+# Auth0 OIDC through the oauth2-proxy sidecar by default, or ttyd basic auth
+# on `claudecode_auth0: false` — in which case keep ttyd_credential strong.
+# Note what OIDC costs in exchange: it puts Auth0 on the rescue path this SA
+# exists to keep open, since ttyd then binds loopback with no fallback.
 apiVersion: v1
 kind: ServiceAccount
 metadata:

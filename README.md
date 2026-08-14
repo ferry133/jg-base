@@ -79,7 +79,7 @@ kubernetes/
 | `default/postgres` | Shared PostgreSQL | `postgres_password` |
 | `default/synophoto` | Synology photo workflow (GPS tagger + auto-move + AI-curated progress albums). Lives in ns `linebot` to share `linebot-admin` for project metadata (sites table, photo_folder slugs). | `synophoto_flask_secret_key`, `anthropic_api_key` |
 | `default/trello-notifier` | Trello LINE notification bot | Trello/LINE tokens |
-| `default/ttyd` | Web terminal | `ttyd_credential` |
+| `default/ttyd` | Web terminal — **unauthenticated**; superseded by `base/claudecode/claude-code`, do not enable | — |
 | `freepbx/freepbx` | FreePBX / Asterisk PBX | `freepbx_mysql_*` |
 | `ingress-nginx/ingress-nginx` | Nginx ingress controller | — |
 | `network/cloudflare-tunnel-lan` | Cloudflare tunnel for LAN access | — |
