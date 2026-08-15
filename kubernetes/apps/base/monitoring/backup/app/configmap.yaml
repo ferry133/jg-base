@@ -4,6 +4,23 @@ kind: ConfigMap
 metadata:
   name: offsite-backup
   namespace: monitoring
+  annotations:
+    # Without this, Flux's postBuild substitution rewrites the script before it
+    # ever runs: every `${...}` is treated as a variable to replace. Shell
+    # locals become empty (`deploy/${deploy}` → `deploy/`, which kubectl
+    # rejects), `${STAMP}` disappears from the archive name so every upload
+    # would overwrite the last, and — worst — the R2 credentials get inlined as
+    # literals into this ConfigMap, where anything that can read ConfigMaps in
+    # this namespace can read them.
+    #
+    # The script takes all of those from the container's environment, which the
+    # CronJob populates from cluster-secrets. Substitution here has nothing to
+    # contribute and everything to break.
+    #
+    # Measured on jgt-appliance 2026-08-15: the dump failed with an empty
+    # deployment name and the job reported "nothing to back up" — the same line
+    # a cluster with no databases prints, which is why nobody saw it.
+    kustomize.toolkit.fluxcd.io/substitute: disabled
 data:
   backup.sh: |
     #!/bin/bash

@@ -4,6 +4,18 @@ kind: ConfigMap
 metadata:
   name: lan-address-probe
   namespace: lan-address
+  annotations:
+    # Same reason as monitoring/backup: Flux's postBuild substitution rewrites
+    # every `${...}` in this script before it runs. This one kept working
+    # because most of its variables carry `:-` defaults that substitution
+    # preserves — which made the damage invisible rather than absent.
+    # `_prev="${2:-}"` became `_prev=""`, silently discarding the function's
+    # second argument, and the `NODE_CIDR` unset guard became a literal that can
+    # never be empty.
+    #
+    # Values come from the container's environment. Substitution here has
+    # nothing to contribute.
+    kustomize.toolkit.fluxcd.io/substitute: disabled
 data:
   probe.sh: |
     #!/bin/sh
