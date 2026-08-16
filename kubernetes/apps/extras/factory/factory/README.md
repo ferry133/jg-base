@@ -96,21 +96,61 @@ different ways:
   anything cheap: same 53 characters, same `cfut_` prefix, same `active` verify,
   and it too returns exactly one zone bearing the name asked for. It separates
   on two columns and no others — `status` is `active` rather than `moved`, and
-  `name_servers` `[rajeev, shubhi]` equals the live delegation as a set. The
-  records resolve from outside: `cc.jiahd.cc` answers Status 0.
+  `name_servers` `[rajeev, shubhi]` equals the live delegation as a set.
 
-The empty answer in A is worth seeing literally, because everyone expects a 403
-and there is not one anywhere in it. **Captured 2026-08-16 from a credential
-that is being replaced — this is a record, not something to re-run.** Once
-jgt-appliance's token is repaired the same call returns case C's shape, so a
-reader who tries it and gets a populated result has confirmed the repair, not
-found an error here. Both `/zones` and `/zones?name=…` returned this body under
-**HTTP 200**:
+### Three answers to one call, and what actually separates them
+
+jgt-appliance's token was repaired on 2026-08-17, so the same field on the same
+cluster has now produced a broken answer and a correct one. With B alongside,
+`GET /zones?name=…` gives three results and the columns that matter are not the
+ones anyone checks:
+
+| | `http_status` | `success` | `count` | `status` | `name_servers` vs live NS | verdict |
+|---|---|---|---|---|---|---|
+| **A-before** | 200 | true | **0** | — | — | broken |
+| **A-after** | 200 | true | 1 | `active` | match | correct |
+| **B** | 200 | true | 1 | **`moved`** | **differ** | broken |
+
+`http_status` and `success` are identical in all three and separate nothing.
+`count` separates A-before from the other two and **nothing else does** — which
+is why "does the API accept the token" is not a check. And `count >= 1` is not
+the assertion either, because B passes it: only `status` and the NS comparison
+separate B from A-after.
+
+The two bodies, both under **HTTP 200**. A-before is a record, not something to
+re-run — the credential it came from no longer exists, and the same call on that
+cluster now returns A-after:
 
 ```
+A-before (2026-08-16)
 {"result":[],"result_info":{"page":1,"per_page":20,"total_pages":0,
  "count":0,"total_count":0},"success":true,"errors":[],"messages":[]}
+
+A-after (2026-08-17)
+{"result":[{"id":"b67776ce…","name":"janncot.cc","status":"active",
+ "name_servers":["marge.ns.cloudflare.com","sage.ns.cloudflare.com"]}],
+ "result_info":{…,"count":1,"total_count":1},"success":true,"errors":[]}
 ```
+
+Note the zone id: `b67776ce…`, not B's `c9851d69…`. Two live zones of the same
+name in two accounts, and the repaired token points at the delegated one — which
+is the trap in the table above, shown rather than described.
+
+**That the assertion tracks reality, not just itself:** after the repair,
+external-dns created six records within three seconds, and `im.janncot.cc` went
+from NXDOMAIN worldwide for three days — while every component reported
+healthy — to serving. Confirmed here independently:
+
+```
+$ curl -I --resolve im.janncot.cc:443:172.67.166.34 https://im.janncot.cc
+HTTP/2 401
+www-authenticate: Basic realm="ttyd"
+cf-ray: a2c3fbf118de1613-SJC
+```
+
+`--resolve` because this workstation's own resolver still cannot find the name —
+see the interception note below. A host that can reach the service by address
+and not by name is the same defect one layer down.
 
 Verified here rather than taken on report — the delegation half, which is the
 part that generalises:
