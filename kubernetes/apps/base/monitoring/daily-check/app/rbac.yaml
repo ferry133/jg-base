@@ -76,3 +76,33 @@ subjects:
   - kind: ServiceAccount
     name: daily-check
     namespace: monitoring
+---
+# Reading the backup's per-database result (offsite-backup-status). One named
+# ConfigMap in one namespace, not `configmaps` on the ClusterRole above: this
+# check needs a single object, and cluster-wide ConfigMap read is a much larger
+# grant than the job it does — ConfigMaps routinely hold more than their authors
+# intended.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: daily-check-backup-status
+  namespace: monitoring
+rules:
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    resourceNames: ["offsite-backup-status"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: daily-check-backup-status
+  namespace: monitoring
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: daily-check-backup-status
+subjects:
+  - kind: ServiceAccount
+    name: daily-check
+    namespace: monitoring

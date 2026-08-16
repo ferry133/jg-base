@@ -80,6 +80,29 @@ data:
       esac
     }
 
+    # RFC3339 (what the API server returns) to epoch seconds. Prints nothing if
+    # it cannot parse, and callers must treat that as "unknown" rather than
+    # substituting a number.
+    #
+    # This is not fixing a live defect: the install step above adds coreutils,
+    # so `date` here is GNU and `-d "<RFC3339>"` parses. It removes a way to
+    # fail badly rather than a failure. The previous spelling ended `|| echo 0`,
+    # which turns an unparseable timestamp into the epoch — 1970, i.e. an age of
+    # roughly half a million hours, i.e. a confident FAIL and a withheld
+    # dead-man ping, in response to not knowing.
+    #
+    # The busybox fallback is cheap insurance, not decoration: the sibling job
+    # in this same directory runs on alpine WITHOUT coreutils, and a GNU date
+    # spelling there is exactly what silently deleted its own backups until
+    # 6403b5c. Measured in that image: `-d "<RFC3339>"` is refused outright,
+    # while the explicit strptime form `-D` works. GNU has no -D, so GNU is
+    # tried first.
+    epoch_of() {
+      date -u -d "$1" +%s 2>/dev/null \
+        || date -u -D "%Y-%m-%dT%H:%M:%SZ" -d "$1" +%s 2>/dev/null \
+        || true
+    }
+
     # 0. Purge ghost pods — terminal-phase (Succeeded/Failed) pods owned by a
     # replica controller (ReplicaSet/DaemonSet/StatefulSet). These are leftovers
     # from node disruption/eviction that the controller has already replaced;
@@ -370,13 +393,20 @@ data:
       if [[ -z "$LAST_BACKUP" ]]; then
         record fail "Off-site backup" "configured but has never completed successfully"
       else
-        AGE_H=$(( ( $(date -u +%s) - $(date -u -d "$LAST_BACKUP" +%s 2>/dev/null || echo 0) ) / 3600 ))
-        if (( AGE_H > 48 )); then
-          record fail "Off-site backup stale" "last success ${AGE_H}h ago (${LAST_BACKUP})"
-        elif (( AGE_H > 26 )); then
-          record warn "Off-site backup late" "last success ${AGE_H}h ago"
+        BACKUP_EPOCH="$(epoch_of "$LAST_BACKUP")"
+        if [[ -z "$BACKUP_EPOCH" ]]; then
+          # Unknown age, said as unknown. Guessing in either direction is worse:
+          # low invents a healthy backup, high invents an outage.
+          record warn "Off-site backup" "cannot parse completion time (${LAST_BACKUP})"
         else
-          record ok "Off-site backup fresh (${AGE_H}h ago)"
+          AGE_H=$(( ( $(date -u +%s) - BACKUP_EPOCH ) / 3600 ))
+          if (( AGE_H > 48 )); then
+            record fail "Off-site backup stale" "last success ${AGE_H}h ago (${LAST_BACKUP})"
+          elif (( AGE_H > 26 )); then
+            record warn "Off-site backup late" "last success ${AGE_H}h ago"
+          else
+            record ok "Off-site backup fresh (${AGE_H}h ago)"
+          fi
         fi
       fi
     else
@@ -384,6 +414,87 @@ data:
       # prosumer/full cluster may have its own backups. Appliance validation
       # requires backup_r2_* precisely so this branch cannot be reached there.
       record ok "Off-site backup not configured"
+    fi
+
+    # 20. Off-site backup coverage — which databases, not merely whether it ran.
+    #
+    # Check 19 answers "did the pipeline land recently". This answers "did every
+    # database it knows about make it into the archive", and the two fail
+    # independently: an archive can upload on time with a database missing from
+    # it, and check 19 cannot tell.
+    #
+    # The Job's exit code is one bit and the script now covers four databases,
+    # so "mariadb failed while postgres succeeded" and "everything failed"
+    # arrive here identically. The detail is read from a ConfigMap the backup
+    # publishes rather than parsed out of its log — parsing would couple this
+    # check to wording that changed twice in the week it was written — and the
+    # outcomes are separate keys so "absent" and "failed" cannot reach this
+    # check as the same string.
+    if [[ -n "${BACKUP_R2_BUCKET:-}" ]]; then
+      # stderr to its own file and branch on the exit code, rather than folding
+      # 2>&1 into the value: the API server prepends Warning: headers to
+      # perfectly successful reads (admission webhooks, deprecations), which
+      # would make a healthy GET look unreadable and paste the warning into the
+      # email. Swallowing stderr entirely is the other wrong answer — then "not
+      # published yet" and "cannot read it" become the same line, which is the
+      # conflation this pair of checks exists to remove.
+      COV_ERR=$(mktemp)
+      if COV=$(kubectl -n monitoring get cm offsite-backup-status -o json 2>"$COV_ERR"); then
+        COV_READ=1
+      else
+        COV_READ=0; COV_MSG=$(tr '\n' ' ' <"$COV_ERR")
+      fi
+      rm -f "$COV_ERR"
+      if [[ "$COV_READ" -eq 0 ]]; then
+        if [[ "$COV_MSG" == *NotFound* ]]; then
+          # Expected on the first run after this shipped, and worth a warn
+          # rather than silence if it persists: the backup is not publishing.
+          record warn "Off-site backup coverage" \
+            "no status published yet — appears after the next backup run"
+        else
+          record warn "Off-site backup coverage" "cannot read status: ${COV_MSG}"
+        fi
+      else
+        # `absent` is deliberately published but not read here: keeping it a
+        # separate key is what stops it ever being folded into `failed`, and
+        # the log already names which databases a cluster does not have.
+        COV_TS=$(echo "$COV"   | jq -r '.data.timestamp // ""')
+        COV_OK=$(echo "$COV"   | jq -r '.data.dumped // ""')
+        COV_BAD=$(echo "$COV"  | jq -r '.data.failed // ""')
+        # A database that was dumped on the previous run and is absent now. The
+        # backup cannot call that a failure — absence is normal — but it is the
+        # one shape of absence that means coverage was lost rather than never
+        # configured, and it must not reach a green line.
+        COV_GONE=$(echo "$COV" | jq -r '.data.regressed // ""')
+        COV_EPOCH="$(epoch_of "$COV_TS")"
+        COV_AGE_H=""
+        [[ -n "$COV_EPOCH" ]] && COV_AGE_H=$(( ( $(date -u +%s) - COV_EPOCH ) / 3600 ))
+        if [[ -n "$COV_BAD" || -n "$COV_GONE" ]]; then
+          # The line this whole issue exists for: name them.
+          COV_MSG=""
+          [[ -n "$COV_BAD" ]] && COV_MSG="failed to dump: ${COV_BAD}"
+          [[ -n "$COV_GONE" ]] && COV_MSG="${COV_MSG:+${COV_MSG}; }was dumped on the previous run, absent now: ${COV_GONE}"
+          record fail "Off-site backup coverage" "$COV_MSG"
+        elif [[ -z "$COV_AGE_H" ]]; then
+          # Unknown age, said as unknown — the same rule check 19 follows twenty
+          # lines up. Falling through to ok would assert coverage from a status
+          # that might be months old.
+          record warn "Off-site backup coverage" "cannot parse status timestamp (${COV_TS})"
+        elif (( COV_AGE_H > 26 )); then
+          # 26h, matching check 19's "late" threshold rather than its 48h
+          # "stale". A different number here produces a report that says the
+          # backup is late and, on the next line, that coverage is fine.
+          record warn "Off-site backup coverage" \
+            "status is ${COV_AGE_H}h old and describes an earlier run"
+        elif [[ -z "$COV_OK" ]]; then
+          # No databases dumped, none failed, and none lost since the last run:
+          # this cluster installed none of them. A real state, and distinct from
+          # a failure, which is why they are separate keys.
+          record ok "Off-site backup coverage (no databases installed)"
+        else
+          record ok "Off-site backup coverage (${COV_OK})"
+        fi
+      fi
     fi
 
     echo "==> Compiling report"

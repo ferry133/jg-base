@@ -33,3 +33,37 @@ subjects:
   - kind: ServiceAccount
     name: offsite-backup
     namespace: monitoring
+---
+# Publishing the per-database result (offsite-backup-status). A namespaced Role
+# and not an addition to the ClusterRole above: the dump needs cluster-wide
+# reach to find databases, writing down what it found does not.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: offsite-backup-status
+  namespace: monitoring
+rules:
+  # create cannot be restricted by resourceName — a POST carries the name in the
+  # body, not the URL, so there is nothing for RBAC to match on. Everything that
+  # can be narrowed is.
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["create"]
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    resourceNames: ["offsite-backup-status"]
+    verbs: ["get", "patch", "update"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: offsite-backup-status
+  namespace: monitoring
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: offsite-backup-status
+subjects:
+  - kind: ServiceAccount
+    name: offsite-backup
+    namespace: monitoring

@@ -67,6 +67,12 @@ data:
     # match the server by construction. Covering another engine means adding a
     # case below, never a package to the CronJob.
     DUMPED=0 ABSENT=0 BROKEN=0
+    # Names as well as counts. The counts are for the log; the names are what
+    # gets published for daily-check, because "one of four failed" and "which
+    # one failed" are different questions and only the second is actionable at
+    # 08:00. Space-separated strings rather than arrays — see the sed note in
+    # the retention block for why this file avoids clever constructs.
+    DUMPED_NAMES="" ABSENT_NAMES="" BROKEN_NAMES=""
 
     dump_db() {
       local engine="$1" ns="$2" deploy="$3" out="$4"
@@ -81,7 +87,7 @@ data:
           # quietly not being dumped, which is how freepbx/mariadb reached 92
           # days unbacked without anything looking wrong.
           log "${ns}/${deploy}: not installed"
-          ABSENT=$((ABSENT + 1))
+          ABSENT=$((ABSENT + 1)); ABSENT_NAMES="${ABSENT_NAMES} ${ns}/${deploy}"
         else
           # An apiserver timeout, a TLS blip or a narrowed RBAC fail this probe
           # too. Counting those as "not installed" would rebuild the exact
@@ -89,7 +95,7 @@ data:
           # cluster would report a database it cannot see as one it does not
           # have. A probe that cannot answer is a failure, not an absence.
           log "${ns}/${deploy}: ERROR: cannot determine whether it exists: ${probe}"
-          BROKEN=$((BROKEN + 1)); FAILED=1
+          BROKEN=$((BROKEN + 1)); FAILED=1; BROKEN_NAMES="${BROKEN_NAMES} ${ns}/${deploy}"
         fi
         return 0
       fi
@@ -124,7 +130,7 @@ data:
           ;;
         *)
           log "${ns}/${deploy}: ERROR: unknown engine ${engine}"
-          BROKEN=$((BROKEN + 1)); FAILED=1; return 0
+          BROKEN=$((BROKEN + 1)); FAILED=1; BROKEN_NAMES="${BROKEN_NAMES} ${ns}/${deploy}"; return 0
           ;;
       esac
 
@@ -133,14 +139,14 @@ data:
            > "$STAGE/${out}.sql" 2>"$WORK/err"; then
         if [[ -s "$STAGE/${out}.sql" ]]; then
           log "  $(wc -c <"$STAGE/${out}.sql") bytes"
-          DUMPED=$((DUMPED + 1))
+          DUMPED=$((DUMPED + 1)); DUMPED_NAMES="${DUMPED_NAMES} ${ns}/${deploy}"
         else
           log "  ERROR: dump is empty"; rm -f "$STAGE/${out}.sql"
-          BROKEN=$((BROKEN + 1)); FAILED=1
+          BROKEN=$((BROKEN + 1)); FAILED=1; BROKEN_NAMES="${BROKEN_NAMES} ${ns}/${deploy}"
         fi
       else
         log "  ERROR: $(tail -1 "$WORK/err")"; rm -f "$STAGE/${out}.sql"
-        BROKEN=$((BROKEN + 1)); FAILED=1
+        BROKEN=$((BROKEN + 1)); FAILED=1; BROKEN_NAMES="${BROKEN_NAMES} ${ns}/${deploy}"
       fi
     }
 
@@ -155,6 +161,62 @@ data:
     dump_db mariadb  freepbx    mariadb  freepbx-mariadb
 
     log "databases: ${DUMPED} dumped, ${ABSENT} not installed, ${BROKEN} failed"
+
+    # Publish the per-database outcome where daily-check can read it.
+    #
+    # The Job's exit code is one bit and now carries four databases, so
+    # "mariadb failed while postgres succeeded", "one of four failed" and
+    # "everything failed" all reach the health check as the same signal. The
+    # log already distinguishes them and nothing reads the log.
+    #
+    # A ConfigMap rather than an annotation on the CronJob: Flux owns that
+    # object and strips foreign fields on the next reconcile. And rather than
+    # daily-check parsing this log, which would couple the check to wording
+    # that changed twice in the week this was written.
+    #
+    # Three separate keys, never one pre-rendered sentence. "absent" and
+    # "failed" must not be able to arrive as the same string at any layer —
+    # that equivalence is the whole defect this file has been fixing.
+    #
+    # Deliberately written before the upload: it describes dump coverage, not
+    # whether the archive landed. Those are different questions and daily-check
+    # answers the second one from Job status.
+    # A database that was being dumped yesterday and is merely "absent" today is
+    # the 92-day failure coming back through another door. Absence does not set
+    # FAILED — correctly, since most clusters install a subset — so the Job
+    # succeeds, the archive uploads without that database, and every check goes
+    # green forever. A Deployment does not disappear during a rolling restart:
+    # this means renamed, moved namespace, deleted, or replaced by a StatefulSet.
+    #
+    # One generation of history separates "this cluster never had it" from "this
+    # cluster stopped backing it up", and one generation is all this keeps —
+    # today's dumped set is tomorrow's comparison.
+    PREV_DUMPED="$(kubectl -n monitoring get cm offsite-backup-status \
+                     -o jsonpath='{.data.dumped}' 2>/dev/null || true)"
+    REGRESSED=""
+    for prev in $PREV_DUMPED; do
+      case " ${ABSENT_NAMES} " in
+        *" ${prev} "*) REGRESSED="${REGRESSED} ${prev}" ;;
+      esac
+    done
+    if [[ -n "$REGRESSED" ]]; then
+      log "REGRESSION: dumped on the previous run, absent now:${REGRESSED}"
+    fi
+
+    if kubectl -n monitoring create configmap offsite-backup-status \
+         --from-literal=timestamp="$(date -u '+%Y-%m-%dT%H:%M:%SZ')" \
+         --from-literal=dumped="${DUMPED_NAMES# }" \
+         --from-literal=absent="${ABSENT_NAMES# }" \
+         --from-literal=failed="${BROKEN_NAMES# }" \
+         --from-literal=regressed="${REGRESSED# }" \
+         --dry-run=client -o yaml \
+         | kubectl apply -f - >/dev/null 2>"$WORK/cmerr"; then
+      log "published status: configmap/offsite-backup-status"
+    else
+      # Never fatal. Failing a backup because its status could not be written
+      # would turn a reporting problem into a data problem.
+      log "WARNING: could not publish status: $(tail -1 "$WORK/cmerr" 2>/dev/null)"
+    fi
 
     # The agent workspace is deliberately NOT here (D8): its files are working
     # copies that can be recreated, while the context the agent accumulates per
