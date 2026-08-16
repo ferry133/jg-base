@@ -83,7 +83,24 @@ different ways:
   the stale one holds eight complete, correct-looking records — including
   `im.janncot.cc` — for hostnames that are NXDOMAIN worldwide.
 
-Reproduced independently from this repo's workstation, not taken on report:
+- **Correct, for contrast.** jg-jiahd's token, indistinguishable from B by
+  anything cheap: same 53 characters, same `cfut_` prefix, same `active` verify,
+  and it too returns exactly one zone bearing the name asked for. It separates
+  on two columns and no others — `status` is `active` rather than `moved`, and
+  `name_servers` `[rajeev, shubhi]` equals the live delegation as a set. The
+  records resolve from outside: `cc.jiahd.cc` answers Status 0.
+
+The empty answer in A is worth seeing literally, because everyone expects a 403
+and there is not one anywhere in it — both `/zones` and `/zones?name=…` return
+this same body under **HTTP 200**:
+
+```
+{"result":[],"result_info":{"page":1,"per_page":20,"total_pages":0,
+ "count":0,"total_count":0},"success":true,"errors":[],"messages":[]}
+```
+
+Verified here rather than taken on report — the delegation half, which is the
+part that generalises:
 
 ```
 $ curl -H 'accept: application/dns-json' \
@@ -91,6 +108,12 @@ $ curl -H 'accept: application/dns-json' \
 marge.ns.cloudflare.com.   sage.ns.cloudflare.com.     # dns.google agrees
 $ …?name=im.janncot.cc&type=A   ->   "Status": 3       # NXDOMAIN
 ```
+
+The token measurements are the jgt-appliance session's, not reproduced here —
+calling Cloudflare with another cluster's credential is not something this
+directory needs to do. What was checked locally is that shape separates nothing:
+all three tokens are 53 characters with the same prefix, and jgt-appliance's
+`backup_r2_access_key_id` begins `e2702`, matching the reported token id.
 
 ### The general form: compare material, not labels
 
@@ -131,17 +154,35 @@ unique to that cluster — and then read the absence. Otherwise a stale or
 wrong-cluster kubeconfig returns exactly the reassuring answer the assertion is
 looking for.
 
-**Use DoH for anything about public DNS. `dig` will lie to you**, and not only on
-an appliance LAN — reproduced on the operator workstation while writing this:
+**On the appliance LAN, `dig` cannot answer questions about public DNS, and
+naming a server does not help.** The scope is the resolver path, not the
+location: any host whose queries traverse `10.9.1.1` is affected, and a host on
+a clean network is not.
 
 ```
 $ dig +short NS janncot.cc @1.1.1.1
 k8s-gateway.network.janncot.cc.      # 1.1.1.1 was named and did not answer
+$ dig +short A example.com @192.0.2.1    # TEST-NET-1, unroutable by definition
+104.20.23.154                            # …and it answered anyway
 ```
 
-Split-horizon sends the domain to the cluster's own k8s-gateway, which answers
-even when the query explicitly names a different server. Query
-`cloudflare-dns.com/dns-query` and cross-check against `dns.google/resolve`.
+An unroutable address answering proves the mechanism: the gateway transparently
+redirects all outbound UDP/53, so the server named in the query is irrelevant.
+It is not split-horizon resolution — that was the first guess here and it was
+wrong. DoH is immune because it is HTTPS on 443, not because it is a different
+provider; that is why `cloudflare-dns.com/dns-query` cross-checked against
+`dns.google/resolve` is the right instrument and a second `dig` at a different
+server is not.
+
+Two corrections went into that paragraph, both worth keeping visible because
+they are the failure this whole section is about. It first read as a warning
+about appliance LANs; that was broadened to "everywhere" on the strength of a
+reproduction from the operator workstation — which was not a second measurement,
+because that workstation is `10.9.1.125`, inside jgt-appliance's own
+`node_cidr` `10.9.1.0/24`, resolving via `10.9.1.1`. Same host, same path, one
+data point counted twice. The broadened version would have told a reader on a
+clean network that their working `dig` was untrustworthy, which is how a true
+warning gets ignored.
 
 Long form, raw responses and the negative-control caveat:
 `jgt-appliance/docs/operations/cloudflare-token-scope.md`. Case A is a live
