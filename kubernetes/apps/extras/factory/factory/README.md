@@ -59,6 +59,65 @@ customer cluster automatically, once per delivery.
 |---|---|
 | Customer-cluster kubeconfig | Obtained from Omni, not from any RBAC on jcom (D2). Lifetime is an open question — see below |
 
+## Checking a credential: assert its scope, never its validity
+
+Every rotation in the tables above ends with a credential that has to be
+confirmed. The obvious check — "does the API accept it" — separates nothing.
+Measured on the fleet by the jgt-appliance session, three Cloudflare tokens, all
+53 characters, all `cfut_`-prefixed, all returning `success: true`,
+`status: active`, *"This API Token is valid and active"* from
+`/user/tokens/verify`. One of them works. The other two are inert in two
+different ways:
+
+- **Wrong token entirely.** On jgt-appliance, `GET /zones` returns
+  `{"success":true,"errors":[],"result":[]}` — not a 403, a well-formed empty
+  answer. The token's id is byte-identical to `backup_r2_access_key_id` in the
+  same `cluster.yaml`: it is the R2 token sitting in the DNS field.
+  external-dns filters `--domain-filter` against an empty zone list, skips every
+  record, and logs **nothing at all** at info level. Hours of zero log lines is
+  what healthy looks like.
+- **Right zone name, wrong zone.** On jgt-omni-accept the token does see
+  `janncot.cc`, so the obvious assertion passes. That zone's status is `moved`
+  and its nameservers are `carioca`/`luke`, while the domain is delegated to
+  `marge`/`sage`. The name exists as two Cloudflare zones in two accounts, and
+  the stale one holds eight complete, correct-looking records — including
+  `im.janncot.cc` — for hostnames that are NXDOMAIN worldwide.
+
+Reproduced independently from this repo's workstation, not taken on report:
+
+```
+$ curl -H 'accept: application/dns-json' \
+    'https://cloudflare-dns.com/dns-query?name=janncot.cc&type=NS'
+marge.ns.cloudflare.com.   sage.ns.cloudflare.com.     # dns.google agrees
+$ …?name=im.janncot.cc&type=A   ->   "Status": 3       # NXDOMAIN
+```
+
+So the assertion has to go one step past the name, and each credential here has
+the same trap in its own vocabulary:
+
+| Credential | Assert | The trap it closes |
+|---|---|---|
+| Cloudflare DNS token | sees zone X **and** `zone.name_servers` equals the live NS delegation for the domain, as sets | a same-named zone in an abandoned account |
+| Omni service account | has role Y **on the expected Omni endpoint** | an SA on a different Omni instance authenticates perfectly |
+| GitHub PAT | reaches repo set Z **at the expected owner** — `ferry133/jg-base`, not a fork or a same-named repo elsewhere | the call succeeds against the wrong tree |
+
+**Use DoH for anything about public DNS. `dig` will lie to you**, and not only on
+an appliance LAN — reproduced on the operator workstation while writing this:
+
+```
+$ dig +short NS janncot.cc @1.1.1.1
+k8s-gateway.network.janncot.cc.      # 1.1.1.1 was named and did not answer
+```
+
+Split-horizon sends the domain to the cluster's own k8s-gateway, which answers
+even when the query explicitly names a different server. Query
+`cloudflare-dns.com/dns-query` and cross-check against `dns.google/resolve`.
+
+Long form, raw responses and the negative-control caveat:
+`jgt-appliance/docs/operations/cloudflare-token-scope.md`. Case A is a live
+broken credential and repairing it destroys the negative test, so the
+measurement above was captured first deliberately.
+
 ## Blast radius has a term the design does not yet account for
 
 `design.md:145` argues the isolation is achieved by "independent namespace/SA,
