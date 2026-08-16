@@ -60,24 +60,101 @@ data:
 
     # --- databases -----------------------------------------------------------
     # Dumped through the API rather than read off disk: a file-level copy of a
-    # running PostgreSQL data directory is not a backup, it is a torn page.
+    # running database's data directory is not a backup, it is a torn page.
+    #
+    # The dump runs inside the database's own container, so nothing is installed
+    # here for it — pg_dump and mariadb-dump are already there, at versions that
+    # match the server by construction. Covering another engine means adding a
+    # case below, never a package to the CronJob.
+    DUMPED=0 ABSENT=0 BROKEN=0
+
     dump_db() {
-      local ns="$1" deploy="$2" out="$3"
-      kubectl -n "$ns" get deploy "$deploy" >/dev/null 2>&1 || return 0
+      local engine="$1" ns="$2" deploy="$3" out="$4"
+      # 2>&1 >/dev/null keeps stderr and discards stdout: what the probe says on
+      # failure is the whole point of running it this way.
+      local probe
+      if ! probe="$(kubectl -n "$ns" get deploy "$deploy" 2>&1 >/dev/null)"; then
+        if [[ "$probe" == *NotFound* ]]; then
+          # Absent is a normal state — each cluster installs a subset of the
+          # extras — but it is reported rather than skipped in silence. Silence
+          # here is indistinguishable from a database that IS installed and
+          # quietly not being dumped, which is how freepbx/mariadb reached 92
+          # days unbacked without anything looking wrong.
+          log "${ns}/${deploy}: not installed"
+          ABSENT=$((ABSENT + 1))
+        else
+          # An apiserver timeout, a TLS blip or a narrowed RBAC fail this probe
+          # too. Counting those as "not installed" would rebuild the exact
+          # silence this job exists to remove, one level further down: the
+          # cluster would report a database it cannot see as one it does not
+          # have. A probe that cannot answer is a failure, not an absence.
+          log "${ns}/${deploy}: ERROR: cannot determine whether it exists: ${probe}"
+          BROKEN=$((BROKEN + 1)); FAILED=1
+        fi
+        return 0
+      fi
+
+      # Single-quoted on purpose: the credentials expand inside the target
+      # container, not in this shell, which never sees them.
+      local cmd
+      case "$engine" in
+        postgres)
+          cmd='pg_dump -U "$POSTGRES_USER" "$POSTGRES_DB"'
+          ;;
+        mariadb)
+          # --single-transaction so InnoDB is read from one consistent snapshot
+          # without locking a live PBX out of its own database; routines,
+          # triggers and events because those are schema too, and a restore
+          # missing them is not the same system.
+          #
+          # mariadb-dump, not mysqldump: the freepbx image carries only the
+          # former, and MariaDB has shipped that name since 10.5. If some future
+          # image disagrees the dump now fails loudly, which is the whole point
+          # of the counters below.
+          #
+          # --ignore-database=mysql because the system database holds the
+          # accounts, and these containers' entrypoints create those from the
+          # current cluster-secrets on every fresh start. Restoring dump-time
+          # accounts over them means a password rotated after the dump locks the
+          # restored database against the secret the cluster actually holds —
+          # discovered, if ever, in the middle of a disaster recovery. Verified
+          # on jcom: --all-databases covers asterisk AND mysql; with this flag,
+          # asterisk alone.
+          cmd='mariadb-dump -uroot -p"$MYSQL_ROOT_PASSWORD" --all-databases --ignore-database=mysql --single-transaction --routines --triggers --events'
+          ;;
+        *)
+          log "${ns}/${deploy}: ERROR: unknown engine ${engine}"
+          BROKEN=$((BROKEN + 1)); FAILED=1; return 0
+          ;;
+      esac
+
       log "dumping ${ns}/${deploy}"
-      if kubectl -n "$ns" exec "deploy/${deploy}" -- sh -c \
-           'pg_dump -U "$POSTGRES_USER" "$POSTGRES_DB"' > "$STAGE/${out}.sql" 2>"$WORK/err"; then
+      if kubectl -n "$ns" exec "deploy/${deploy}" -- sh -c "$cmd" \
+           > "$STAGE/${out}.sql" 2>"$WORK/err"; then
         if [[ -s "$STAGE/${out}.sql" ]]; then
           log "  $(wc -c <"$STAGE/${out}.sql") bytes"
+          DUMPED=$((DUMPED + 1))
         else
-          log "  ERROR: dump is empty"; rm -f "$STAGE/${out}.sql"; FAILED=1
+          log "  ERROR: dump is empty"; rm -f "$STAGE/${out}.sql"
+          BROKEN=$((BROKEN + 1)); FAILED=1
         fi
       else
-        log "  ERROR: $(tail -1 "$WORK/err")"; rm -f "$STAGE/${out}.sql"; FAILED=1
+        log "  ERROR: $(tail -1 "$WORK/err")"; rm -f "$STAGE/${out}.sql"
+        BROKEN=$((BROKEN + 1)); FAILED=1
       fi
     }
-    dump_db db postgres default-postgres
-    dump_db claudecode postgres claudecode-postgres
+
+    # Every database extra the cluster template recognises (#BlockTierExtras in
+    # cluster.schema.cue). Exhaustive on purpose: a cluster states what it does
+    # not have, so "that database was never covered" cannot be reached by an
+    # entry quietly missing from this list — which is exactly how both MariaDB
+    # extras went uncovered from the day this script was written.
+    dump_db postgres db         postgres default-postgres
+    dump_db postgres claudecode postgres claudecode-postgres
+    dump_db mariadb  default    mariadb  default-mariadb
+    dump_db mariadb  freepbx    mariadb  freepbx-mariadb
+
+    log "databases: ${DUMPED} dumped, ${ABSENT} not installed, ${BROKEN} failed"
 
     # The agent workspace is deliberately NOT here (D8): its files are working
     # copies that can be recreated, while the context the agent accumulates per
@@ -91,7 +168,16 @@ data:
     # restoring a stale snapshot of something git holds correctly.
 
     if [[ -z "$(ls -A "$STAGE")" ]]; then
-      log "nothing to back up"; exit "$FAILED"
+      # Two unrelated situations used to print the same line here, and that
+      # ambiguity is D46's exact shape: a cluster whose only dump was broken
+      # said "nothing to back up", word for word what a cluster with no
+      # databases says on a completely healthy night.
+      if (( BROKEN > 0 )); then
+        log "FATAL: every database on this cluster failed to dump"
+      else
+        log "no databases installed on this cluster — nothing to back up"
+      fi
+      exit "$FAILED"
     fi
 
     # --- encrypt then upload -------------------------------------------------
@@ -114,22 +200,60 @@ data:
     fi
 
     # --- retention -----------------------------------------------------------
+    # A cutoff this cannot compute must never become a cutoff that deletes.
+    # `|| date -u '+%Y%m%d'` turned "I could not work out the date" into
+    # "everything before today goes" — and that branch was taken on every single
+    # run ever: this image is alpine, alpine ships no coreutils, and busybox
+    # date rejects `-d '30 days ago'` outright. BACKUP_RETAIN_DAYS has therefore
+    # never once had an effect. It stayed invisible only because substitution
+    # broke the script upstream of here and nothing ever uploaded (D46).
+    #
+    # Measured on jgt-appliance 2026-08-16, the first run that got this far: the
+    # first two archives this system ever produced were pruned the day after
+    # they were written, with KEEP at 30.
+    #
+    # `-d @<epoch>` is the one spelling busybox and GNU date both accept, so the
+    # arithmetic below fixes this without adding coreutils to the image.
     KEEP="${BACKUP_RETAIN_DAYS:-30}"
-    CUTOFF="$(date -u -d "${KEEP} days ago" '+%Y%m%d' 2>/dev/null || date -u '+%Y%m%d')"
-    aws s3 ls --endpoint-url "$BACKUP_R2_ENDPOINT" "s3://${BACKUP_R2_BUCKET}/${CLUSTER_NAME}/" 2>/dev/null \
-      | awk '{print $4}' | while read -r name; do
-          # sed, not a bash regex capture. This script is a ConfigMap and Flux
-          # runs envsubst over it before it is applied; a BASH_REMATCH capture
-          # written with a numeric index reads as a variable name containing a
-          # bracket, which fails to parse and takes the whole manifest with it.
-          # (Array expansions using @ survive — daily-check has used them for
-          # months — so it is the numeric index specifically.)
-          stamp="$(echo "$name" | sed -n 's/.*-\([0-9]\{8\}\)T.*/\1/p')"
-          [ -n "$stamp" ] || continue
-          if [[ "$stamp" < "$CUTOFF" ]]; then
-            aws s3 rm --endpoint-url "$BACKUP_R2_ENDPOINT" --only-show-errors \
-              "s3://${BACKUP_R2_BUCKET}/${CLUSTER_NAME}/${name}" && log "pruned $name"
-          fi
-        done
+    CUTOFF=""
+    case "$KEEP" in
+      ''|*[!0-9]*)
+        log "WARNING: BACKUP_RETAIN_DAYS='${KEEP}' is not a number" ;;
+      *)
+        # Zero has no legitimate meaning in a retention window: it places the
+        # cutoff at today and deletes every archive but this run's — the same
+        # outcome as the bug above, reached through configuration rather than
+        # through busybox.
+        if [[ "$KEEP" -lt 1 ]]; then
+          log "WARNING: BACKUP_RETAIN_DAYS=${KEEP} would delete every older archive"
+        else
+          CUTOFF="$(date -u -d "@$(( $(date -u +%s) - KEEP * 86400 ))" '+%Y%m%d' 2>/dev/null)"
+        fi ;;
+    esac
+    # Glob rather than a regex: this file has been bitten once already by a
+    # clever construct (see the sed note below), and eight digits is eight
+    # digits. An unusable cutoff keeps everything — the only safe direction.
+    case "$CUTOFF" in
+      [0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]) ;;
+      *) log "WARNING: no usable retention cutoff; keeping every archive"; CUTOFF="" ;;
+    esac
+    if [[ -n "$CUTOFF" ]]; then
+      log "pruning archives older than ${CUTOFF} (${KEEP} days)"
+      aws s3 ls --endpoint-url "$BACKUP_R2_ENDPOINT" "s3://${BACKUP_R2_BUCKET}/${CLUSTER_NAME}/" 2>/dev/null \
+        | awk '{print $4}' | while read -r name; do
+            # sed, not a bash regex capture. This script is a ConfigMap and Flux
+            # runs envsubst over it before it is applied; a BASH_REMATCH capture
+            # written with a numeric index reads as a variable name containing a
+            # bracket, which fails to parse and takes the whole manifest with it.
+            # (Array expansions using @ survive — daily-check has used them for
+            # months — so it is the numeric index specifically.)
+            stamp="$(echo "$name" | sed -n 's/.*-\([0-9]\{8\}\)T.*/\1/p')"
+            [ -n "$stamp" ] || continue
+            if [[ "$stamp" < "$CUTOFF" ]]; then
+              aws s3 rm --endpoint-url "$BACKUP_R2_ENDPOINT" --only-show-errors \
+                "s3://${BACKUP_R2_BUCKET}/${CLUSTER_NAME}/${name}" && log "pruned $name"
+            fi
+          done
+    fi
 
     exit "$FAILED"
