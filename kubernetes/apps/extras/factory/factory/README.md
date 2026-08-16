@@ -24,36 +24,45 @@ None of these is in this repo; this is the inventory, not the store.
 | **GitHub PAT** | Create and populate each customer's private cluster repo | Every repo the token's account can reach | Write access to cluster manifests fleet-wide — a repo write is a deploy, on a 1h Flux interval, with no review gate | Revoke and reissue in GitHub; prefer a fine-grained token scoped to the repos it must create |
 | **Cloudflare parent-account token** | DNS records and Tunnel credentials for each customer zone | The operator's Cloudflare account, which holds every customer zone | DNS for every customer domain: traffic redirection, certificate issuance via DNS-01, and tunnel takeover | Roll the token in the Cloudflare dashboard; scope to `Zone - DNS - Edit` plus `Account - Cloudflare Tunnel - Read` |
 
-### `age.key` — a different risk class, and conditional
+### `age.key` — deliberately not held, and that is the point
 
-| Credential | What it is for | Scope | Blast radius if read | Rotation |
-|---|---|---|---|---|
-| **`age.key`, one per customer cluster** | SOPS decryption for that cluster's secrets, and decryption of its off-site backups | One cluster per key — but factory would hold N of them | Every secret and every archive that cluster has ever written | **Effectively none.** See below |
+**factory holds no customer key material.** Decided 2026-08-17
+(`ferry133/jg-cluster-template#6`, relayed via fleet-ops, ferry133's words:
+*"factory doesn't do escrow. employee action."*). Escrow is performed by a
+person, once per delivery, and the key never reaches factory.
 
-The other three rows share a property this one does not: an Omni service-account
-key, a GitHub PAT and a Cloudflare token can each be revoked and reissued the
-moment exposure is suspected, and the damage stops there. `age.key` cannot.
-Backups are encrypted *to* it, so rotating the key does not re-protect anything
-already written — it turns every existing archive into ciphertext nobody can
-open. The choice on discovering exposure is to keep using a compromised key or
-to abandon the backup history. That is a materially worse position than the
-other three and it should not be inferred from a table that lists them together.
+This is recorded rather than simply omitted, for the same reason the empty
+`rbac.yaml` in this directory says why it is empty: **an absent row and a
+considered exclusion look identical.** Anyone later adding an escrow feature to
+factory should hit the reasoning rather than a gap, because the exclusion is
+doing real work.
 
-**Conditional, not settled.** Whether factory holds these at all depends on
-`factory-agent` 1.5 and 5.5, still open in jg-cluster-template. Today factory
-handles the material in passing: generated per cluster, committed nowhere, and
-re-keyed at handover with `sops updatekeys` against the customer's public key so
-ciphertext is never decrypted into the repo (D6/handover). If 5.5 lands as
-written — factory gating provisioning on escrow being confirmed — then factory
-holds N keys and this row becomes one of the standing credentials above.
+The work it does: every credential factory *does* hold — Omni SA key, GitHub
+PAT, Cloudflare token — can be revoked and reissued the moment exposure is
+suspected, and the damage stops at that moment. An `age.key` cannot. Backups are
+encrypted *to* it, so rotating does not re-protect anything already written; it
+converts every existing archive into ciphertext nobody can open. The choice on
+discovering exposure would be to keep using a compromised key or to abandon the
+backup history.
 
-There is a second problem in that gate, raised by fleet-ops and routed to
-jg-cluster-template, recorded here because this table is where someone will look
-for it: `deployment-profiles` 8.3's restore drill has never been executed (8.4
-says so in its own text — step 5 written as procedure, marked not executed). So
-"escrow confirmed" can currently only mean *the file was written*, not *it reads
-back*. Implemented as written, factory would stamp that confirmation on every
-customer cluster automatically, once per delivery.
+Under (a) — see below, where this document rather than a technical control is
+what stands between those credentials and a co-located cluster-admin — an
+unrevocable credential sitting beside three revocable ones would have been the
+worst item in the inventory by a wide margin. It is out of scope by decision,
+not mitigated by a control. That is the stronger form and it should not quietly
+weaken later.
+
+Two things that would have to be true before revisiting it, neither of which is
+today:
+
+- `deployment-profiles` 8.3's restore drill has never been executed — 8.4 says
+  so in its own text, step 5 written as procedure and marked not executed. So
+  "escrow confirmed" can presently only mean *the file was written*, not *it
+  reads back*. Automating the attestation would stamp that on every customer
+  cluster, once per delivery, which is worse than a human doing it slowly.
+- Handover already re-keys with `sops updatekeys` against the customer's public
+  key (D6), so ciphertext is never decrypted into the repo. Nothing about the
+  current flow needs factory to hold the key.
 
 | Material | Note |
 |---|---|
@@ -263,12 +272,13 @@ needs a verb should have to add it here and justify it.
   cannot name a `repository` and `tag` without inventing them. This is a gap in
   the change rather than a decision waiting to be made: §2 assumes an artifact
   no section creates.
-- **Customer-cluster credential lifetime** (`design.md:167`, task 1.5). Holding
-  one long is standing risk; re-fetching each time needs Omni Admin, the item
-  with the largest blast radius. Unresolved, and it also decides whether the
-  `age.key` row above is conditional or standing.
-- **Whether factory performs escrow at all** (5.5), and whether the restore
-  drill it would attest to has ever been run (`deployment-profiles` 8.3).
+- **Customer-cluster credential lifetime** (`design.md:167`). Holding one long
+  is standing risk; re-fetching each time needs Omni Admin, the item with the
+  largest blast radius. Still unresolved — and note this is now the only
+  credential question left open, since the `age.key` one closed by scope.
+- **Escrow is settled and is not in this list any more.** factory does not hold
+  customer key material (2026-08-17); the section above records why, and why
+  reversing it would need `deployment-profiles` 8.3 to have actually run first.
 - **The workload shape is settled** and recorded here so it is not re-derived:
   spike 1.1 established that Omni's resource access is the COSI state API with
   native watch, so factory is a Deployment holding a long-lived stream rather
