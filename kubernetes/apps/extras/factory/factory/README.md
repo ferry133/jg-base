@@ -24,11 +24,39 @@ None of these is in this repo; this is the inventory, not the store.
 | **GitHub PAT** | Create and populate each customer's private cluster repo | Every repo the token's account can reach | Write access to cluster manifests fleet-wide — a repo write is a deploy, on a 1h Flux interval, with no review gate | Revoke and reissue in GitHub; prefer a fine-grained token scoped to the repos it must create |
 | **Cloudflare parent-account token** | DNS records and Tunnel credentials for each customer zone | The operator's Cloudflare account, which holds every customer zone | DNS for every customer domain: traffic redirection, certificate issuance via DNS-01, and tunnel takeover | Roll the token in the Cloudflare dashboard; scope to `Zone - DNS - Edit` plus `Account - Cloudflare Tunnel - Read` |
 
-Per-cluster material that factory handles in passing rather than holds:
+### `age.key` — a different risk class, and conditional
+
+| Credential | What it is for | Scope | Blast radius if read | Rotation |
+|---|---|---|---|---|
+| **`age.key`, one per customer cluster** | SOPS decryption for that cluster's secrets, and decryption of its off-site backups | One cluster per key — but factory would hold N of them | Every secret and every archive that cluster has ever written | **Effectively none.** See below |
+
+The other three rows share a property this one does not: an Omni service-account
+key, a GitHub PAT and a Cloudflare token can each be revoked and reissued the
+moment exposure is suspected, and the damage stops there. `age.key` cannot.
+Backups are encrypted *to* it, so rotating the key does not re-protect anything
+already written — it turns every existing archive into ciphertext nobody can
+open. The choice on discovering exposure is to keep using a compromised key or
+to abandon the backup history. That is a materially worse position than the
+other three and it should not be inferred from a table that lists them together.
+
+**Conditional, not settled.** Whether factory holds these at all depends on
+`factory-agent` 1.5 and 5.5, still open in jg-cluster-template. Today factory
+handles the material in passing: generated per cluster, committed nowhere, and
+re-keyed at handover with `sops updatekeys` against the customer's public key so
+ciphertext is never decrypted into the repo (D6/handover). If 5.5 lands as
+written — factory gating provisioning on escrow being confirmed — then factory
+holds N keys and this row becomes one of the standing credentials above.
+
+There is a second problem in that gate, raised by fleet-ops and routed to
+jg-cluster-template, recorded here because this table is where someone will look
+for it: `deployment-profiles` 8.3's restore drill has never been executed (8.4
+says so in its own text — step 5 written as procedure, marked not executed). So
+"escrow confirmed" can currently only mean *the file was written*, not *it reads
+back*. Implemented as written, factory would stamp that confirmation on every
+customer cluster automatically, once per delivery.
 
 | Material | Note |
 |---|---|
-| `age.key` per cluster | Generated per cluster and committed nowhere. Handover re-keys with `sops updatekeys` against the customer's public key, so ciphertext never has to be decrypted into the repo (D6/handover) |
 | Customer-cluster kubeconfig | Obtained from Omni, not from any RBAC on jcom (D2). Lifetime is an open question — see below |
 
 ## Blast radius has a term the design does not yet account for
@@ -56,11 +84,31 @@ cluster, so there is no cluster without a co-located cluster-admin.
 
 That cluster-admin is deliberate — it is the rescue path for a cluster whose
 Omni or SideroLink is down, confirmed 2026-07-26 — so this is a real trade-off
-rather than a bug, and resolving it is not this directory's decision. It is
-tracked as **ferry133/jg-cluster-template#3**, because the claim it falsifies is
-in that repo's design. Until it is answered, the blast radius of every row above
+rather than a bug.
+
+**Decided (ferry133/jg-cluster-template#3, 2026-08-16, relayed via fleet-ops):
+accept it.** A separate cluster for the IM instances may follow later to reduce
+the exposure; that option is deferred, not rejected, and the current state is a
+chosen waypoint rather than the end position.
+
+So this is now an accepted risk, and the acceptance has a consequence for this
+file specifically. Under the alternatives, this document would have recorded a
+*residual* risk next to a technical control. Under acceptance **the document is
+the control** — there is no other mitigation in place. Anything missing from the
+tables above is therefore not an accepted risk but an unrecorded one, and from
+outside those look identical.
+
+Concretely, what is accepted: the blast radius of every credential above
 includes *anyone who can log in to a claude-code instance on jcom*, which today
 means the Auth0 allowlist in front of `cc.janncot.com` and `im.janncot.com`.
+
+One correction worth carrying, because the obvious version of the fix does not
+work: moving the `im` instance to its own cluster would not close this. `cc` and
+`im` share the single `claude-code` ServiceAccount, so a jcom without `im` still
+has `cc` there as cluster-admin. The version that closes it requires
+`claudecode` to stop being an `apps/base/` app in this repo — i.e. gateable per
+cluster and deselected on whichever cluster runs factory — which is a change to
+jg-base's shared structure and has not been made.
 
 ## What this directory does and does not grant
 
@@ -73,18 +121,25 @@ needs a verb should have to add it here and justify it.
 
 ## Not yet decided
 
-- **Where the credentials live.** Kubernetes Secrets is the assumption the table
-  above is written against, but jg-cluster-template#3 may move it: a process
-  speaking the Omni Go SDK can fetch short-lived credentials at use time far
-  more naturally than a shell can source long-lived ones from a Secret.
-- **Customer-cluster credential lifetime** (`design.md:167`). Holding one long
-  is standing risk; re-fetching each time needs Omni Admin, which is the item
-  with the largest blast radius. Unresolved in the design.
-- **The workload itself.** Spike 1.1 established that Omni's resource access is
-  the COSI state API with native watch, so factory is a Deployment holding a
-  long-lived stream rather than a Job, and it speaks the Go SDK or raw gRPC
-  rather than shelling out to `omnictl`, which has no watch flag. Tasks 2.4
-  (HelmRelease, HTTPRoute) and 2.7 (toolchain) are held until that settles.
+- **There is no factory image, and nothing builds one.** The change's task list
+  mentions an image exactly twice — 2.8 asks that it contain no credential
+  material, and `design.md:145` asks the same — and no task anywhere produces
+  it. So 2.7 (verify the toolchain inside the container) and 2.8 (verify the
+  image is credential-free) have nothing to inspect, and 2.4's HelmRelease
+  cannot name a `repository` and `tag` without inventing them. This is a gap in
+  the change rather than a decision waiting to be made: §2 assumes an artifact
+  no section creates.
+- **Customer-cluster credential lifetime** (`design.md:167`, task 1.5). Holding
+  one long is standing risk; re-fetching each time needs Omni Admin, the item
+  with the largest blast radius. Unresolved, and it also decides whether the
+  `age.key` row above is conditional or standing.
+- **Whether factory performs escrow at all** (5.5), and whether the restore
+  drill it would attest to has ever been run (`deployment-profiles` 8.3).
+- **The workload shape is settled** and recorded here so it is not re-derived:
+  spike 1.1 established that Omni's resource access is the COSI state API with
+  native watch, so factory is a Deployment holding a long-lived stream rather
+  than a Job, speaking the Go SDK or raw gRPC rather than shelling out to
+  `omnictl`, which exposes no watch flag.
 - **Watch liveness.** The stream emits `state.Errored` and must be reconnected,
   and a watch that has silently stopped delivering looks exactly like a quiet
   period with no new machines. That is the same shape as `monitoring/backup`
