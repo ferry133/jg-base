@@ -92,14 +92,44 @@ marge.ns.cloudflare.com.   sage.ns.cloudflare.com.     # dns.google agrees
 $ …?name=im.janncot.cc&type=A   ->   "Status": 3       # NXDOMAIN
 ```
 
-So the assertion has to go one step past the name, and each credential here has
-the same trap in its own vocabulary:
+### The general form: compare material, not labels
 
-| Credential | Assert | The trap it closes |
-|---|---|---|
-| Cloudflare DNS token | sees zone X **and** `zone.name_servers` equals the live NS delegation for the domain, as sets | a same-named zone in an abandoned account |
-| Omni service account | has role Y **on the expected Omni endpoint** | an SA on a different Omni instance authenticates perfectly |
-| GitHub PAT | reaches repo set Z **at the expected owner** — `ferry133/jg-base`, not a fork or a same-named repo elsewhere | the call succeeds against the wrong tree |
+A name is not an instance. Every failure above is the same one — the label
+matched and the thing behind it was not the thing meant — so the assertion has
+to compare something only the right instance can produce.
+
+This is not a new discipline to invent here; it is already written down and
+already applied. `deployment-profiles` 8.3's escrow check does not confirm that
+an escrowed `age.key` exists or is named correctly. It runs `age-keygen -y` on
+the escrowed copy and compares the public key that comes out against the `age:`
+recipient in `.sops.yaml`, for the reason recorded at that change's
+`design.md:628`: *a truncated key copy looks exactly like a good one, and the
+difference only shows on the day you need it.* Identity by key material. A
+same-named, wrong or truncated copy cannot satisfy it.
+
+The three credentials here take the same shape:
+
+| Credential | Compare this material | Against this | The trap it closes |
+|---|---|---|---|
+| Cloudflare DNS token | `zone.name_servers` from `GET /zones?name=$D` | the live NS delegation for the domain, via DoH, as sets | a same-named zone in an abandoned account — measured, see above |
+| Omni service account | a known cluster's ID as the SA sees it | the cluster ID that Omni instance is expected to manage | an SA on a different Omni instance authenticates perfectly |
+| GitHub PAT | the repository's immutable `id` / `node_id` | the id of `ferry133/jg-base` | a fork, or a same-named repo under another owner, answers every call successfully |
+
+The pattern for choosing the material: pick the field that the wrong instance
+*cannot* forge because it is assigned by the system of record — a delegation, a
+cluster ID, a repository id — rather than the field a human typed, which is
+exactly the field that gets typed the same way twice.
+
+**One assertion in §2 looks like it should fall to this and does not.** 2.3a
+checks that `namespace/factory` is *absent* from jg-jiahd and jgt-appliance.
+Absence-by-name on a known instance is a different claim from identity-by-name,
+so it does not have the failure mode above. But it inherits the problem one
+level up: `NotFound` proves nothing until you know which cluster answered.
+The instance is established by the kubeconfig rather than by anything in the
+reply, so establish it first — confirm the API server endpoint or some object
+unique to that cluster — and then read the absence. Otherwise a stale or
+wrong-cluster kubeconfig returns exactly the reassuring answer the assertion is
+looking for.
 
 **Use DoH for anything about public DNS. `dig` will lie to you**, and not only on
 an appliance LAN — reproduced on the operator workstation while writing this:
