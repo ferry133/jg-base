@@ -372,7 +372,31 @@ data:
       if [[ "$ROUTER_ANS" =~ ^(10\.|172\.(1[6-9]|2[0-9]|3[01])\.|192\.168\.) ]]; then
         record ok "LAN resolves internal names (${ROUTER_ANS})"
       elif [[ -z "$ROUTER_ANS" ]]; then
-        record fail "LAN cannot resolve internal names" "router ${NODE_DEFAULT_GATEWAY} returns nothing for ${INTERNAL_NAME} — its DNS is no longer pointed at k8s-gateway, so every internal hostname is down on the LAN even though the cluster is healthy. See docs/operations/router-dns.md"
+        # warn, not fail, and the wording changed with it. Both halves matter.
+        #
+        # Only FAIL_COUNT gates the dead-man ping (see the end of this script),
+        # so a fail here pings /fail. Under the shipping default that happens
+        # every day on every appliance: docs/operations/router-dns.md names the
+        # DHCP DNS server as the default method because it is the only one every
+        # router has, and under it the router hands out the cluster's resolver
+        # address and is never in the resolution path itself. Asked directly it
+        # has no answer to give. So this branch asks a question the default
+        # cannot answer, and one permanently red row costs the dead-man signal
+        # for the other seventeen checks — healthchecks.io renders "pings /fail
+        # daily" and "stopped pinging because the cluster is dead" identically.
+        #
+        # The old message asserted a mechanism — "its DNS is no longer pointed
+        # at k8s-gateway" — which is false under that same default: it was never
+        # pointed there and nothing is broken. Downgrading the level while
+        # keeping a message that states an untrue cause leaves half the defect,
+        # because a daily amber row asserting something wrong trains the same
+        # blindness more quietly. What is actually observable here is that the
+        # router returned nothing; that is all this now claims.
+        #
+        # This is a tourniquet, not the design. The real check has to establish
+        # who answered rather than that someone did, and the release condition
+        # is stage 2 of ferry133/jg-base#6 — deployment-profiles 5.7.
+        record warn "LAN internal-name resolution not observable here" "router ${NODE_DEFAULT_GATEWAY} returned nothing for ${INTERNAL_NAME}. Expected under the DHCP DNS server method, the shipping default, where the router is not in the resolution path and has no answer to give. A fault only if this cluster uses conditional forwarding or per-host records. See docs/operations/router-dns.md"
       else
         record warn "LAN resolves internal names to an unexpected address" "router returned ${ROUTER_ANS} for ${INTERNAL_NAME}"
       fi
