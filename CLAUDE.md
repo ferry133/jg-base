@@ -125,7 +125,7 @@ Flux decrypts at runtime via `kubernetes/components/sops/` (referenced in Kustom
 Synology NAS 的 NFS export 只授權給 **root (uid 0)**。非 root UID(例如 `runAsUser: 1000`)掛載後,目錄會顯示成 `d---------`(mode **000**)並 **Permission denied** —— 即使 root 看同一個目錄是 `drwxrwxrwx` (777)、資料都在。
 
 - **成因**:不是 NFS squash(DSM squash「no mapping」也一樣)。是資料夾上的 **Synology ACL** 只授權 admin,NFSv4 server 依「請求端 UID」逐一計算有效權限。`fsGroup` / client 端 `chmod` 都繞不過(root 本來就看到 777),**只有以 uid 0 執行**才能存取。
-- **慣例**:`mariadb`、`ttyd`、`postgres` + `postgres-backup` 都跑 root。新增任何掛 NAS export 的 app/pod 時務必比照,否則上線即 Permission denied。
+- **慣例**:`mariadb`、`claude-code`(掛 `coding` NFS share 的 ttyd 終端機)、`postgres` + `postgres-backup` 都跑 root。新增任何掛 NAS export 的 app/pod 時務必比照,否則上線即 Permission denied。
 - **案例**:`linebot`(`linebot-admin`、`customer-service-agent`)原本跑 `uid 1000`,2026-06-20 NAS 遷移後 `jia.homedesign`、`knowledge` 變 admin-only ACL → 讀不到;改跑 root 後修復(commit `ab2eb39`,fix 處留有 inline 註解)。
 - **替代解**:若不想跑 root,可在 NAS 端把該共用資料夾的 ACL/權限開放給 users(對齊舊 NAS),pod 即可維持非 root。
 

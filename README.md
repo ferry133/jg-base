@@ -45,7 +45,6 @@ kubernetes/
         postgres/
         synophoto/
         trello-notifier/
-        ttyd/
       freepbx/
         freepbx/
       ingress-nginx/
