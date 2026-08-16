@@ -1,0 +1,32 @@
+---
+# A dedicated ServiceAccount, and deliberately nothing bound to it.
+#
+# Task 2.2 asks that this is not `claudecode/claude-code`'s shared account. It
+# is not, and the distinction matters more than the name: that one is a single
+# ServiceAccount bound to cluster-admin and shared by every claude-code
+# instance, so putting factory there would let any prompt injection in `cc`
+# reach Omni Admin, the GitHub PAT and the Cloudflare parent account (D2).
+#
+# No Role, no RoleBinding, no ClusterRole. Least privilege here is not "a small
+# set of verbs", it is none, because factory needs no Kubernetes API on jcom at
+# all:
+#
+#   - Its work is against Omni (gRPC), GitHub and Cloudflare. Those are external
+#     APIs with their own credentials and their own blast radius.
+#   - Its authority over CUSTOMER clusters comes from a kubeconfig it obtains
+#     from Omni, not from any binding on jcom (D2). Granting it rights here
+#     would not add capability, only exposure.
+#   - Credentials arrive as mounted volumes and environment, which the kubelet
+#     supplies. Reading a mounted Secret needs no API permission.
+#
+# Anything that later needs an API verb should have to add it here explicitly
+# and say why, rather than find it already granted.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: factory
+  namespace: factory
+# No API access means no reason to carry a token. Left on, every process in the
+# pod — including anything that talks to a model and then acts on what it reads
+# back — gets a bearer token for the cluster hosting Omni.
+automountServiceAccountToken: false

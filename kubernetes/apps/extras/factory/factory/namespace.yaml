@@ -1,0 +1,18 @@
+---
+# The factory agent's own namespace, so its credentials are not co-tenant with
+# anything else. See README.md in this directory for what those credentials are
+# and what reading them would be worth to an attacker.
+#
+# extras/, not base/. In this repo base/ is a distribution scope rather than a
+# directory: every cluster's Flux tracks jg-base at ref.branch main on a 1h
+# interval with no per-cluster review, so anything under base/ reaches
+# jg-jiahd and jgt-appliance within the hour. Factory concentrates Omni Admin,
+# a GitHub PAT and the Cloudflare parent account — the three things that should
+# least have a foothold on a customer appliance. It is selected by jcom alone,
+# the same way omni/omni already is.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: factory
+  annotations:
+    kustomize.toolkit.fluxcd.io/prune: disabled
