@@ -91,8 +91,12 @@ different ways:
   records resolve from outside: `cc.jiahd.cc` answers Status 0.
 
 The empty answer in A is worth seeing literally, because everyone expects a 403
-and there is not one anywhere in it — both `/zones` and `/zones?name=…` return
-this same body under **HTTP 200**:
+and there is not one anywhere in it. **Captured 2026-08-16 from a credential
+that is being replaced — this is a record, not something to re-run.** Once
+jgt-appliance's token is repaired the same call returns case C's shape, so a
+reader who tries it and gets a populated result has confirmed the repair, not
+found an error here. Both `/zones` and `/zones?name=…` returned this body under
+**HTTP 200**:
 
 ```
 {"result":[],"result_info":{"page":1,"per_page":20,"total_pages":0,
