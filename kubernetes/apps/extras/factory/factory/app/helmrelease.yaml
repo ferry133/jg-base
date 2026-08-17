@@ -103,6 +103,29 @@ spec:
               - --authenticated-emails-file=/etc/oauth2-proxy/allowed-emails
               - --skip-provider-button=true
               - --reverse-proxy=true
+              # --reverse-proxy on its own tells oauth2-proxy to believe
+              # X-Forwarded-* from ANY source. Upstream's wording: left
+              # unconfigured, trusted_proxy_ips "defaults to trusting all source
+              # IPs, which may lead to header spoofing". The client controls that
+              # header, so without this line every client IP in the proxy's logs
+              # is attacker-supplied.
+              #
+              # Not an auth bypass — authorization here is the OIDC email against
+              # allowed-emails, and a forged header cannot move that. It matters
+              # the moment anything treats those logs as evidence of who
+              # connected, which is exactly when nobody re-checks how the field
+              # was obtained.
+              #
+              # 10.42.0.0/16 is jcom's pod CIDR (measured, and factory is
+              # jcom-only by D1). It is deliberately not templated: pod CIDRs are
+              # NOT uniform across this fleet — jg-jiahd is 10.244.0.0/16 — and
+              # no cluster-secrets variable carries it. A cluster whose pod
+              # network differs must change this line.
+              #
+              # Getting it wrong fails safe rather than open: an untrusted Envoy
+              # means oauth2-proxy ignores the header and attributes the request
+              # to the direct peer instead. Less informative, not forgeable.
+              - --trusted-proxy-ip=10.42.0.0/16
               - --cookie-secure=true
               - --cookie-expire=168h
             env:
