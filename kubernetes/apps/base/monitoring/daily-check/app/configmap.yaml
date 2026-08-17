@@ -521,6 +521,101 @@ data:
       fi
     fi
 
+    # 21. Stalled provisioning tickets (factory-agent 3.8).
+    #
+    # This check NEVER records `fail`, and that is a property of the design
+    # rather than an accident of today's threshold. Only FAIL_COUNT gates the
+    # dead-man ping at the end of this script, so a `fail` here would let one
+    # slow delivery mark the whole cluster Down on healthchecks.io. That is
+    # exactly #6: check 18 FAILs every day under the shipping DNS default, so
+    # "the cluster died" and "one check is noisy" became the same state on that
+    # dashboard. **A ticket sitting too long is a fact about a delivery, not
+    # about whether this cluster is alive.** Anything added here later must keep
+    # that separation.
+    #
+    # Silent unless configured, following ENDPOINTS_TO_PROBE and NAS_SERVER
+    # above. No cluster sets these today, so this adds nothing anywhere until
+    # someone opts in.
+    if [[ -n "${FACTORY_TICKET_REPO:-}" && -n "${FACTORY_TICKET_TOKEN:-}" ]]; then
+      STAGE_PREFIX="${FACTORY_STAGE_LABEL_PREFIX:-stage/}"
+      # Deliberately generous, and the number is the point of the whole check.
+      # No provisioning has been timed end to end yet, so anything tighter would
+      # be invented rather than derived — and a check that trips during normal
+      # work teaches the reader to skip it, which costs more than the check is
+      # worth. Tighten once real stage durations exist: that is a value change,
+      # not a code change.
+      STALL_H="${FACTORY_STALL_HOURS:-48}"
+      GH_AUTH="Authorization: Bearer ${FACTORY_TICKET_TOKEN}"
+      GH_ACC="Accept: application/vnd.github+json"
+      GH_BASE="https://api.github.com/repos/${FACTORY_TICKET_REPO}"
+
+      TICKETS=$(curl -fsS --max-time 20 -H "$GH_AUTH" -H "$GH_ACC" \
+        "${GH_BASE}/issues?state=open&per_page=100" 2>/dev/null || true)
+
+      if [[ -z "$TICKETS" ]]; then
+        # The third state, said as itself. "Could not ask" is not "nothing is
+        # stalled", and folding it into ok is how an unreachable API, a revoked
+        # token or a rate limit becomes a clean report. Warn, not fail: an
+        # unreachable github.com says nothing about this cluster's liveness.
+        record warn "Stalled provisioning tickets" \
+          "could not query ${FACTORY_TICKET_REPO} — network, token or rate limit. NOT measured this run"
+      else
+        # 3.3's invariant is exactly one stage label per ticket. Tickets holding
+        # more than one are reported rather than resolved by picking: silently
+        # choosing would conceal the precise inconsistency 3.7 exists to
+        # escalate, and would do it while printing a reassuring number.
+        mapfile -t TICKET_ROWS < <(printf '%s' "$TICKETS" | jq -r --arg p "$STAGE_PREFIX" '
+          .[] | select(has("pull_request") | not) | . as $i
+          | [ $i.labels[].name | select(startswith($p)) ] as $s
+          | select(($s | length) > 0)
+          | "\($i.number)\t\($s | join(","))\t\($s | length)"' 2>/dev/null || true)
+
+        TOTAL_TICKETS=$(printf '%s' "$TICKETS" | jq -r 'length' 2>/dev/null || echo 0)
+        STALLED=(); MULTI=(); UNMEASURED=()
+
+        if (( ${#TICKET_ROWS[@]} > 0 )); then
+          for row in "${TICKET_ROWS[@]}"; do
+            [[ -z "$row" ]] && continue
+            num=${row%%$'\t'*}; rest=${row#*$'\t'}
+            stage=${rest%%$'\t'*}; cnt=${rest##*$'\t'}
+            if (( cnt > 1 )); then MULTI+=("#${num} carries ${cnt}: ${stage}"); continue; fi
+            # updated_at is the wrong clock — a comment resets it without the
+            # stage moving. Time-in-stage is the age of the `labeled` event for
+            # the label the ticket holds now.
+            EV=$(curl -fsS --max-time 20 -H "$GH_AUTH" -H "$GH_ACC" \
+              "${GH_BASE}/issues/${num}/events?per_page=100" 2>/dev/null || true)
+            TS=$(printf '%s' "$EV" | jq -r --arg l "$stage" \
+              '[ .[] | select(.event=="labeled" and .label.name==$l) ] | last | .created_at // empty' \
+              2>/dev/null || true)
+            EP=$(epoch_of "$TS")
+            if [[ -z "$EP" ]]; then
+              # Same rule as checks 19 and 20: unknown age is reported as
+              # unknown. epoch_of prints nothing rather than 0, so this cannot
+              # become an age of half a million hours.
+              UNMEASURED+=("#${num} (${stage})"); continue
+            fi
+            AGE_H=$(( ( $(date -u +%s) - EP ) / 3600 ))
+            (( AGE_H > STALL_H )) && STALLED+=("#${num} ${stage} ${AGE_H}h")
+          done
+        fi
+
+        # 100 is the page size and no pagination is followed. Say so when the
+        # cap is reached rather than reporting a clean subset as a clean whole.
+        (( TOTAL_TICKETS >= 100 )) && UNMEASURED+=("first page only: ${TOTAL_TICKETS} open tickets returned, later pages not fetched")
+
+        MSG=""
+        (( ${#STALLED[@]} > 0 ))    && MSG="stalled >${STALL_H}h: $(printf '%s; ' "${STALLED[@]}")"
+        (( ${#MULTI[@]} > 0 ))      && MSG="${MSG:+${MSG} }multiple stage labels (3.3 violated): $(printf '%s; ' "${MULTI[@]}")"
+        (( ${#UNMEASURED[@]} > 0 )) && MSG="${MSG:+${MSG} }not measured: $(printf '%s; ' "${UNMEASURED[@]}")"
+
+        if [[ -n "$MSG" ]]; then
+          record warn "Provisioning tickets" "$MSG"
+        else
+          record ok "Provisioning tickets (${#TICKET_ROWS[@]} in progress, none over ${STALL_H}h)"
+        fi
+      fi
+    fi
+
     echo "==> Compiling report"
     if [[ $FAIL_COUNT -gt 0 ]]; then
       STATUS_TAG="❌ ${FAIL_COUNT} FAIL"
