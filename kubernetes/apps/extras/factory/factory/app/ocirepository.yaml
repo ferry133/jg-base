@@ -1,0 +1,26 @@
+---
+# factory's own chart source, in factory's own namespace.
+#
+# `claudecode` already has an identical OCIRepository for the same chart at the
+# same tag, and factory deliberately does not borrow it. A HelmRelease reaching
+# into another namespace for its chartRef would make factory's ability to
+# reconcile depend on `claudecode` continuing to exist and continuing to pin
+# this version — which is the opposite of why factory has its own namespace at
+# all (see ../namespace.yaml). The duplicated 12 lines are the cheaper half of
+# that trade.
+#
+# Tag pinned rather than floating: a chart that moves under a credential-holding
+# workload changes the pod spec without any commit here to review.
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: OCIRepository
+metadata:
+  name: factory
+  namespace: factory
+spec:
+  interval: 15m
+  layerSelector:
+    mediaType: application/vnd.cncf.helm.chart.content.v1.tar+gzip
+    operation: copy
+  ref:
+    tag: 4.6.2
+  url: oci://ghcr.io/bjw-s-labs/helm/app-template
