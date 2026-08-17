@@ -1,14 +1,12 @@
 ---
+# Every manifest in this directory has to be listed here. A file that exists in
+# the tree but is missing from this list renders nothing and reports no error —
+# and "namespace factory has no Deployment" then looks exactly like 2.3a's
+# measured containment, which is the reading that is supposed to be good news.
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
   - ./rbac.yaml
-# The workload is deliberately absent. factory-agent spike 1.1 established that
-# Omni's resource access is the COSI state API, which supports watch natively,
-# so the agent holds a long-lived stream rather than running to completion —
-# a Deployment, not the Job the task text was written around. It also means the
-# consumer speaks the Go SDK or raw gRPC rather than shelling out to omnictl,
-# which has no watch flag, so the image's contents are an open question too.
-#
-# Writing a HelmRelease now would be guessing at both. Tasks 2.4 and 2.7 are
-# held until that settles; this directory carries only what is invariant.
+  - ./ocirepository.yaml
+  - ./secret.yaml
+  - ./helmrelease.yaml

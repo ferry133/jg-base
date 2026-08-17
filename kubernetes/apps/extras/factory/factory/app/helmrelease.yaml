@@ -1,0 +1,243 @@
+---
+# Task 2.4 of `factory-agent`. The provisioning agent's workload and its route.
+#
+# The image is a k8scc variant (`ferry133/k8scc#1`): the existing claude-code
+# image plus the Go/COSI watch binary from spike 1.1. So this is a ttyd terminal
+# behind an operator-only gate, not a headless controller — the watch is a tool
+# available inside it, and §4's automation is not written yet.
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: factory
+  namespace: factory
+spec:
+  chartRef:
+    kind: OCIRepository
+    name: factory
+  interval: 1h
+  # local-path binds WaitForFirstConsumer, so Helm waiting on the claim would
+  # deadlock against the pod that is waiting on Helm. Same reason as the
+  # claude-code instances; kept even though replicas is 1, because the failure
+  # it prevents is a permanently failed release rather than a slow one.
+  install:
+    disableWait: true
+  upgrade:
+    disableWait: true
+  values:
+    controllers:
+      factory:
+        strategy: Recreate
+        replicas: 1
+        serviceAccount:
+          # EXPLICIT, and load-bearing. Task 2.2 ("factory's SA is not
+          # claudecode's shared cluster-admin account") is ticked, but it was
+          # only ever true of the *declaration* — nothing used the SA. Omit this
+          # line and the pod silently lands on `default` in namespace factory,
+          # 2.2 stops being true, and it keeps reading ticked. The assertion
+          # belongs here rather than in a later review because here is where it
+          # would break.
+          #
+          # That SA has no Role, no RoleBinding, no ClusterRole and
+          # automountServiceAccountToken: false (../rbac.yaml). factory needs no
+          # Kubernetes API on jcom: its work is against Omni, GitHub and
+          # Cloudflare, and its authority over customer clusters comes from an
+          # Omni-issued kubeconfig, not from any binding here.
+          name: factory
+        containers:
+          app:
+            image:
+              repository: ghcr.io/ferry133/claude-code
+              # Tag and digest together. The tag is what a human reads; the
+              # digest is what actually resolves, and a rebuild that moves the
+              # tag cannot move this pod without a commit in this file. Verified
+              # 2026-08-17: this digest is multi-arch (amd64 + arm64) and its
+              # filesystem carries no credential material (2.8, jg-base#5).
+              tag: factory-170830f@sha256:b10e9ed58c94dd3c93531ba8cf051908badaa94125f8e3f7567e91451af2ca29
+            env:
+              # The pod runs as uid 0 (see defaultPodOptions), which resolves
+              # HOME=/root — but all state lives under /home/claude.
+              HOME: /home/claude
+              # Without this, account state goes to ~/.claude.json in the
+              # ephemeral overlay and the login is lost on every restart.
+              CLAUDE_CONFIG_DIR: /home/claude/.claude
+              # tmux asks the locale whether an attaching client can take UTF-8;
+              # unset, it decides no and rewrites every non-ASCII cell as "_".
+              LANG: C.UTF-8
+              # OIDC mode: the oauth2-proxy sidecar is the only way in. ttyd
+              # binds loopback and requires the email header the proxy injects.
+              # Explicit 127.0.0.1, not "lo" — ttyd resolves an interface name
+              # to its first non-127 address.
+              TTYD_INTERFACE: 127.0.0.1
+              TTYD_AUTH_HEADER: X-Forwarded-Email
+            probes:
+              # ttyd is on loopback, so a kubelet tcpSocket probe cannot reach
+              # it — check from inside the pod.
+              liveness: &ttydProbe
+                enabled: true
+                custom: true
+                spec:
+                  exec:
+                    command: ["bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/7681"]
+                  initialDelaySeconds: 15
+                  periodSeconds: 30
+                  timeoutSeconds: 5
+                  failureThreshold: 3
+              readiness: *ttydProbe
+            resources:
+              requests:
+                cpu: 100m
+                memory: 256Mi
+              limits:
+                memory: 2Gi
+          oauth2-proxy:
+            image:
+              repository: quay.io/oauth2-proxy/oauth2-proxy
+              tag: v7.15.3
+            args:
+              - --http-address=0.0.0.0:4180
+              - --upstream=http://127.0.0.1:7681
+              - --provider=oidc
+              - --oidc-issuer-url=https://dev-s6klrnbd0umevgxf.us.auth0.com/
+              - --scope=openid profile email
+              - --redirect-url=https://factory.${SECRET_DOMAIN}/oauth2/callback
+              - --authenticated-emails-file=/etc/oauth2-proxy/allowed-emails
+              - --skip-provider-button=true
+              - --reverse-proxy=true
+              - --cookie-secure=true
+              - --cookie-expire=168h
+            env:
+              OAUTH2_PROXY_CLIENT_ID:
+                valueFrom:
+                  secretKeyRef:
+                    name: factory-secret
+                    key: OAUTH2_PROXY_CLIENT_ID
+              OAUTH2_PROXY_CLIENT_SECRET:
+                valueFrom:
+                  secretKeyRef:
+                    name: factory-secret
+                    key: OAUTH2_PROXY_CLIENT_SECRET
+              OAUTH2_PROXY_COOKIE_SECRET:
+                valueFrom:
+                  secretKeyRef:
+                    name: factory-secret
+                    key: OAUTH2_PROXY_COOKIE_SECRET
+            probes:
+              liveness: &proxyProbe
+                enabled: true
+                custom: true
+                spec:
+                  tcpSocket:
+                    port: 4180
+                  initialDelaySeconds: 5
+                  periodSeconds: 30
+                  timeoutSeconds: 5
+                  failureThreshold: 3
+              readiness: *proxyProbe
+            resources:
+              requests:
+                cpu: 10m
+                memory: 32Mi
+              limits:
+                memory: 128Mi
+    configMaps:
+      oauth2-emails:
+        data:
+          # Task 2.5: the login allowlist contains operator identities only.
+          #
+          # THIS is the gate, not Auth0. The Auth0 application is shared by every
+          # cluster in the fleet, so a customer whose address is on their own
+          # cluster's allowlist authenticates successfully at the provider and is
+          # then refused here. Anyone reading "Auth0 protects factory" and
+          # stopping there has read one layer too few — the identity provider
+          # proves who someone is, this file decides whether that person gets in.
+          #
+          # Both addresses are ferry133's. Two rather than one because a single
+          # entry makes an inaccessible mailbox an inaccessible factory, and this
+          # is the host holding the fleet's provisioning credentials.
+          #
+          # A literal file, not a Flux variable: postBuild substitution collapses
+          # newlines in multi-line values.
+          allowed-emails: |
+            jiahdadm@gmail.com
+            ferry133@gmail.com
+    persistence:
+      claude-config:
+        # local-path, not the default sc-nas. factory does not mount any NAS
+        # export, so it does not inherit the Synology-ACL rule that forces those
+        # pods to uid 0 for storage reasons — and node-local storage keeps this
+        # pod's state off a share that other clusters' backups also reach.
+        # The cost is real and is the same one omni-local already pays: the claim
+        # binds to whichever node schedules it first, and the pod is pinned there
+        # afterwards. Acceptable for a single-replica agent; it is not a pattern
+        # to copy to anything that needs to move.
+        type: persistentVolumeClaim
+        storageClass: local-path
+        accessMode: ReadWriteOnce
+        size: 5Gi
+        globalMounts:
+          - path: /home/claude/.claude
+          # gnome-keyring's store — Claude's OAuth tokens land here via
+          # secret-service; unmounted, they die with the pod.
+          - path: /home/claude/.local/share/keyrings
+            subPath: keyrings
+      oauth2-emails:
+        type: configMap
+        identifier: oauth2-emails
+        advancedMounts:
+          factory:
+            oauth2-proxy:
+              - path: /etc/oauth2-proxy/allowed-emails
+                subPath: allowed-emails
+    defaultPodOptions:
+      # NO hostNetwork, and this is a deliberate divergence from the claude-code
+      # instances rather than an omission. They use it because ttyd binds :7681
+      # on the node and the terminal has to stay reachable as a rescue path.
+      # factory needs the opposite two properties:
+      #
+      #   1. Task 2.6 asks whether a gRPC streaming call to Omni completes over
+      #      ClusterIP + cluster DNS. On hostNetwork that is not the path being
+      #      tested, so a green result there would not answer the question.
+      #   2. NetworkPolicy does not apply to hostNetwork pods on this fleet
+      #      (jg-jiahd's Cilium has no Host Firewall). Leaving hostNetwork on
+      #      would put the credential-holding pod permanently outside any policy
+      #      anyone later writes for it — while a policy sitting in the repo
+      #      would read as though it applied.
+      securityContext:
+        # uid 0, matching the claude-code instances this image is built from.
+        # Note what it is NOT doing: root in this container grants no cluster
+        # access, because the ServiceAccount has no bindings and no token is
+        # mounted. It is here because the image and its entrypoint are built
+        # around /home/claude being writable by the running user, and shipping
+        # an untested non-root variant of an image whose behaviour cannot be
+        # exercised before the push gate would be guessing. Worth revisiting
+        # once the pod can actually be run — recorded so it is a deferral rather
+        # than a default nobody questioned.
+        runAsUser: 0
+        runAsGroup: 0
+    service:
+      app:
+        ports:
+          http:
+            # oauth2-proxy. ttyd is on 127.0.0.1:7681 and is deliberately not
+            # exposed by any Service — there is no port on this pod that reaches
+            # the terminal without passing the proxy.
+            port: 4180
+    route:
+      app:
+        # Task 2.4's HTTPRoute. Generated by the chart rather than written as a
+        # standalone manifest so the backendRef cannot drift from the Service
+        # name above.
+        #
+        # ⚠️ Unreachable until `https://factory.<domain>/oauth2/callback` is
+        # registered in the shared Auth0 application. In OIDC mode ttyd binds
+        # loopback and there is no fallback, so an unregistered callback is a
+        # 100%-failed login rather than a degraded one.
+        hostnames: ["factory.${SECRET_DOMAIN}"]
+        parentRefs:
+          - name: envoy-external
+            namespace: network
+            sectionName: https
+        rules:
+          - backendRefs:
+              - identifier: app
+                port: 4180
