@@ -47,12 +47,34 @@ spec:
           app:
             image:
               repository: ghcr.io/ferry133/claude-code
-              # Tag and digest together. The tag is what a human reads; the
-              # digest is what actually resolves, and a rebuild that moves the
-              # tag cannot move this pod without a commit in this file. Verified
-              # 2026-08-17: this digest is multi-arch (amd64 + arm64) and its
+              # Tag and digest together, and here they AGREE — which they did
+              # not for most of 2026-08-18. `factory-170830f` was rebuilt from
+              # `main` and moved to a different digest, leaving this line naming
+              # a tag that no longer pointed at the digest beside it: correct
+              # behaviour, misleading text.
+              #
+              # Nothing about the running pod changed, and that is the whole
+              # reason to write it this way. In `tag@digest` the digest is what
+              # containerd fetches; measured on jcom rather than taken from the
+              # spec — `imageID` read back `@sha256:b10e9ed5…` while the tag
+              # pointed elsewhere.
+              #
+              # `factory-170830f-b10e9ed5` (k8scc#3) is the same manifest
+              # republished under a name no workflow writes, so it cannot be
+              # moved out from under this pin the way the short-SHA tag was.
+              # The digest is kept anyway: "no workflow writes that tag" is a
+              # convention, and the digest is the enforcement.
+              #
+              # Verified 2026-08-17: multi-arch (amd64 + arm64), and its
               # filesystem carries no credential material (2.8, jg-base#5).
-              tag: factory-170830f@sha256:b10e9ed58c94dd3c93531ba8cf051908badaa94125f8e3f7567e91451af2ca29
+              # That scan is a scan of THIS digest, which is why repinning to a
+              # newer build would have required redoing it and this does not.
+              #
+              # A rebuild of the same commit yields a different digest here —
+              # `docker/metadata-action` restamps `image.created`, so the digest
+              # moves even when every layer is byte-identical. Do not assume a
+              # short-SHA tag is stable; k8scc#3 Ask 2 is still open on that.
+              tag: factory-170830f-b10e9ed5@sha256:b10e9ed58c94dd3c93531ba8cf051908badaa94125f8e3f7567e91451af2ca29
             env:
               # The pod runs as uid 0 (see defaultPodOptions), which resolves
               # HOME=/root — but all state lives under /home/claude.
