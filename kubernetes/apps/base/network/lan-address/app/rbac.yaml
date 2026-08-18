@@ -10,14 +10,15 @@ kind: ClusterRole
 metadata:
   name: lan-address-probe
 rules:
-  # The pool is this component's only output. It is deliberately not allowed to
-  # touch the pool rendered from cluster.yaml, or any other cluster state.
+  # These two pools are this component's only output. It is deliberately not
+  # allowed to touch the pool rendered from cluster.yaml, or any other cluster
+  # state.
   - apiGroups: ["cilium.io"]
     resources: ["ciliumloadbalancerippools"]
     verbs: ["get", "create", "patch", "update"]
-    resourceNames: ["pool-discovered"]
+    resourceNames: ["pool-discovered", "pool-discovered-external"]
   # create cannot be restricted by resourceNames — the object does not exist yet
-  # when the request is admitted — so it is granted separately and the name is
+  # when the request is admitted — so it is granted separately and the names are
   # fixed in the script.
   - apiGroups: ["cilium.io"]
     resources: ["ciliumloadbalancerippools"]

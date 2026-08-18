@@ -340,19 +340,94 @@ data:
       record fail "LoadBalancer addresses" "$(echo "$UNSATISFIED" | tr '\n' ' ')${HINT}"
     fi
 
-    # 17. Discovered LAN address — appliance only; absent elsewhere by design.
+    # 17. Discovered LAN addresses — appliance only; absent elsewhere by design.
+    #
+    # Both pools, not just the shared one. lan-address publishes two scoped
+    # pools (see kubernetes/apps/base/network/lan-address/README.md), and
+    # reading only `pool-discovered` meant a reselection of the envoy-external
+    # address was never reported at all — the record existed on an object
+    # nothing looked at, which is indistinguishable from no reselection.
+    SHARED_POOL_ADDR=""; EXT_POOL_ADDR=""
     if kubectl get ciliumloadbalancerippool pool-discovered >/dev/null 2>&1; then
-      DISC=$(kubectl get ciliumloadbalancerippool pool-discovered -o json 2>/dev/null)
-      DISC_ADDR=$(jq -r '.spec.blocks[0].start // "none"' <<<"$DISC")
-      DISC_PREV=$(jq -r '.metadata.annotations["lan-address.jg-base/previous"] // ""' <<<"$DISC")
-      DISC_AT=$(jq -r '.metadata.annotations["lan-address.jg-base/reselected-at"] // ""' <<<"$DISC")
-      if [[ -n "$DISC_PREV" ]]; then
-        # A reselection means every LAN-facing service moved address. Anything
-        # that cached the old one — a pinned MQTT broker, a HomeKit pairing —
-        # has to be repointed, so this is reported rather than logged quietly.
-        record warn "LAN address reselected" "now ${DISC_ADDR}, was ${DISC_PREV} (at ${DISC_AT}); LAN clients holding the old address need repointing"
+      for POOL_SPEC in "pool-discovered:shared address" "pool-discovered-external:envoy-external address"; do
+        DISC_POOL="${POOL_SPEC%%:*}"; DISC_WHAT="${POOL_SPEC#*:}"
+        DISC=$(kubectl get ciliumloadbalancerippool "$DISC_POOL" -o json 2>/dev/null) || DISC=""
+        if [[ -z "$DISC" ]]; then
+          # Both pools land together from jg-base, but the probe needs one pass
+          # (up to PROBE_INTERVAL_SECONDS) to create the second one, and a
+          # cluster still running the pre-#9 single-pool probe has never had it.
+          # Warn rather than fail: this is "not yet", and it clears itself.
+          record warn "LAN address pool ${DISC_POOL} absent" "expected to hold the ${DISC_WHAT}; the probe publishes it on its next pass — if it persists, lan-address-probe is not running or its RBAC predates ferry133/jg-base#9"
+          continue
+        fi
+        DISC_ADDR=$(jq -r '.spec.blocks[0].start // "none"' <<<"$DISC")
+        DISC_PREV=$(jq -r '.metadata.annotations["lan-address.jg-base/previous"] // ""' <<<"$DISC")
+        DISC_AT=$(jq -r '.metadata.annotations["lan-address.jg-base/reselected-at"] // ""' <<<"$DISC")
+        case "$DISC_POOL" in
+          pool-discovered)          SHARED_POOL_ADDR="$DISC_ADDR" ;;
+          pool-discovered-external) EXT_POOL_ADDR="$DISC_ADDR" ;;
+        esac
+        if [[ "$DISC_ADDR" == "none" ]]; then
+          record warn "LAN ${DISC_WHAT} unallocated" "${DISC_POOL} is empty — the probe found no free address for it, so its consumer stays <pending>"
+        elif [[ -n "$DISC_PREV" ]]; then
+          # A reselection means a LAN-facing service moved address. Anything
+          # that cached the old one — a pinned MQTT broker, a HomeKit pairing —
+          # has to be repointed, so this is reported rather than logged quietly.
+          record warn "LAN ${DISC_WHAT} reselected" "now ${DISC_ADDR}, was ${DISC_PREV} (at ${DISC_AT}); LAN clients holding the old address need repointing"
+        else
+          record ok "LAN ${DISC_WHAT} stable (${DISC_ADDR})"
+        fi
+      done
+
+      # 17a. Does the allocation actually match the pools it was scoped into?
+      #
+      # 17 says the pools hold addresses. That is not the same as the right
+      # consumer holding the right one, and the gap between those two is the
+      # whole of ferry133/jg-base#9: under a single unscoped pool the assignment
+      # came out correct most of the time, and nothing in the stack could tell a
+      # correct outcome from a lucky one. The serviceSelectors turn it into a
+      # constraint — but a selector that silently stops matching (an Envoy
+      # Gateway release that renames its labels, say) leaves a cluster that
+      # looks exactly like a healthy one right up until something reshuffles,
+      # and then LAN DNS fails completely rather than partially.
+      #
+      # So this checks the consequence, not the mechanism, and it distinguishes
+      # three outcomes rather than two: matched, mismatched, and could not be
+      # measured. Without the third, "I could not see the address" reads as a
+      # pass.
+      LB_SVC=$(kubectl get svc -A -o json 2>/dev/null)
+      gw_lb_ip() {
+        jq -r --arg gw "$1" '[.items[]
+          | select(.metadata.labels["gateway.envoyproxy.io/owning-gateway-name"]==$gw)
+          | .status.loadBalancer.ingress[0].ip // empty][0] // ""' <<<"$LB_SVC"
+      }
+      EXT_ACTUAL=$(gw_lb_ip envoy-external)
+      INT_ACTUAL=$(gw_lb_ip envoy-internal)
+      DNS_ACTUAL=$(jq -r '[.items[]
+        | select(.metadata.namespace=="network" and .metadata.name=="k8s-gateway")
+        | .status.loadBalancer.ingress[0].ip // empty][0] // ""' <<<"$LB_SVC")
+
+      PART_BAD=""; PART_UNKNOWN=""
+      part_expect() {  # <label> <actual> <expected>
+        if [[ -z "$3" || "$3" == "none" ]]; then PART_UNKNOWN+="$1 (no pool address) "
+        elif [[ -z "$2" ]]; then PART_UNKNOWN+="$1 (no address assigned) "
+        elif [[ "$2" != "$3" ]]; then PART_BAD+="$1=$2 expected $3; "
+        fi
+      }
+      part_expect envoy-external "$EXT_ACTUAL" "$EXT_POOL_ADDR"
+      part_expect envoy-internal "$INT_ACTUAL" "$SHARED_POOL_ADDR"
+      part_expect k8s-gateway    "$DNS_ACTUAL" "$SHARED_POOL_ADDR"
+
+      if [[ -n "$PART_BAD" ]]; then
+        # The unmeasured ones are carried into the failure rather than dropped:
+        # when envoy-external has taken the shared address, the sharing group
+        # showing no address at all IS the eviction, and reporting only the
+        # mismatch would describe half of it.
+        record fail "LAN address allocation does not match its pools" "${PART_BAD}${PART_UNKNOWN:+not measurable: ${PART_UNKNOWN% }; }the serviceSelectors on pool-discovered/pool-discovered-external are not partitioning these Services as intended — see kubernetes/apps/base/network/lan-address/README.md and ferry133/jg-base#9. If envoy-external holds the shared address, the sharing group is one Service recreation away from losing LAN DNS entirely"
+      elif [[ -n "$PART_UNKNOWN" ]]; then
+        record warn "LAN address allocation not fully observable" "could not compare: ${PART_UNKNOWN}— this is not a pass, it is a missing measurement"
       else
-        record ok "LAN address stable (${DISC_ADDR})"
+        record ok "LAN address allocation matches its pools (shared ${SHARED_POOL_ADDR}, external ${EXT_POOL_ADDR})"
       fi
     fi
 
