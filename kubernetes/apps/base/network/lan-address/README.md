@@ -94,12 +94,33 @@ than assumed:
   shape across Envoy Gateway releases; on the deployed v1.7.0 it happens to be
   `envoy-external`, but that is a coincidence this must not rest on.
 
-Verified 2026-08-19 against the live `jgt-appliance` API by listing every
-Service in the cluster under each selector: the two sets are disjoint and their
-union is every Service. `daily-check` re-checks the *consequence* daily — that
-`envoy-external` holds the external pool's address and the sharing group holds
-the shared one — because a selector that silently stops matching produces a
-cluster that looks exactly like a healthy one until something reshuffles.
+### What has and has not been checked
+
+Both selectors were listed against a live cluster's every Service on 2026-08-19
+— two disjoint sets whose union is every Service — and every manifest the probe
+emits was accepted by a live Cilium CRD via server-side dry-run. **Under Cilium
+v1.19.1 and Envoy Gateway v1.7.0.** The versions are the citation; the cluster
+was `jgt-appliance`, which is being retired.
+
+**Nothing here has been checked end to end, and there is currently no cluster to
+check it on.** No appliance is running: `jcom` and `jg-jiahd` declare their
+addresses, so their static `pool` serves everything and `pool-discovered` is
+never created. The check that would settle it is the third one in
+ferry133/jg-base#9 —
+
+```sh
+dig +short @<k8s-gateway-ip> im.<domain>   # must return the external address
+```
+
+— because the first two (no pool reports `PoolConflict=True`; `envoy-external`
+is `PROGRAMMED` with an address) both pass while the LAN resolves nothing. That
+is how the original defect survived. Run it on the next appliance before
+treating this as settled, and re-list both selectors there.
+
+`daily-check` re-checks the *consequence* daily — that `envoy-external` holds
+the external pool's address and the sharing group holds the shared one —
+because a selector that silently stops matching produces a cluster that looks
+exactly like a healthy one until something reshuffles.
 
 ## Why ARP is the first implementation and not the last
 

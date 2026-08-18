@@ -81,8 +81,13 @@ data:
     # (operator/pkg/lbipam/service_store.go:186, v1.19.1), and a NotIn
     # requirement matches a Service that carries the key not at all — which is
     # what puts k8s-gateway, whose Service comes from a Helm chart and has no
-    # Envoy Gateway labels, on the shared side. Verified against the live
-    # jgt-appliance API for every Service in the cluster, 2026-08-19.
+    # Envoy Gateway labels, on the shared side.
+    #
+    # Both selectors were listed against a live cluster's every Service on
+    # 2026-08-19 — two disjoint sets whose union is all of them — under Cilium
+    # v1.19.1 and Envoy Gateway v1.7.0. Cite the versions, not the cluster: that
+    # cluster was jgt-appliance, which is being retired, and no appliance runs
+    # this today. Re-list both selectors on the next one before trusting this.
     EXTERNAL_SELECTOR_KEY="gateway.envoyproxy.io/owning-gateway-name"
     EXTERNAL_GATEWAY="${EXTERNAL_GATEWAY_NAME:-envoy-external}"
 
