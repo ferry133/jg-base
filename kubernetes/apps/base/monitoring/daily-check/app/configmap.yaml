@@ -340,24 +340,47 @@ data:
       record fail "LoadBalancer addresses" "$(echo "$UNSATISFIED" | tr '\n' ' ')${HINT}"
     fi
 
-    # 17. Discovered LAN addresses — appliance only; absent elsewhere by design.
+    # 17. Discovered LAN addresses.
+    #
+    # NOT appliance-only, however much the component reads that way. The probe
+    # lives in apps/base/network/, so it ships to every cluster, and suspending
+    # its Kustomization does not remove a Deployment already created — measured
+    # 2026-08-19: jcom has lan-address-probe running 7d, `lan-address-probe`
+    # suspended=true, and a stray `pool-discovered` holding 10.9.8.254 that no
+    # Service uses. jg-jiahd has neither. So "declares its addresses" predicts
+    # nothing about whether pool-discovered exists, and any check here that
+    # assumes an appliance runs on clusters that are not one.
     #
     # Both pools, not just the shared one. lan-address publishes two scoped
     # pools (see kubernetes/apps/base/network/lan-address/README.md), and
     # reading only `pool-discovered` meant a reselection of the envoy-external
     # address was never reported at all — the record existed on an object
     # nothing looked at, which is indistinguishable from no reselection.
-    SHARED_POOL_ADDR=""; EXT_POOL_ADDR=""
+    SHARED_POOL_ADDR=""; EXT_POOL_ADDR=""; EXT_POOL_ABSENT=0
     if kubectl get ciliumloadbalancerippool pool-discovered >/dev/null 2>&1; then
+      LB_SVC=$(kubectl get svc -A -o json 2>/dev/null)
+      svc_holding() {  # every ns/name whose LoadBalancer address is $1
+        jq -r --arg ip "$1" '[.items[]
+          | select([.status.loadBalancer.ingress[]?.ip] | index($ip))
+          | "\(.metadata.namespace)/\(.metadata.name)"] | join(" ")' <<<"$LB_SVC"
+      }
+      gw_lb_ip() {
+        jq -r --arg gw "$1" '[.items[]
+          | select(.metadata.labels["gateway.envoyproxy.io/owning-gateway-name"]==$gw)
+          | .status.loadBalancer.ingress[0].ip // empty][0] // ""' <<<"$LB_SVC"
+      }
       for POOL_SPEC in "pool-discovered:shared address" "pool-discovered-external:envoy-external address"; do
         DISC_POOL="${POOL_SPEC%%:*}"; DISC_WHAT="${POOL_SPEC#*:}"
         DISC=$(kubectl get ciliumloadbalancerippool "$DISC_POOL" -o json 2>/dev/null) || DISC=""
         if [[ -z "$DISC" ]]; then
-          # Both pools land together from jg-base, but the probe needs one pass
-          # (up to PROBE_INTERVAL_SECONDS) to create the second one, and a
-          # cluster still running the pre-#9 single-pool probe has never had it.
-          # Warn rather than fail: this is "not yet", and it clears itself.
-          record warn "LAN address pool ${DISC_POOL} absent" "expected to hold the ${DISC_WHAT}; the probe publishes it on its next pass — if it persists, lan-address-probe is not running or its RBAC predates ferry133/jg-base#9"
+          # Noted, not reported — 17a decides whether a missing pool matters,
+          # because on a cluster whose discovered pool nothing uses it does not.
+          # jcom is that cluster and its probe is suspended, so it will never
+          # publish the second pool: a warn here would be permanently amber and
+          # would assert a mechanism ("on its next pass") that is untrue there.
+          # A daily amber row nobody can clear trains the same blindness as a
+          # red one nobody reads — see check 18.
+          [[ "$DISC_POOL" == "pool-discovered-external" ]] && EXT_POOL_ABSENT=1
           continue
         fi
         DISC_ADDR=$(jq -r '.spec.blocks[0].start // "none"' <<<"$DISC")
@@ -379,55 +402,84 @@ data:
         fi
       done
 
-      # 17a. Does the allocation actually match the pools it was scoped into?
+      # 17a. Is the partition holding — is envoy-external kept off the shared
+      # address, and the shared group off envoy-external's?
       #
-      # 17 says the pools hold addresses. That is not the same as the right
-      # consumer holding the right one, and the gap between those two is the
-      # whole of ferry133/jg-base#9: under a single unscoped pool the assignment
-      # came out correct most of the time, and nothing in the stack could tell a
-      # correct outcome from a lucky one. The serviceSelectors turn it into a
-      # constraint — but a selector that silently stops matching (an Envoy
-      # Gateway release that renames its labels, say) leaves a cluster that
-      # looks exactly like a healthy one right up until something reshuffles,
-      # and then LAN DNS fails completely rather than partially.
+      # That is the property, and it is worth being exact about why it is
+      # phrased this way. The first version of this check asserted that each
+      # Service's address EQUALS its pool's address. On an appliance those
+      # coincide, so it looked right. On a cluster that declares its addresses
+      # AND has a pool-discovered lying around, they are two pools with two
+      # purposes and equality was never the contract: measured on jcom,
+      # envoy-internal holds 10.9.8.4 and k8s-gateway 10.9.8.3 from the static
+      # pool while pool-discovered holds an unused 10.9.8.254 — two mismatches,
+      # a daily FAIL, and with it the /fail ping for the other twenty checks.
+      # An appliance-only invariant behind a guard that is not appliance-only.
       #
-      # So this checks the consequence, not the mechanism, and it distinguishes
-      # three outcomes rather than two: matched, mismatched, and could not be
-      # measured. Without the third, "I could not see the address" reads as a
-      # pass.
-      LB_SVC=$(kubectl get svc -A -o json 2>/dev/null)
-      gw_lb_ip() {
-        jq -r --arg gw "$1" '[.items[]
-          | select(.metadata.labels["gateway.envoyproxy.io/owning-gateway-name"]==$gw)
-          | .status.loadBalancer.ingress[0].ip // empty][0] // ""' <<<"$LB_SVC"
-      }
+      # The obvious repair — skip Services carrying lbipam.cilium.io/ips — is
+      # wrong in the way that matters: an appliance declaring lan_shared_addr
+      # back-fills ${CLUSTER_GATEWAY_ADDR}, so envoy-internal and k8s-gateway
+      # carry that annotation there too (measured on jgt-appliance). It would
+      # switch this check off on exactly the cluster it exists to protect, and a
+      # check that has quietly stopped applying reads like one that passed.
+      #
+      # So: assert the partition, not equality. Both halves stay true whether or
+      # not addresses are declared, and only one of them can be false at a time
+      # for a benign reason.
+      #
+      # It still runs only where the discovered pool is actually serving this
+      # cluster. A pool nothing draws from has no allocation to check, and
+      # saying so beats inventing a verdict about it.
+      SHARED_HOLDERS=""
+      [[ -n "$SHARED_POOL_ADDR" && "$SHARED_POOL_ADDR" != "none" ]] && \
+        SHARED_HOLDERS=$(svc_holding "$SHARED_POOL_ADDR")
+      EXT_HOLDERS=""
+      [[ -n "$EXT_POOL_ADDR" && "$EXT_POOL_ADDR" != "none" ]] && \
+        EXT_HOLDERS=$(svc_holding "$EXT_POOL_ADDR")
       EXT_ACTUAL=$(gw_lb_ip envoy-external)
-      INT_ACTUAL=$(gw_lb_ip envoy-internal)
-      DNS_ACTUAL=$(jq -r '[.items[]
-        | select(.metadata.namespace=="network" and .metadata.name=="k8s-gateway")
-        | .status.loadBalancer.ingress[0].ip // empty][0] // ""' <<<"$LB_SVC")
 
-      PART_BAD=""; PART_UNKNOWN=""
-      part_expect() {  # <label> <actual> <expected>
-        if [[ -z "$3" || "$3" == "none" ]]; then PART_UNKNOWN+="$1 (no pool address) "
-        elif [[ -z "$2" ]]; then PART_UNKNOWN+="$1 (no address assigned) "
-        elif [[ "$2" != "$3" ]]; then PART_BAD+="$1=$2 expected $3; "
-        fi
-      }
-      part_expect envoy-external "$EXT_ACTUAL" "$EXT_POOL_ADDR"
-      part_expect envoy-internal "$INT_ACTUAL" "$SHARED_POOL_ADDR"
-      part_expect k8s-gateway    "$DNS_ACTUAL" "$SHARED_POOL_ADDR"
-
-      if [[ -n "$PART_BAD" ]]; then
-        # The unmeasured ones are carried into the failure rather than dropped:
-        # when envoy-external has taken the shared address, the sharing group
-        # showing no address at all IS the eviction, and reporting only the
-        # mismatch would describe half of it.
-        record fail "LAN address allocation does not match its pools" "${PART_BAD}${PART_UNKNOWN:+not measurable: ${PART_UNKNOWN% }; }the serviceSelectors on pool-discovered/pool-discovered-external are not partitioning these Services as intended — see kubernetes/apps/base/network/lan-address/README.md and ferry133/jg-base#9. If envoy-external holds the shared address, the sharing group is one Service recreation away from losing LAN DNS entirely"
-      elif [[ -n "$PART_UNKNOWN" ]]; then
-        record warn "LAN address allocation not fully observable" "could not compare: ${PART_UNKNOWN}— this is not a pass, it is a missing measurement"
+      if [[ -z "$SHARED_HOLDERS" && -z "$EXT_HOLDERS" ]]; then
+        record ok "Discovered LAN pool present but unused" "no Service holds ${SHARED_POOL_ADDR}${EXT_POOL_ADDR:+ or ${EXT_POOL_ADDR}}; this cluster gets its LoadBalancer addresses from the static pool, so there is no discovered allocation to check. If this cluster is not an appliance, the pool and its probe are strays worth removing"
       else
-        record ok "LAN address allocation matches its pools (shared ${SHARED_POOL_ADDR}, external ${EXT_POOL_ADDR})"
+        PART_BAD=""; PART_NOTE=""
+        # The #9 failure itself: envoy-external on the shared address evicts
+        # envoy-internal, k8s-gateway and mqtt together, and LAN DNS goes down
+        # completely rather than partially.
+        if [[ -n "$EXT_ACTUAL" && "$EXT_ACTUAL" == "$SHARED_POOL_ADDR" ]]; then
+          PART_BAD+="envoy-external holds the shared address ${SHARED_POOL_ADDR}; "
+        fi
+        # The mirror: nothing but envoy-external may draw from its pool.
+        if [[ -n "$EXT_HOLDERS" ]]; then
+          for HOLDER in $EXT_HOLDERS; do
+            case "$HOLDER" in
+              network/envoy-external) ;;
+              *) PART_BAD+="${HOLDER} holds envoy-external's address ${EXT_POOL_ADDR}; " ;;
+            esac
+          done
+        fi
+        # The external pool exists, nothing drew from it, and envoy-external has
+        # no address — the shape a serviceSelector that stopped matching leaves.
+        if [[ -n "$EXT_POOL_ADDR" && "$EXT_POOL_ADDR" != "none" && -z "$EXT_HOLDERS" && -z "$EXT_ACTUAL" ]]; then
+          PART_NOTE="pool-discovered-external holds ${EXT_POOL_ADDR} and no Service drew from it while envoy-external has no address — check that its serviceSelector still matches"
+        elif [[ "$EXT_POOL_ABSENT" == 1 ]]; then
+          # Only here: the discovered pool IS serving this cluster, so the
+          # second one is genuinely owed and its absence leaves envoy-external
+          # unscoped — the pre-#9 state.
+          PART_NOTE="pool-discovered is in use but pool-discovered-external does not exist, so envoy-external is drawing from an unscoped pool. Either the probe has not completed a pass since ferry133/jg-base#9 landed, or it is not reconciling — check whether Kustomization lan-address-probe is suspended"
+        fi
+
+        if [[ -n "$PART_BAD" ]]; then
+          record fail "LAN address partition broken" "${PART_BAD}the serviceSelectors on pool-discovered/pool-discovered-external are not keeping these Services apart — see kubernetes/apps/base/network/lan-address/README.md and ferry133/jg-base#9. If envoy-external holds the shared address, the sharing group is one Service recreation away from losing LAN DNS entirely"
+        elif [[ -n "$PART_NOTE" ]]; then
+          record warn "LAN address partition not observable" "${PART_NOTE} — this is not a pass, it is a missing measurement"
+        elif [[ -z "$EXT_POOL_ADDR" || "$EXT_POOL_ADDR" == "none" ]]; then
+          # Say what was actually asserted. With no external pool there is only
+          # half a partition to check, and calling that "allocation matches its
+          # pools" would claim the half that was never looked at.
+          record ok "envoy-external is off the discovered shared address (${SHARED_POOL_ADDR})"
+        else
+          record ok "LAN address partition holds (shared ${SHARED_POOL_ADDR} → ${SHARED_HOLDERS:-nobody}, external ${EXT_POOL_ADDR} → ${EXT_HOLDERS:-nobody})"
+        fi
       fi
     fi
 

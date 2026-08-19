@@ -88,6 +88,11 @@ data:
     # v1.19.1 and Envoy Gateway v1.7.0. Cite the versions, not the cluster: that
     # cluster was jgt-appliance, which is being retired, and no appliance runs
     # this today. Re-list both selectors on the next one before trusting this.
+    #
+    # "No appliance" is not "nowhere": this component is in apps/base/network/
+    # and ships everywhere, so non-appliance clusters can and do carry a
+    # pool-discovered (jcom, from a probe whose Kustomization is suspended —
+    # suspending does not delete the Deployment). See the README.
     EXTERNAL_SELECTOR_KEY="gateway.envoyproxy.io/owning-gateway-name"
     EXTERNAL_GATEWAY="${EXTERNAL_GATEWAY_NAME:-envoy-external}"
 

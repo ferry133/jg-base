@@ -102,11 +102,32 @@ emits was accepted by a live Cilium CRD via server-side dry-run. **Under Cilium
 v1.19.1 and Envoy Gateway v1.7.0.** The versions are the citation; the cluster
 was `jgt-appliance`, which is being retired.
 
-**Nothing here has been checked end to end, and there is currently no cluster to
-check it on.** No appliance is running: `jcom` and `jg-jiahd` declare their
-addresses, so their static `pool` serves everything and `pool-discovered` is
-never created. The check that would settle it is the third one in
-ferry133/jg-base#9 —
+**Nothing here has been checked end to end, and no appliance is running to check
+it on.**
+
+Note what that does *not* say. An earlier draft of this file claimed
+`pool-discovered` is never created outside an appliance because `jcom` and
+`jg-jiahd` declare their addresses. That is false, and measurably so — 2026-08-19:
+
+```
+jcom      pool 10.9.8.4,.3,.5,.7,.6,.8   pool-discovered 10.9.8.254   probe 1/1 (7d10h)
+jg-jiahd  pool 10.9.9.4,.3,.5,.7          no pool-discovered, no probe
+```
+
+This component lives in `apps/base/network/`, so it ships to **every** cluster.
+Declaring addresses fills the *static* pool; it does not suppress discovery. And
+suspending the `lan-address-probe` Kustomization — which `jcom` has — does not
+remove a Deployment already created, so `jcom` has an orphaned probe publishing
+a pool no Service uses. Anything written here that assumes "runs on an
+appliance" is really running on clusters that are not one; `daily-check` 17a
+asserted an appliance-only invariant behind exactly that assumption and would
+have failed daily on `jcom`.
+
+Because `jcom`'s probe Kustomization is suspended, it will not receive this
+rewrite either — what reaches `jcom` is `daily-check`, not the probe. So `jcom`
+regression-tests the reporting half and nothing else.
+
+The check that would settle the rest is the third one in ferry133/jg-base#9 —
 
 ```sh
 dig +short @<k8s-gateway-ip> im.<domain>   # must return the external address
