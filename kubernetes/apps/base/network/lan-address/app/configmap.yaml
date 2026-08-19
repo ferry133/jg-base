@@ -19,8 +19,8 @@ metadata:
 data:
   probe.sh: |
     #!/bin/sh
-    # Find free addresses on the customer's LAN and publish them as a
-    # CiliumLoadBalancerIPPool. That pool is the only thing this component
+    # Find free addresses on the customer's LAN and publish them as
+    # CiliumLoadBalancerIPPools. Those pools are the only thing this component
     # exports: a later DHCP lease-holder implementation replaces this script and
     # nothing else, because no Service annotation, template or schema names it.
     #
@@ -40,20 +40,61 @@ data:
     # public records external-dns publishes from it, taking the remote-support
     # path down with them.
     #
+    # Two addresses, and therefore TWO POOLS — one per consumer, each scoped by
+    # serviceSelector. A single pool holding both addresses does not express the
+    # allocation, it only permits it: Cilium walks a pool's blocks in order, so
+    # the assignment that comes out is a convention rather than a constraint,
+    # and envoy-external taking the shared address evicts envoy-internal,
+    # k8s-gateway and mqtt together. The symptom of that is total LAN DNS
+    # failure, not partial — every name in the cluster domain goes NXDOMAIN
+    # while the public tunnel keeps answering, because cloudflared's origin is a
+    # ClusterIP and never needed the LB address. That asymmetry is what keeps it
+    # invisible. See ferry133/jg-base#9.
+    #
     # ARP can only show that nobody answers right now. It cannot show that an
     # address is outside the router's DHCP range, so a device that is currently
     # switched off can still collide later. That is why the chosen addresses are
     # re-checked on every pass rather than picked once.
     set -eu
 
-    POOL="${POOL_NAME:-pool-discovered}"
+    POOL_SHARED="${POOL_NAME:-pool-discovered}"
+    POOL_EXTERNAL="${EXTERNAL_POOL_NAME:-pool-discovered-external}"
     INTERVAL="${PROBE_INTERVAL_SECONDS:-300}"
-    WANTED="${ADDRESS_COUNT:-2}"
     # Scan downward from the top of the subnet: routers hand out DHCP leases
     # from the low end far more often than the high end, so the top is the
     # likeliest place to find something that stays free.
     SCAN_FROM="${SCAN_FROM:-254}"
     SCAN_TO="${SCAN_TO:-200}"
+
+    # The predicate that partitions the cluster's Services between the two
+    # pools. It is used positively in one selector and negatively in the other,
+    # so the two are exact complements and every Service matches exactly one
+    # pool — there is no third outcome where a Service matches neither and waits
+    # forever, and none where it matches both and the choice is Cilium's.
+    #
+    # The key is Envoy Gateway's own label naming the Gateway a proxy Service
+    # belongs to, not the Service name: the generated name has changed shape
+    # across Envoy Gateway releases (it is `envoy-external` on the v1.7.0
+    # currently deployed) while this label is part of how Envoy Gateway finds
+    # its own resources. Cilium matches against the Service's labels plus the
+    # reserved `io.kubernetes.service.{name,namespace}` it injects
+    # (operator/pkg/lbipam/service_store.go:186, v1.19.1), and a NotIn
+    # requirement matches a Service that carries the key not at all — which is
+    # what puts k8s-gateway, whose Service comes from a Helm chart and has no
+    # Envoy Gateway labels, on the shared side.
+    #
+    # Both selectors were listed against a live cluster's every Service on
+    # 2026-08-19 — two disjoint sets whose union is all of them — under Cilium
+    # v1.19.1 and Envoy Gateway v1.7.0. Cite the versions, not the cluster: that
+    # cluster was jgt-appliance, which is being retired, and no appliance runs
+    # this today. Re-list both selectors on the next one before trusting this.
+    #
+    # "No appliance" is not "nowhere": this component is in apps/base/network/
+    # and ships everywhere, so non-appliance clusters can and do carry a
+    # pool-discovered (jcom, from a probe whose Kustomization is suspended —
+    # suspending does not delete the Deployment). See the README.
+    EXTERNAL_SELECTOR_KEY="gateway.envoyproxy.io/owning-gateway-name"
+    EXTERNAL_GATEWAY="${EXTERNAL_GATEWAY_NAME:-envoy-external}"
 
     log() { echo "[$(date -u '+%Y-%m-%dT%H:%M:%SZ')] $*"; }
 
@@ -83,23 +124,39 @@ data:
       arping -D -q -c 2 -w 3 -I "$IFACE" "$1" >/dev/null 2>&1
     }
 
-    current_pool_addresses() {
-      kubectl get ciliumloadbalancerippool "$POOL" \
+    pool_addresses() {
+      kubectl get ciliumloadbalancerippool "$1" \
         -o jsonpath='{range .spec.blocks[*]}{.start} {end}' 2>/dev/null || true
     }
 
-    current_annotation() {
-      kubectl get ciliumloadbalancerippool "$POOL" \
-        -o jsonpath="{.metadata.annotations.lan-address\.jg-base/$1}" 2>/dev/null || true
+    pool_annotation() {
+      kubectl get ciliumloadbalancerippool "$1" \
+        -o jsonpath="{.metadata.annotations.lan-address\.jg-base/$2}" 2>/dev/null || true
     }
 
-    # The pool carries the reselection history as annotations, because the pool
-    # is the only thing this component publishes and a log line inside a pod
+    # Each pool admits exactly one of the two consumers. Written out rather than
+    # parameterised because the whole point is that the two are complements: a
+    # reader has to be able to see that no Service falls between them.
+    selector_yaml() {
+      case "$1" in
+        external)
+          printf '  serviceSelector:\n    matchLabels:\n      %s: "%s"\n' \
+            "$EXTERNAL_SELECTOR_KEY" "$EXTERNAL_GATEWAY"
+          ;;
+        *)
+          printf '  serviceSelector:\n    matchExpressions:\n      - key: %s\n        operator: NotIn\n        values: ["%s"]\n' \
+            "$EXTERNAL_SELECTOR_KEY" "$EXTERNAL_GATEWAY"
+          ;;
+      esac
+    }
+
+    # The pool carries the reselection history as annotations, because the pools
+    # are the only thing this component publishes and a log line inside a pod
     # nobody is watching is not a record. daily-check reads these.
     publish() {
-      _addrs="$1"; _prev="${2:-}"
+      _pool="$1"; _role="$2"; _addr="$3"; _prev="${4:-}"
       _since="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
-      if [ -n "$_prev" ] && [ "$_prev" != "$_addrs" ]; then
+      if [ -n "$_prev" ] && [ "$_prev" != "$_addr" ]; then
         _prev_ann="lan-address.jg-base/previous: \"$_prev\""
         _at_ann="lan-address.jg-base/reselected-at: \"$_since\""
       else
@@ -108,76 +165,120 @@ data:
         # day, so overwriting them on an uneventful pass erased the record long
         # before anything could report it. Server-side apply owns these fields,
         # so they have to be restated to survive.
-        _prev_ann="lan-address.jg-base/previous: \"$(current_annotation previous)\""
-        _at_ann="lan-address.jg-base/reselected-at: \"$(current_annotation reselected-at)\""
+        _prev_ann="lan-address.jg-base/previous: \"$(pool_annotation "$_pool" previous)\""
+        _at_ann="lan-address.jg-base/reselected-at: \"$(pool_annotation "$_pool" reselected-at)\""
       fi
-      # One single-address block per address, so the pool reads as the list of
-      # addresses this cluster holds rather than a range it may grow into.
-      _blocks=""
-      for _a in $_addrs; do
-        _blocks="$_blocks
-        - start: \"$_a\"
-          stop: \"$_a\""
-      done
+      # One single-address block, so the pool reads as the address this consumer
+      # holds rather than a range it may grow into. An empty list is a valid
+      # pool that hands out nothing, which is the honest shape when this role
+      # has no address: absent would read as "not managed here".
+      if [ -n "$_addr" ]; then
+        _blocks="
+        - start: \"$_addr\"
+          stop: \"$_addr\""
+      else
+        _blocks=" []"
+      fi
       cat <<EOF | kubectl apply --server-side --force-conflicts -f - >/dev/null
     apiVersion: cilium.io/v2
     kind: CiliumLoadBalancerIPPool
     metadata:
-      name: $POOL
+      name: $_pool
       labels:
         app.kubernetes.io/managed-by: lan-address-probe
+        lan-address.jg-base/role: $_role
       annotations:
         lan-address.jg-base/confirmed-at: "$_since"
         $_prev_ann
         $_at_ann
     spec:
       allowFirstLastIPs: "No"
+    $(selector_yaml "$_role")
       blocks:$_blocks
     EOF
     }
 
     while :; do
-      chosen=""
-      count=0
-      existing="$(current_pool_addresses | tr -s ' ' | sed 's/ $//')"
-      # Keep the addresses already published, in the order they were published:
-      # re-probing them keeps the choice stable across restarts, which is what
-      # stops a reboot from silently moving every LAN-facing service. Order
-      # matters because Cilium hands out a pool's blocks in order, so preserving
-      # it keeps each service on the address it already has.
-      for addr in $existing; do
-        if is_free "$addr"; then
-          chosen="${chosen:+$chosen }$addr"
-          count=$((count + 1))
+      # Re-probing the addresses already published keeps the choice stable
+      # across restarts, which is what stops a reboot from silently moving every
+      # LAN-facing service.
+      shared_published="$(pool_addresses "$POOL_SHARED" | tr -s ' ' | sed 's/ $//')"
+      ext_published="$(pool_addresses "$POOL_EXTERNAL" | tr -s ' ' | sed 's/ $//')"
+
+      # shellcheck disable=SC2086  # deliberate word splitting: one addr per block
+      set -- $shared_published
+      shared_existing="${1:-}"
+      legacy_second="${2:-}"
+      # shellcheck disable=SC2086
+      set -- $ext_published
+      ext_existing="${1:-}"
+
+      # Upgrade from the single two-block pool this component used to publish:
+      # the address that was second in publication order is the one
+      # envoy-external already holds, so it is carried into the external pool
+      # rather than rediscovered. Rediscovery would depend on ARP still
+      # reporting an address free while the cluster itself L2-announces it —
+      # true today, but a property of Cilium's announcer this component has no
+      # business relying on.
+      if [ -z "$ext_existing" ] && [ -n "$legacy_second" ]; then
+        log "carrying $legacy_second from the legacy two-block $POOL_SHARED into $POOL_EXTERNAL"
+        ext_existing="$legacy_second"
+      fi
+
+      shared_addr=""
+      if [ -n "$shared_existing" ]; then
+        if is_free "$shared_existing"; then
+          shared_addr="$shared_existing"
         else
-          log "WARNING: $addr now answers ARP — reselecting"
+          log "WARNING: shared address $shared_existing now answers ARP — reselecting"
         fi
-      done
-      [ -z "$existing" ] || [ "$count" -eq "$WANTED" ] || \
-        log "keeping [$chosen], looking for $((WANTED - count)) more"
-      # Fill up to WANTED from the top of the subnet.
-      if [ "$count" -lt "$WANTED" ]; then
+      fi
+      ext_addr=""
+      if [ -n "$ext_existing" ]; then
+        if is_free "$ext_existing"; then
+          ext_addr="$ext_existing"
+        else
+          log "WARNING: $EXTERNAL_GATEWAY address $ext_existing now answers ARP — reselecting"
+        fi
+      fi
+
+      # Fill whichever role is still empty, from the top of the subnet.
+      if [ -z "$shared_addr" ] || [ -z "$ext_addr" ]; then
         for last in $(seq "$SCAN_FROM" -1 "$SCAN_TO"); do
-          [ "$count" -lt "$WANTED" ] || break
+          [ -z "$shared_addr" ] || [ -z "$ext_addr" ] || break
           cand="$PREFIX.$last"
-          case " $chosen " in *" $cand "*) continue ;; esac
-          if is_free "$cand"; then
-            chosen="${chosen:+$chosen }$cand"
-            count=$((count + 1))
-            log "selected $cand"
+          [ "$cand" != "$shared_addr" ] || continue
+          [ "$cand" != "$ext_addr" ] || continue
+          is_free "$cand" || continue
+          if [ -z "$shared_addr" ]; then
+            shared_addr="$cand"; log "selected $cand for the shared LAN address"
+          else
+            ext_addr="$cand"; log "selected $cand for $EXTERNAL_GATEWAY"
           fi
         done
       fi
 
-      if [ "$count" -eq "$WANTED" ]; then
-        publish "$chosen" "$existing"
-      elif [ "$count" -gt 0 ]; then
-        # Publishing a short list still beats publishing nothing: the services
-        # that fit come up, and the ones that do not are visibly <pending>.
-        log "WARNING: only $count of $WANTED addresses free in $PREFIX.$SCAN_TO-$SCAN_FROM"
-        publish "$chosen" "$existing"
+      if [ -z "$shared_addr" ] && [ -z "$ext_addr" ]; then
+        log "ERROR: no free address in $PREFIX.$SCAN_TO-$SCAN_FROM; leaving both pools untouched"
       else
-        log "ERROR: no free address in $PREFIX.$SCAN_TO-$SCAN_FROM; leaving pool untouched"
+        # Shared pool first, always. On the upgrade from one two-block pool,
+        # narrowing it before the external pool exists leaves the second address
+        # briefly owned by nobody — envoy-external goes <pending> for a beat.
+        # The other order would have it owned by two pools at once, which is a
+        # cidr_overlap conflict; Cilium resolves those by disabling the newer
+        # pool, and that is the failure this whole change exists to remove.
+        if [ -z "$shared_addr" ]; then
+          log "WARNING: no free address for the shared LAN address; LAN DNS stays down"
+        fi
+        publish "$POOL_SHARED" shared "$shared_addr" "$shared_existing"
+        if [ -z "$ext_addr" ]; then
+          # One address short. The shared pool carries LAN DNS, so it keeps the
+          # address it has and envoy-external is visibly <pending> instead of
+          # silently taking the shared one — which is the entire point of
+          # scoping the pools.
+          log "WARNING: no free address for $EXTERNAL_GATEWAY in $PREFIX.$SCAN_TO-$SCAN_FROM; it stays <pending>"
+        fi
+        publish "$POOL_EXTERNAL" external "$ext_addr" "$ext_existing"
       fi
       sleep "$INTERVAL"
     done

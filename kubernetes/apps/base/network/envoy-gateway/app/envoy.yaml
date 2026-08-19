@@ -45,10 +45,14 @@ spec:
 # envoy-internal, and the EnvoyProxy referenced by the GatewayClass applies to
 # every Gateway that uses the class.
 #
-# Under `appliance` this becomes ClusterIP. Nothing on the LAN connects to the
+# It is a LoadBalancer on every profile, appliance included. The appliance made
+# it a ClusterIP for a while, reasoning that nothing on the LAN connects to the
 # external gateway — cloudflared reaches it at
-# envoy-external.network.svc.cluster.local:443 — so a LoadBalancer address there
-# is one more address taken from the customer's network for nobody.
+# envoy-external.network.svc.cluster.local:443. That reasoning missed
+# k8s-gateway, which answers a hostname from whatever address its parent Gateway
+# holds: on jgt-appliance every externally routed name then resolved to a
+# ClusterIP no LAN client could reach. lan-address finds a second LAN address
+# for it instead (see that component's README).
 apiVersion: gateway.envoyproxy.io/v1alpha1
 kind: EnvoyProxy
 metadata:
@@ -96,10 +100,15 @@ spec:
       name: envoy-external
     annotations:
       external-dns.alpha.kubernetes.io/hostname: external.${SECRET_DOMAIN}
-      # Read only while the Service is a LoadBalancer. Under `appliance` it is a
-      # ClusterIP and LB-IPAM never looks at it, which is why the placeholder is
-      # harmless there — and why it must stay non-empty regardless: an empty
-      # annotation value is null to the Gateway CRD and fails validation.
+      # An appliance declares no cloudflare_gateway_addr, so this renders to the
+      # placeholder and Cilium ignores it — envoy-external draws its address
+      # from `pool-discovered-external` instead, whose serviceSelector admits
+      # only this Gateway. That scoping is what makes the allocation a
+      # constraint rather than a convention; do not read the placeholder as
+      # "LB-IPAM never looks at this Service" (ferry133/jg-base#9).
+      #
+      # It must stay non-empty regardless: an empty annotation value is null to
+      # the Gateway CRD and fails validation.
       lbipam.cilium.io/ips: "${CLOUDFLARE_GATEWAY_ADDR:=0.0.0.0}"
   listeners:
     - name: http
