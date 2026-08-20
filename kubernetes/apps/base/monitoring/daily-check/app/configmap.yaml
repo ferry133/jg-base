@@ -434,10 +434,22 @@ data:
         fi
       fi
     else
-      # Not configured is a statement about this cluster, not a fault: a
-      # prosumer/full cluster may have its own backups. Appliance validation
-      # requires backup_r2_* precisely so this branch cannot be reached there.
-      record ok "Off-site backup not configured"
+      # warn, not ok. "Not configured" was green on the reasoning that it is a
+      # statement about this cluster rather than a fault — a prosumer/full
+      # cluster may well have its own backups elsewhere. That reasoning holds
+      # and still produces the wrong row: a green tick against a backup line
+      # reads as "backups are fine", when what is true is that nothing here is
+      # copied off-site and nothing here can see a backup taken by other means.
+      # An undiscriminating check that renders identically to a passing one is
+      # the thing this report exists to not do.
+      #
+      # warn and not fail, deliberately: only FAIL_COUNT gates the dead-man ping
+      # (see the end of this script), so failing here would cost the /fail
+      # signal for every other check on every cluster that backs up by other
+      # means — a permanently red row, which is the failure mode check 18
+      # already documents. Appliance validation requires backup_r2_* precisely
+      # so this branch cannot be reached there.
+      record warn "Off-site backup not configured" "BACKUP_R2_BUCKET is unset, so nothing in this cluster is copied off-site. Deliberate if this cluster is backed up by other means — but that is not visible from here, so it cannot be reported as healthy"
     fi
 
     # 20. Off-site backup coverage — which databases, not merely whether it ran.
