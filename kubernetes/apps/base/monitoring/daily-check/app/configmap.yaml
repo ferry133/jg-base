@@ -485,47 +485,50 @@ data:
 
     # 18. Can the LAN still resolve internal names?
     #
-    # The operator points the router's DNS at k8s-gateway once during
-    # installation (D32). Nothing in the cluster can enforce that it stays
-    # pointed there: a router reset, a replacement unit, or an ISP-pushed config
-    # silently takes every internal name down while every component here stays
-    # green. Asking the router directly is the only way to see it.
+    # Can a client on this LAN still resolve internal names?
     #
-    # Public DNS is not consulted, because Cloudflare will not publish the
-    # RFC1918 answer at all (D29) — there is nothing there to compare against.
-    if [[ -n "${NODE_DEFAULT_GATEWAY:-}" && -n "${SECRET_DOMAIN:-}" ]] && command -v dig >/dev/null 2>&1; then
+    # That is the whole question. Every internal hostname resolves to an address
+    # on the customer's own LAN, and the path that delivers it — the router's
+    # DNS pointed at k8s-gateway (D32) — is an external contract this cluster
+    # cannot enforce. A router reset, a replacement unit, or an ISP-pushed
+    # config takes every internal name down while every component in here stays
+    # green.
+    #
+    # So ask it the way a client asks it: resolve the name through the node's
+    # ordinary resolution path, no @server. Which of router-dns.md's three
+    # methods is in force does not matter, because all three are just routes for
+    # the same answer and this asks whether the answer arrives.
+    #
+    # The two earlier versions both asked a narrower question and paid for it.
+    # Asking the router directly (dig @gateway) asked whether the ROUTER
+    # resolves, which is
+    # only a question under conditional forwarding — under the shipping default
+    # the router hands out the cluster's resolver address and is never in the
+    # resolution path, so it failed every morning on correctly configured
+    # appliances (jg-base 260db56 downgraded it to a warning). Declaring the
+    # method in cluster.yaml would have fixed that by storing a second copy of a
+    # fact that lives in the router; when the two disagree the check does not go
+    # quiet, it makes a confident wrong claim.
+    #
+    # It does not try to say WHY. An alarm is the deliverable; a human reads
+    # docs/operations/router-dns.md and finds out which layer broke.
+    #
+    # NODE_DNS_IS_LAN gates it because the probe is only valid where the node's
+    # resolution path IS the LAN's. With nameservers pinned to a public resolver
+    # the node cannot see what a client sees, and Cloudflare will not serve the
+    # RFC1918 answer at all (D29) — so the probe could never pass, on a cluster
+    # whose LAN is perfectly healthy. Derived in jg-cluster-template from
+    # node_dns_servers; empty (a cluster that has not re-rendered yet) means no
+    # row, because silence misleads far less than a daily false alarm.
+    if [[ "${NODE_DNS_IS_LAN:-}" == "true" && -n "${SECRET_DOMAIN:-}" ]] && command -v dig >/dev/null 2>&1; then
       INTERNAL_NAME="internal.${SECRET_DOMAIN}"
-      ROUTER_ANS=$(dig +short +time=3 +tries=1 "@${NODE_DEFAULT_GATEWAY}" "$INTERNAL_NAME" A 2>/dev/null | head -1)
-      if [[ "$ROUTER_ANS" =~ ^(10\.|172\.(1[6-9]|2[0-9]|3[01])\.|192\.168\.) ]]; then
-        record ok "LAN resolves internal names (${ROUTER_ANS})"
-      elif [[ -z "$ROUTER_ANS" ]]; then
-        # warn, not fail, and the wording changed with it. Both halves matter.
-        #
-        # Only FAIL_COUNT gates the dead-man ping (see the end of this script),
-        # so a fail here pings /fail. Under the shipping default that happens
-        # every day on every appliance: docs/operations/router-dns.md names the
-        # DHCP DNS server as the default method because it is the only one every
-        # router has, and under it the router hands out the cluster's resolver
-        # address and is never in the resolution path itself. Asked directly it
-        # has no answer to give. So this branch asks a question the default
-        # cannot answer, and one permanently red row costs the dead-man signal
-        # for the other seventeen checks — healthchecks.io renders "pings /fail
-        # daily" and "stopped pinging because the cluster is dead" identically.
-        #
-        # The old message asserted a mechanism — "its DNS is no longer pointed
-        # at k8s-gateway" — which is false under that same default: it was never
-        # pointed there and nothing is broken. Downgrading the level while
-        # keeping a message that states an untrue cause leaves half the defect,
-        # because a daily amber row asserting something wrong trains the same
-        # blindness more quietly. What is actually observable here is that the
-        # router returned nothing; that is all this now claims.
-        #
-        # This is a tourniquet, not the design. The real check has to establish
-        # who answered rather than that someone did, and the release condition
-        # is stage 2 of ferry133/jg-base#6 — deployment-profiles 5.7.
-        record warn "LAN internal-name resolution not observable here" "router ${NODE_DEFAULT_GATEWAY} returned nothing for ${INTERNAL_NAME}. Expected under the DHCP DNS server method, the shipping default, where the router is not in the resolution path and has no answer to give. A fault only if this cluster uses conditional forwarding or per-host records. See docs/operations/router-dns.md"
+      LAN_ANS=$(dig +short +time=3 +tries=1 "$INTERNAL_NAME" A 2>/dev/null | head -1)
+      if [[ "$LAN_ANS" =~ ^(10\.|172\.(1[6-9]|2[0-9]|3[01])\.|192\.168\.) ]]; then
+        record ok "LAN resolves internal names (${LAN_ANS})"
+      elif [[ -z "$LAN_ANS" ]]; then
+        record fail "LAN cannot resolve internal names" "${INTERNAL_NAME} did not resolve through this node's ordinary resolution path, so a client on this LAN cannot reach anything by name either. The cluster itself may be entirely healthy — start at docs/operations/router-dns.md"
       else
-        record warn "LAN resolves internal names to an unexpected address" "router returned ${ROUTER_ANS} for ${INTERNAL_NAME}"
+        record warn "LAN resolves internal names to an unexpected address" "${INTERNAL_NAME} resolved to ${LAN_ANS}, which is not an address on this LAN"
       fi
     fi
 
