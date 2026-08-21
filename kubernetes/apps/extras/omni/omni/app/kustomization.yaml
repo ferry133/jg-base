@@ -9,6 +9,7 @@ resources:
   - ./helmrelease1.yaml
   - ./ingress.yaml
   - ./httproute.yaml
+  - ./backendtrafficpolicy.yaml
   - ./grpcroute.yaml
   - ./udp-gateway.yaml
   - ./udproute.yaml

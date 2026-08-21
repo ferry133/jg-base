@@ -1,0 +1,44 @@
+---
+# Opt Omni's HTTP routes out of the gateway-wide response compressor.
+#
+# The `envoy` BackendTrafficPolicy in kubernetes/apps/base/network/envoy-gateway/app
+# enables Zstd/Brotli/Gzip on every Gateway in the network namespace. Envoy's compressor
+# also applies to long-lived streaming responses, and the compressed body does not reach
+# the client while the stream stays open -- which for a watch is forever.
+#
+# Omni's web UI feeds every panel from ResourceService/Watch over
+# `content-type: application/json`, so with compression on it renders 0 clusters,
+# 0 machines and an empty General Information panel behind spinners that never resolve.
+# `omnictl` is unaffected: it speaks native gRPC over h2, which the compressor leaves
+# alone -- which is why the CLI and the UI disagreed. omni-k8s carries the Kubernetes
+# API proxy, whose watches and exec/port-forward streams have the same shape.
+#
+# Confirmed on jcom 2026-08-22 (omni v1.8.1, chart omni@2.8.1): dropping compression on
+# this route flipped the UI from 0/0 to 2 clusters / 4 machines immediately.
+#
+# Two Envoy Gateway constraints shape this file:
+#   - its compressor API exposes no content-type filter, so opting the whole route out
+#     is the only way to express "do not compress my streams";
+#   - a route-scoped policy REPLACES the Gateway-scoped one instead of merging, so every
+#     other field of `envoy` is repeated here verbatim. Keep them in sync.
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: BackendTrafficPolicy
+metadata:
+  name: omni-streaming
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      name: omni
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      name: omni-k8s
+  retry:
+    numRetries: 2
+    retryOn:
+      triggers:
+        - reset
+  tcpKeepalive: {}
+  timeout:
+    http:
+      requestTimeout: 0s
