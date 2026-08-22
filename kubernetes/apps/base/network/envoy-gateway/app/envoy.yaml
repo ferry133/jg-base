@@ -165,6 +165,17 @@ kind: BackendTrafficPolicy
 metadata:
   name: envoy
 spec:
+  # WARNING: this compressor applies to every Gateway in this namespace, and Envoy
+  # compresses streaming responses too -- the compressed body does not reach the client
+  # while the stream stays open. Any route that serves long-lived streams (server-sent
+  # events, chunked JSON watches, a Kubernetes API proxy) will look like it returns
+  # nothing: HTTP 200, no error, zero bytes, a UI that spins forever.
+  #
+  # Envoy Gateway's compressor API has no content-type filter, so such a route has to
+  # opt out with its own route-scoped BackendTrafficPolicy. Note that a route-scoped
+  # policy REPLACES this one rather than merging, so it must repeat every field below
+  # that it still wants. See kubernetes/apps/extras/omni/omni/app/backendtrafficpolicy.yaml
+  # for the worked example (diagnosed on jcom 2026-08-22).
   compressor:
     - type: Zstd
       zstd: {}
