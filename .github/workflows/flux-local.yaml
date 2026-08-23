@@ -159,7 +159,7 @@ jobs:
 
   flux-local-status:
     name: Flux Local Success
-    needs: ["test", "diff"]
+    needs: ["pre-job", "test", "diff"]
     runs-on: ubuntu-latest
     if: ${{ always() }}
     steps:
