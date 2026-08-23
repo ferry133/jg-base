@@ -354,6 +354,69 @@ To have Flux reconcile on `git push` instead of polling:
    - Content type: `application/json`
    - Events: push only
 
+## NAS backups on a cluster with no NAS
+
+`extras/claudecode/postgres` and `extras/default/postgres` each ship a daily
+`pg_dump` CronJob writing to a **separate** NAS backup share — separate from the
+live-DB share so it can be ShareSync'd off-site without two-way-syncing live
+database files. It needs a hand-rolled `PersistentVolume` because that share is a
+different export from the one `nfs-subdir` provisions.
+
+An appliance has no NAS (`cue vet` refuses `appliance` + NAS), so `${NAS_SERVER}`
+is empty and the PV is rejected with `spec.nfs.server: Required value`. While that
+PV lived in the same kustomization as the database, that single invalid object made
+the whole Kustomization `Ready=False` and **the database never deployed at all**
+(ferry133/jg-base#17, measured on jg-janncotcc 2026-08-23).
+
+The backup group is now its own Flux Kustomization, selected by directory:
+
+```yaml
+path: ./kubernetes/apps/extras/<ns>/postgres/backup/${NAS_BACKUP:=nfs}
+```
+
+`backup/nfs/` holds the PV, PVC and CronJob; `backup/none/` is an empty
+kustomization that renders zero objects (a clean build, not an error — verified
+with both `kustomize build` and `flux build ks --dry-run`).
+
+**Why a dedicated variable rather than `${NAS_SERVER}`.** Flux substitutes with
+drone/envsubst, and `${VAR:+alt}` is **not implemented** there — it behaves exactly
+like `${VAR:-alt}`. Measured with `flux envsubst` (flux 2.7.4, the same code path):
+
+| written | `NAS_SERVER=10.9.1.12` | `NAS_SERVER=""` |
+|---|---|---|
+| `${NAS_SERVER:+nfs}` | `10.9.1.12` | `nfs` |
+| `${NAS_SERVER:-nfs}` | `10.9.1.12` | `nfs` |
+
+So "value when set, literal when empty" is the only conditional available, and it
+cannot express "nfs when NAS_SERVER is set". Do not re-derive this from a shell —
+`sh -c 'echo "${VAR:+x}"'` gives the POSIX answer, which is *not* Flux's.
+
+**Why not `${DB_STORAGE_CLASS}`.** It does not mean what it looks like. jg-jiahd has
+a NAS (`NAS_SERVER=10.9.2.13`) and `DB_STORAGE_CLASS=longhorn` — databases are kept
+off NFS deliberately, so the DB's class says nothing about whether a NAS exists.
+Keying on it would have switched jg-jiahd's backup off silently.
+
+**The default is `nfs`, and that is load-bearing.** A cluster whose `cluster-secrets`
+predates `NAS_BACKUP` keeps exactly today's behaviour, so nothing loses its backup
+because this landed. The cost is the other half of the trade: until
+jg-cluster-template derives the value and the cluster re-renders, an appliance still
+selects `nfs` and *that one Kustomization* stays `Ready=False`. The database deploys;
+the thing that is red is named after the thing that is broken.
+
+**An appliance is not left without a database backup.** `base/monitoring/offsite-backup`
+dumps every database, encrypts to the cluster's own age public key and uploads it
+off-site — mandatory rather than opt-in, per `deployment-profiles`' appliance-backup
+spec. What must NOT be done instead is backing up onto `local-path`: an appliance is
+one disk with no redundancy, and a backup on the disk it exists to survive is not a
+backup.
+
+**`extras/freepbx/freepbx` is deliberately untouched.** Its `backup.yaml` has the same
+`nfs.server: ${NAS_SERVER}` shape, but seven of its live PVCs are hardcoded
+`storageClassName: sc-nas`, so it cannot run on an appliance at all. Splitting only its
+backup would make it *look* appliance-ready while still failing on the live volumes —
+worse than leaving it obviously NAS-only. Parameterising those seven is a separate
+change.
+
 ## CI: `flux-local` and Secret `data:` placeholders
 
 `.github/workflows/flux-local.yaml` builds every Kustomization and HelmRelease in the

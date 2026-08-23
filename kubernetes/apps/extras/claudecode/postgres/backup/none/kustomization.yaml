@@ -1,0 +1,51 @@
+---
+# Deliberately empty — the "this cluster has no NAS backup share" half.
+#
+# The sibling Flux Kustomization selects between ./nfs and ./none:
+#
+#     path: ./kubernetes/apps/extras/claudecode/postgres/backup/${NAS_BACKUP:=nfs}
+#
+# An appliance has no NAS by definition (`cue vet` refuses appliance + NAS), so
+# it renders zero objects here instead of an invalid `nfs.server: ""`
+# PersistentVolume — which used to fail the whole Kustomization and take the
+# database down with it (ferry133/jg-base#17).
+#
+# Zero objects is a clean build, not an error: `kustomize build` and
+# `flux build ks --dry-run` both exit 0 with empty output. Measured.
+#
+# ## Why a dedicated variable and not NAS_SERVER
+
+# Because Flux cannot branch on "is this set". Flux substitutes with
+# drone/envsubst, and **`${VAR:+alt}` is not implemented there** — it behaves
+# identically to `${VAR:-alt}`. Measured with `flux envsubst` (flux 2.7.4),
+# which is the same code path:
+#
+#     input                        NAS_SERVER=10.9.1.12   NAS_SERVER=""
+#     ${NAS_SERVER:+nfs}           10.9.1.12              nfs
+#     ${NAS_SERVER:-nfs}           10.9.1.12              nfs
+#
+# So the only conditional available is "value when set, literal when empty",
+# which cannot express "nfs when NAS_SERVER is set". (Do not trust a shell to
+# check this for you: `sh -c 'echo "${VAR:+x}"'` gives the POSIX answer, not
+# Flux's, and that mistake is how this comment came to exist.)
+#
+# ## Why not DB_STORAGE_CLASS
+#
+# It does not mean what it looks like it means. jg-jiahd has a NAS
+# (`NAS_SERVER=10.9.2.13`) and `DB_STORAGE_CLASS=longhorn`, measured
+# 2026-08-23 — databases are deliberately kept off NFS for fsync and lock
+# semantics, so the DB's class says nothing about whether a NAS exists. Keying
+# on it would have silently switched jg-jiahd's backup off.
+#
+# ## An appliance is not left without a database backup
+#
+# base/monitoring/offsite-backup dumps every database, encrypts to the cluster's
+# own age public key and uploads it off-site. That is mandatory rather than
+# opt-in, per deployment-profiles' appliance-backup spec, and it already covers
+# this database. What must NOT be done instead is a backup onto local-path: an
+# appliance is one disk with no redundancy, and a backup on the disk it exists
+# to survive is not a backup. Same argument as age-key-escrow.md, and it binds
+# harder here rather than less.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources: []
