@@ -48,10 +48,16 @@ No cross-cluster checks. Each cluster is self-contained for operability.
 | 14 | Node resource pressure | CPU >80% or Memory >85% (warning) |
 | 15 | Flux GitRepository sources | Any non-`Ready=True` + DiskPressure conditions |
 
-Three severity levels:
+Four outcomes, not three:
 - `❌ FAIL` — broken state needing investigation
 - `⚠️ WARN` — degraded or trending toward failure
 - `✅ OK` — all clear
+- `➖ NOT MEASURED` — the check could not be evaluated here (a gate is unset, a
+  tool is missing, the question does not apply to this cluster). It raises no
+  alarm and gates nothing. It exists because with only three levels this state
+  has nowhere to go but silence, and a check that emitted no row reads exactly
+  like one that passed. The `Counts:` line reports it separately for the same
+  reason — it used to be folded into the OK tally.
 
 ## Email format
 
@@ -207,13 +213,30 @@ that look like Flux postBuild substitution targets. The ConfigMap has the
 annotation `kustomize.toolkit.fluxcd.io/substitute: disabled` which tells Flux
 to skip envsubst on this resource. Don't remove that annotation.
 
-### `.stringData.SMTP_PORT: expected string, got int`
+### `.stringData.<FIELD>: expected string, got int` / `got true`
 
-Kustomize strips outer quotes from string-valued `stringData` fields containing
-`${VAR}` placeholders. After Flux substitution, `587` parses as int.
+Kustomize emits minimal quoting, so the quotes around a `${VAR}` placeholder do
+not survive `kustomize build`. Whatever Flux substitutes in is then re-typed by
+the YAML parser, and `stringData` only accepts strings — so the API server
+rejects **the entire Secret**, which means daily-check does not deploy at all:
+no checks, and no dead-man ping either. The failure looks like "the mail stopped
+arriving", which is the same thing a dead cluster looks like.
 
-`SMTP_PORT` is hardcoded to `"587"` in `secret.yaml` to avoid this. If you
-add other numeric-looking fields, hardcode them or use a non-numeric prefix.
+Measured, so you do not have to re-derive it: `!!str`, single quotes and block
+scalars are all normalised away by kustomize too. Only the value can fix this.
+
+- `587` → int. `SMTP_PORT` is hardcoded to `"587"` in `secret.yaml`.
+- `true` / `false` → bool. This took out `NODE_DNS_IS_LAN`, which is why the
+  variable is now `NODE_DNS_PATH` with the values `lan` / `public` (#16).
+- `yes` / `no` / `on` / `off` are YAML 1.1 booleans as well. `~` and `null` are
+  null. An empty value is null too, and that one *is* tolerated — it lands as an
+  empty string — but do not rely on it for anything else.
+
+So: hardcode it, or choose a value domain that no YAML parser can read as
+anything but a string. `FACTORY_STALL_HOURS` is the one still on the first
+strategy — it defaults to empty and the real default lives in
+`run-check.sh`'s `${FACTORY_STALL_HOURS:-48}`, which is safe only for as long as
+no cluster actually sets it.
 
 ### Email not arriving
 
