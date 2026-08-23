@@ -504,9 +504,10 @@ data:
     # green.
     #
     # So ask it the way a client asks it: resolve the name through the node's
-    # ordinary resolution path, no @server. Which of router-dns.md's three
-    # methods is in force does not matter, because all three are just routes for
-    # the same answer and this asks whether the answer arrives.
+    # ordinary resolution path, no @server. Which of the three methods in
+    # fleet-ops docs/operations/router-dns.md is in force does not matter,
+    # because all three are just routes for the same answer and this asks
+    # whether the answer arrives.
     #
     # The two earlier versions both asked a narrower question and paid for it.
     # Asking the router directly (dig @gateway) asked whether the ROUTER
@@ -520,7 +521,26 @@ data:
     # quiet, it makes a confident wrong claim.
     #
     # It does not try to say WHY. An alarm is the deliverable; a human reads
-    # docs/operations/router-dns.md and finds out which layer broke.
+    # fleet-ops docs/operations/router-dns.md and finds out which layer broke.
+    #
+    # `fleet-ops ` is a repo name, not a directory: the runbooks moved out of
+    # the public jg-cluster-template on 2026-08-22 because a tracked file there
+    # is copied into every customer repo. ferry133/fleet-ops is private, and
+    # jg-cluster-template spells its own `fleet-ops docs/...` pointers the same
+    # way on purpose (its README.md says so, and says outright that an operator
+    # without access cannot follow them) — one convention, not two. Deliberately
+    # no count here: a number in a comment is a measurement that expires, and
+    # the one that was here said 25 when `git grep -o "fleet-ops docs/"` on
+    # jg-cluster-template origin/main returns 20.
+    #
+    # ⚠️ Re-review the two message strings below when
+    # `daily_check_notify_email_to` first names anyone other than ferry133.
+    # Those two live in an EMAIL, unlike jg-cluster-template's, which live in
+    # files their reader has checked out. A recipient without fleet-ops
+    # access cannot follow them. Measured 2026-08-23 (fleet-ops#1): every
+    # configured recipient on jcom, jg-janncotcc and jg-jiahd is ferry133
+    # himself, and cluster.sample.yaml ships the field commented out. That is
+    # the only reason this is acceptable today.
     #
     # NODE_DNS_PATH gates it because the probe is only valid where the node's
     # resolution path IS the LAN's. With nameservers pinned to a public resolver
@@ -551,7 +571,7 @@ data:
           if [[ "$LAN_ANS" =~ ^(10\.|172\.(1[6-9]|2[0-9]|3[01])\.|192\.168\.) ]]; then
             record ok "LAN resolves internal names (${LAN_ANS})"
           elif [[ -z "$LAN_ANS" ]]; then
-            record fail "LAN cannot resolve internal names" "${INTERNAL_NAME} did not resolve through this node's ordinary resolution path, so a client on this LAN cannot reach anything by name either. The cluster itself may be entirely healthy — start at docs/operations/router-dns.md"
+            record fail "LAN cannot resolve internal names" "${INTERNAL_NAME} did not resolve through this node's ordinary resolution path, so a client on this LAN cannot reach anything by name either. The cluster itself may be entirely healthy — start at fleet-ops docs/operations/router-dns.md"
           else
             record warn "LAN resolves internal names to an unexpected address" "${INTERNAL_NAME} resolved to ${LAN_ANS}, which is not an address on this LAN"
           fi
@@ -560,7 +580,7 @@ data:
         fi
         ;;
       public)
-        record skip "LAN resolves internal names" "these nodes resolve through a public resolver, so a node cannot stand in for a LAN client here and the probe would fail on a perfectly healthy LAN — see docs/operations/router-dns.md"
+        record skip "LAN resolves internal names" "these nodes resolve through a public resolver, so a node cannot stand in for a LAN client here and the probe would fail on a perfectly healthy LAN — see fleet-ops docs/operations/router-dns.md"
         ;;
       *)
         record skip "LAN resolves internal names" "NODE_DNS_PATH is unset, so it is not known whether this node's resolution path is the LAN's. The cluster has not been re-rendered since jg-cluster-template started emitting it — nothing is known about LAN name resolution here, in either direction"
