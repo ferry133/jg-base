@@ -4,14 +4,30 @@ name: "Flux Local"
 on:
   pull_request:
     branches: ["main"]
+  # main too (#23). Until now this workflow had only ever run on pull_request —
+  # `gh run list --json event` returned exactly ["pull_request"] — so a commit
+  # pushed straight to main was validated by nothing. Landing work through PRs
+  # is a habit, not a mechanism, and the gap read exactly like coverage.
+  push:
+    branches: ["main"]
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.number || github.ref }}
-  cancel-in-progress: true
+  # Cancel superseded PR runs, never a main run: on main this is the only thing
+  # that validates the commit, and two merges landing close together would have
+  # the second cancel the first's verdict.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  # Purely an optimisation, and deliberately pull_request-only. On a push its
+  # comparison base is `github.event.before`, which is empty on a first push or
+  # after a force-push — the action then reports nothing changed and every job
+  # below skips. A skipped job is green, so that failure mode is invisible,
+  # which is the exact shape #23 exists to remove. main runs the suite
+  # unconditionally instead; it takes ~25s and main does not move often.
   pre-job:
     name: Flux Local Pre-Job
+    if: ${{ github.event_name == 'pull_request' }}
     runs-on: ubuntu-latest
     outputs:
       any_changed: ${{ steps.changed-files.outputs.any_changed }}
@@ -35,7 +51,10 @@ jobs:
     name: Flux Local Test
     needs: pre-job
     runs-on: ubuntu-latest
-    if: ${{ needs.pre-job.outputs.any_changed == 'true' }}
+    # `!cancelled()` is required, not decoration: pre-job is skipped on push,
+    # and a dependant of a skipped job is skipped by default however its own
+    # condition reads.
+    if: ${{ !cancelled() && (github.event_name == 'push' || needs.pre-job.outputs.any_changed == 'true') }}
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -68,7 +87,9 @@ jobs:
         resources: ["helmrelease", "kustomization"]
       max-parallel: 4
       fail-fast: false
-    if: ${{ needs.pre-job.outputs.any_changed == 'true' }}
+    # PR-only by nature: it diffs the branch against the default branch, and on
+    # a push to main those are the same thing.
+    if: ${{ github.event_name == 'pull_request' && needs.pre-job.outputs.any_changed == 'true' }}
     steps:
       - name: Checkout Pull Request Branch
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -140,6 +161,17 @@ jobs:
       - name: Any jobs failed?
         if: ${{ contains(needs.*.result, 'failure') }}
         run: exit 1
+
+      # The other half of #23. Everything above treats "skipped" as fine, which
+      # is right for a PR that touched no manifests and wrong for main, where a
+      # skipped suite is indistinguishable from a passing one — and that
+      # indistinguishability is the whole defect. On main there is no legitimate
+      # reason for `test` to be anything but success.
+      - name: Did the suite actually run on main?
+        if: ${{ github.event_name == 'push' && needs.test.result != 'success' }}
+        run: |
+          echo "::error::Flux Local Test did not run on main (result: ${{ needs.test.result }})"
+          exit 1
 
       - name: All jobs passed or skipped?
         if: ${{ !(contains(needs.*.result, 'failure')) }}
