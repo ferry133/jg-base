@@ -23,7 +23,13 @@ jobs:
         id: changed-files
         uses: tj-actions/changed-files@7dee1b0c1557f278e5c7dc244927139d78c0e22a # v47.0.4
         with:
-          files: kubernetes/**
+          # The workflow and its helper script are in here too: a change to
+          # either has to be exercised by the jobs it changes, otherwise the
+          # only feedback is the next unrelated PR.
+          files: |
+            kubernetes/**
+            .github/workflows/flux-local.yaml
+            .github/scripts/**
 
   test:
     name: Flux Local Test
@@ -33,6 +39,17 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      # `flux build --dry-run` skips postBuild substitution and then
+      # base64-decodes every Secret `data:` value, so a surviving ${VAR}
+      # literal fails the build -- and in flux-local that happens during
+      # collection, so nothing else gets tested either. See the script's
+      # docstring for the upstream code and why there is no config knob.
+      - name: Stub Flux placeholders in Secret data
+        run: python3 .github/scripts/stub-secret-data-placeholders.py kubernetes
+
+      - name: Verify no placeholder survived the stub
+        run: python3 .github/scripts/stub-secret-data-placeholders.py --check kubernetes
 
       - name: Run flux-local test
         uses: docker://ghcr.io/allenporter/flux-local:v8.1.0
@@ -63,6 +80,14 @@ jobs:
         with:
           ref: "${{ github.event.repository.default_branch }}"
           path: default
+
+      # Both trees, same reason as the test job above. The script only
+      # exists on the PR branch, so run that copy against both checkouts.
+      - name: Stub Flux placeholders in Secret data
+        run: |
+          python3 pull/.github/scripts/stub-secret-data-placeholders.py pull/kubernetes
+          python3 pull/.github/scripts/stub-secret-data-placeholders.py default/kubernetes
+          python3 pull/.github/scripts/stub-secret-data-placeholders.py --check pull/kubernetes default/kubernetes
 
       - name: Run flux-local diff
         uses: docker://ghcr.io/allenporter/flux-local:v8.1.0

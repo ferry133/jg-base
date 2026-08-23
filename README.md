@@ -311,6 +311,48 @@ To have Flux reconcile on `git push` instead of polling:
    - Content type: `application/json`
    - Events: push only
 
+## CI: `flux-local` and Secret `data:` placeholders
+
+`.github/workflows/flux-local.yaml` builds every Kustomization and HelmRelease in the
+repo. flux-local does that by shelling out to `flux build ks … --dry-run`, and the flux
+CLI is explicit about that mode:
+
+> Note that variable substitutions from Secrets and ConfigMaps are skipped in dry-run mode.
+
+So a `${VAR}` placeholder inside a Secret's **`data:`** field survives into the built
+object, and flux then base64-decodes every `data:` value looking for sops ciphertext:
+
+```go
+data, err := base64.StdEncoding.DecodeString(v)
+if corruptErr := base64.CorruptInputError(0); errors.As(err, &corruptErr) {
+    return corruptErr
+}
+```
+
+`$` is not in the base64 alphabet, so the build fails — **and in flux-local that happens
+during collection, so every other Kustomization in the repo goes unvalidated too.** The
+run ends with `no tests ran`, which on the PR page is one red cross that looks like any
+other red cross. This repo shipped in that state from at least 2026-08-18 to 2026-08-23.
+
+There is no configuration escape: no Flux substitution syntax is base64-safe, flux-local
+always uses `flux build`, and its `--skip-secrets` (on by default) filters the *output*,
+long after the build has already failed. So CI rewrites those values to `""` before
+running flux-local, via `.github/scripts/stub-secret-data-placeholders.py`. This costs
+nothing in coverage — flux-local discards Secret contents anyway — and the manifests in
+git are untouched.
+
+Run it yourself before blaming a manifest:
+
+```sh
+python3 .github/scripts/stub-secret-data-placeholders.py --check kubernetes
+```
+
+**`stringData:` is not affected** — flux only base64-decodes `data:`. A new Secret that
+needs a Flux-substituted value should prefer `stringData:` for exactly this reason;
+`data:` is only correct when the variable already holds base64 that must reach the
+container decoded (today: `talos-mcp-secret`'s `talosconfig`, `omni-gpg-key`'s
+`omni.asc`).
+
 ## Debugging
 
 ```sh
