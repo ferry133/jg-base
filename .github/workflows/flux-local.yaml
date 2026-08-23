@@ -32,14 +32,18 @@ jobs:
     outputs:
       any_changed: ${{ steps.changed-files.outputs.any_changed }}
     steps:
-      # REPRO ONLY (ferry133/jg-base#25): the Checkout step is deliberately
-      # removed so changed-files fails with "not a git repository" and the
-      # pre-job job ends in `failure`. This branch is a measurement, never
-      # merged.
+      # REPRO ONLY (ferry133/jg-base#25). Attempt 1 removed the Checkout step
+      # and pre-job PASSED: changed-files v47 falls back to "Using GitHub's
+      # REST API to get changed files" when there is no local git repo. So a
+      # checkout failure does not fail pre-job -- one of the three causes #25
+      # lists is wrong. Attempt 2 keeps that API path and breaks the token, so
+      # the action's own error handling is what fails the job.
+      # This branch is a measurement, never merged.
       - name: Get Changed Files
         id: changed-files
         uses: tj-actions/changed-files@7dee1b0c1557f278e5c7dc244927139d78c0e22a # v47.0.4
         with:
+          token: "invalid-token-to-force-a-pre-job-failure"
           # The workflow and its helper script are in here too: a change to
           # either has to be exercised by the jobs it changes, otherwise the
           # only feedback is the next unrelated PR.
