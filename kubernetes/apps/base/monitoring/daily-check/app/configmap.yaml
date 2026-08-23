@@ -526,13 +526,17 @@ data:
     # `fleet-ops ` is a repo name, not a directory: the runbooks moved out of
     # the public jg-cluster-template on 2026-08-22 because a tracked file there
     # is copied into every customer repo. ferry133/fleet-ops is private, and
-    # jg-cluster-template spells its 25 pointers the same way on purpose
-    # (see its README.md) — one convention, not two.
+    # jg-cluster-template spells its own `fleet-ops docs/...` pointers the same
+    # way on purpose (its README.md says so, and says outright that an operator
+    # without access cannot follow them) — one convention, not two. Deliberately
+    # no count here: a number in a comment is a measurement that expires, and
+    # the one that was here said 25 when `git grep -o "fleet-ops docs/"` on
+    # jg-cluster-template origin/main returns 20.
     #
     # ⚠️ Re-review the two message strings below when
     # `daily_check_notify_email_to` first names anyone other than ferry133.
-    # Those two live in an EMAIL, unlike jg-cluster-template's 25, which live
-    # in files their reader has checked out. A recipient without fleet-ops
+    # Those two live in an EMAIL, unlike jg-cluster-template's, which live in
+    # files their reader has checked out. A recipient without fleet-ops
     # access cannot follow them. Measured 2026-08-23 (fleet-ops#1): every
     # configured recipient on jcom, jg-janncotcc and jg-jiahd is ferry133
     # himself, and cluster.sample.yaml ships the field commented out. That is
