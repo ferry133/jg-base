@@ -12,19 +12,28 @@ on:
     branches: ["main"]
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.number || github.ref }}
-  # Cancel superseded PR runs, never a main run: on main this is the only thing
-  # that validates the commit, and two merges landing close together would have
-  # the second cancel the first's verdict.
+  # Keyed per pull request, but per *commit* on main, so no two main runs ever
+  # share a group. `cancel-in-progress: false` alone would not be enough:
+  # GitHub cancels a *pending* run when a newer one is queued into the same
+  # group regardless of that setting, so three merges in quick succession would
+  # lose the middle commit's verdict. Cancelled is at least visible rather than
+  # green, but a per-sha group means it does not happen at all.
+  group: ${{ github.workflow }}-${{ github.event.number || github.sha }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  # Purely an optimisation, and deliberately pull_request-only. On a push its
-  # comparison base is `github.event.before`, which is empty on a first push or
-  # after a force-push — the action then reports nothing changed and every job
-  # below skips. A skipped job is green, so that failure mode is invisible,
-  # which is the exact shape #23 exists to remove. main runs the suite
-  # unconditionally instead; it takes ~25s and main does not move often.
+  # Purely an optimisation, and deliberately pull_request-only. main runs the
+  # suite unconditionally instead: ~25s, and main does not move often.
+  #
+  # This is a choice not to depend on the action, not a claim that it is broken
+  # on push. What is measured is that it answers even where it cannot answer
+  # well: with no git repo it silently switches to "Using GitHub's REST API to
+  # get changed files" and still reports success (#25 repro run 32645197207).
+  # Its push-event base would be `github.event.before`, all-zeroes on a
+  # branch's first push; what it reports then is UNMEASURED here. On main a
+  # wrong "nothing changed" skips every job below, and a skipped job is green —
+  # indistinguishable from a pass, which is the shape #23 exists to remove. So
+  # main does not consult it at all.
   pre-job:
     name: Flux Local Pre-Job
     if: ${{ github.event_name == 'pull_request' }}
@@ -154,7 +163,14 @@ jobs:
 
   flux-local-status:
     name: Flux Local Success
-    needs: ["test", "diff"]
+    # `pre-job` belongs in `needs` (#25). Without it, a failed pre-job left
+    # `any_changed` unset, `test` and `diff` skipped, and this check GREEN with
+    # nothing validated — reproduced on run 32645294321, and the same input
+    # turns this check red once pre-job is listed here (run 32645334405). The
+    # whole run went red either way, but branch protection gates on this check,
+    # not on the run. On push pre-job is `skipped`, not `failure`, so this does
+    # not affect main.
+    needs: ["pre-job", "test", "diff"]
     runs-on: ubuntu-latest
     if: ${{ always() }}
     steps:
