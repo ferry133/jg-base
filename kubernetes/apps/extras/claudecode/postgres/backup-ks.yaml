@@ -1,0 +1,47 @@
+---
+# The NAS backup half of `claudecode-postgres`, split into its own Kustomization so that a
+# cluster without a NAS gets nothing here instead of taking the database down
+# with it (ferry133/jg-base#17).
+#
+# The bug: backup.yaml declares a PersistentVolume with
+# `nfs.server: ${NAS_SERVER}`; NAS_SERVER is empty on an appliance by
+# definition; the API server rejects `spec.nfs.server: Required value`; and
+# because backup.yaml was listed in the same kustomization as the database,
+# that one invalid object made the whole Kustomization Ready=False and **the
+# database itself never deployed**. Measured on jg-janncotcc, 2026-08-23.
+#
+# `${NAS_BACKUP:=nfs}` selects the directory. It defaults to `nfs`, so a
+# cluster whose cluster-secrets predates the variable keeps exactly the
+# behaviour it has today — no cluster silently loses its backup CronJob because
+# this landed. jg-cluster-template derives the value from `nas_server`; until a
+# cluster has re-rendered, an appliance still gets `nfs` and this Kustomization
+# alone stays Ready=False. That is the deliberate half-state: the database
+# deploys, and the thing that is broken is named after what is broken.
+#
+# ⚠️ Moving in: on a cluster that already has a NAS, the PV/PVC/CronJob leave
+# `Kustomization/claudecode-postgres`'s inventory and join this one's. Whichever reconciles
+# first wins; if the old owner prunes before this one applies, all three are
+# deleted and recreated. **Nothing on the NAS is at risk** — the PV is `Retain`
+# and the dump files live on the remote share, not in the PV object — but the
+# PVC can sit Pending briefly while it rebinds.
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: claudecode-postgres-backup
+  namespace: flux-system
+spec:
+  interval: 1h
+  path: ./kubernetes/apps/extras/claudecode/postgres/backup/${NAS_BACKUP:=nfs}
+  postBuild:
+    substituteFrom:
+      - name: cluster-secrets
+        kind: Secret
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: jg-base
+    namespace: flux-system
+  targetNamespace: claudecode
+  wait: false
+  dependsOn:
+    - name: claudecode-postgres
