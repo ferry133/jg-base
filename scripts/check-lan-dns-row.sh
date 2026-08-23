@@ -7,6 +7,10 @@
 # ferry133/jg-base#18 failed every morning on every appliance because it asked
 # whether the ROUTER resolves, a question the shipping default has no answer to.
 #
+# Since #16 the gate is NODE_DNS_PATH (lan | public | empty) rather than a
+# boolean, and the two non-probe states emit an explicit "not measured" row
+# instead of nothing. The cases below are what holds that in place.
+#
 # It sources the real block out of the ConfigMap rather than restating its
 # logic. A copy here would drift, and the copy that drifts keeps passing.
 #
@@ -30,7 +34,7 @@ from pathlib import Path
 work = Path(sys.argv[1])
 s = (work / "run-check.sh").read_text()
 try:
-    start = s.index('if [[ "${NODE_DNS_IS_LAN:-}" == "true"')
+    start = s.index('case "${NODE_DNS_PATH:-}" in')
     end = s.index("# 19. Off-site backup freshness.")
 except ValueError:
     sys.exit("could not locate the LAN DNS block in run-check.sh — markers moved")
@@ -43,8 +47,8 @@ PY
 bash -n "$WORK/run-check.sh" || { echo "run-check.sh does not parse"; exit 1; }
 
 FAILED=0
-run() {  # $1=NODE_DNS_IS_LAN  $2=what dig returns  $3=expected row prefix
-  NODE_DNS_IS_LAN="$1"; SECRET_DOMAIN="example.cc"; DIG_OUT="$2"; OUT=""
+run() {  # $1=NODE_DNS_PATH  $2=what dig returns  $3=expected row prefix
+  NODE_DNS_PATH="$1"; SECRET_DOMAIN="example.cc"; DIG_OUT="$2"; OUT=""
   record() { OUT="[$1] $2"; }
   dig() { [[ -n "$DIG_OUT" ]] && echo "$DIG_OUT"; return 0; }
   # shellcheck disable=SC1091
@@ -59,14 +63,27 @@ run() {  # $1=NODE_DNS_IS_LAN  $2=what dig returns  $3=expected row prefix
   fi
 }
 
-run true  10.9.1.254   "[ok]"
-run true  192.168.1.20 "[ok]"
-run true  ""           "[fail]"
-run true  104.21.5.6   "[warn]"
-run false ""           "<no row>"
-run false 10.9.1.254   "<no row>"
-run ""    ""           "<no row>"
-run ""    10.9.1.254   "<no row>"
+# The probe itself, where it is valid.
+run lan    10.9.1.254   "[ok]"
+run lan    192.168.1.20 "[ok]"
+run lan    ""           "[fail]"
+run lan    104.21.5.6   "[warn]"
+
+# Where it is not valid, and where nothing is known. Both must SAY so. Emitting
+# no row was the previous behaviour for these, and no row reads exactly like a
+# passing one — which is the whole reason this file exists.
+run public ""           "[skip]"
+run public 10.9.1.254   "[skip]"
+run ""     ""           "[skip]"
+run ""     10.9.1.254   "[skip]"
+
+# The old value domain must not quietly do anything. `true` reaching this block
+# at all would mean jg-cluster-template is still emitting the boolean, which
+# takes the whole Secret down before the script ever runs (#16) — but if it ever
+# does arrive, it has to land in "not measured", never in a silent pass and
+# never in a probe result.
+run true   10.9.1.254   "[skip]"
+run false  10.9.1.254   "[skip]"
 
 echo
 if (( FAILED )); then
@@ -75,4 +92,4 @@ if (( FAILED )); then
   echo "the reader to ignore the channel carrying seventeen other checks."
   exit 1
 fi
-echo "ok — 8 cases match"
+echo "ok — 10 cases match"

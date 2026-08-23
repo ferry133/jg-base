@@ -70,13 +70,22 @@ data:
     declare -a DETAILS=()
     FAIL_COUNT=0
     WARN_COUNT=0
+    SKIP_COUNT=0
 
+    # Three outcomes, not two. `skip` is "this check could not be evaluated
+    # here" — a gate is unset, a tool is missing, the question does not apply to
+    # this cluster. With only pass/fail, that state has nowhere to go but
+    # silence, and a check that emitted no row reads exactly like one that
+    # passed. It carries no alarm and gates nothing; it is only there so the
+    # reader can see the difference between seventeen checks passing and
+    # sixteen passing while one never ran.
     record() {
       local level="$1" name="$2" msg="${3:-}"
       case "$level" in
         ok)   SUMMARY+=("✅ ${name}") ;;
         warn) SUMMARY+=("⚠️ ${name} — ${msg}"); DETAILS+=("[WARN] ${name}: ${msg}"); ((WARN_COUNT++)) ;;
         fail) SUMMARY+=("❌ ${name} — ${msg}"); DETAILS+=("[FAIL] ${name}: ${msg}"); ((FAIL_COUNT++)) ;;
+        skip) SUMMARY+=("➖ ${name} — ${msg}"); DETAILS+=("[SKIP] ${name}: ${msg}"); ((SKIP_COUNT++)) ;;
       esac
     }
 
@@ -513,24 +522,50 @@ data:
     # It does not try to say WHY. An alarm is the deliverable; a human reads
     # docs/operations/router-dns.md and finds out which layer broke.
     #
-    # NODE_DNS_IS_LAN gates it because the probe is only valid where the node's
+    # NODE_DNS_PATH gates it because the probe is only valid where the node's
     # resolution path IS the LAN's. With nameservers pinned to a public resolver
     # the node cannot see what a client sees, and Cloudflare will not serve the
     # RFC1918 answer at all (D29) — so the probe could never pass, on a cluster
     # whose LAN is perfectly healthy. Derived in jg-cluster-template from
-    # node_dns_servers; empty (a cluster that has not re-rendered yet) means no
-    # row, because silence misleads far less than a daily false alarm.
-    if [[ "${NODE_DNS_IS_LAN:-}" == "true" && -n "${SECRET_DOMAIN:-}" ]] && command -v dig >/dev/null 2>&1; then
-      INTERNAL_NAME="internal.${SECRET_DOMAIN}"
-      LAN_ANS=$(dig +short +time=3 +tries=1 "$INTERNAL_NAME" A 2>/dev/null | head -1)
-      if [[ "$LAN_ANS" =~ ^(10\.|172\.(1[6-9]|2[0-9]|3[01])\.|192\.168\.) ]]; then
-        record ok "LAN resolves internal names (${LAN_ANS})"
-      elif [[ -z "$LAN_ANS" ]]; then
-        record fail "LAN cannot resolve internal names" "${INTERNAL_NAME} did not resolve through this node's ordinary resolution path, so a client on this LAN cannot reach anything by name either. The cluster itself may be entirely healthy — start at docs/operations/router-dns.md"
-      else
-        record warn "LAN resolves internal names to an unexpected address" "${INTERNAL_NAME} resolved to ${LAN_ANS}, which is not an address on this LAN"
-      fi
-    fi
+    # node_dns_servers; never declared by an operator.
+    #
+    # It is a word and not a boolean, and that is load-bearing (#16). Kustomize
+    # does not preserve the quotes around a bare `${VAR}` — measured, and
+    # `!!str`, single quotes and block scalars are all normalised away too — so
+    # whatever Flux substitutes in is re-typed by the YAML parser. `true` came
+    # back as a YAML boolean, `stringData` only accepts strings, and the API
+    # server rejected the WHOLE Secret: no daily-check at all, no eighteen
+    # checks, no dead-man ping. `lan` and `public` cannot be read as anything
+    # but strings. Do not "tidy" them back into true/false, and note that
+    # yes/no/on/off are YAML 1.1 booleans as well.
+    #
+    # Unset is a third outcome, not a quiet pass: a cluster that has not been
+    # re-rendered since jg-cluster-template started emitting this cannot say
+    # whether its nodes resolve like a LAN client, and "cannot say" must look
+    # different from "asked and fine".
+    case "${NODE_DNS_PATH:-}" in
+      lan)
+        if [[ -n "${SECRET_DOMAIN:-}" ]] && command -v dig >/dev/null 2>&1; then
+          INTERNAL_NAME="internal.${SECRET_DOMAIN}"
+          LAN_ANS=$(dig +short +time=3 +tries=1 "$INTERNAL_NAME" A 2>/dev/null | head -1)
+          if [[ "$LAN_ANS" =~ ^(10\.|172\.(1[6-9]|2[0-9]|3[01])\.|192\.168\.) ]]; then
+            record ok "LAN resolves internal names (${LAN_ANS})"
+          elif [[ -z "$LAN_ANS" ]]; then
+            record fail "LAN cannot resolve internal names" "${INTERNAL_NAME} did not resolve through this node's ordinary resolution path, so a client on this LAN cannot reach anything by name either. The cluster itself may be entirely healthy — start at docs/operations/router-dns.md"
+          else
+            record warn "LAN resolves internal names to an unexpected address" "${INTERNAL_NAME} resolved to ${LAN_ANS}, which is not an address on this LAN"
+          fi
+        else
+          record skip "LAN resolves internal names" "this cluster's nodes do resolve like a LAN client, but the probe could not run: SECRET_DOMAIN is unset or dig is missing from this image"
+        fi
+        ;;
+      public)
+        record skip "LAN resolves internal names" "these nodes resolve through a public resolver, so a node cannot stand in for a LAN client here and the probe would fail on a perfectly healthy LAN — see docs/operations/router-dns.md"
+        ;;
+      *)
+        record skip "LAN resolves internal names" "NODE_DNS_PATH is unset, so it is not known whether this node's resolution path is the LAN's. The cluster has not been re-rendered since jg-cluster-template started emitting it — nothing is known about LAN name resolution here, in either direction"
+        ;;
+    esac
 
     # 19. Off-site backup freshness.
     #
@@ -780,7 +815,7 @@ data:
       echo "Cluster:  ${CLUSTER_NAME}"
       echo "Time:     ${DATE_LOCAL}"
       echo "Result:   ${STATUS_TAG}"
-      echo "Counts:   ${FAIL_COUNT} FAIL, ${WARN_COUNT} WARN, $((${#SUMMARY[@]} - FAIL_COUNT - WARN_COUNT)) OK"
+      echo "Counts:   ${FAIL_COUNT} FAIL, ${WARN_COUNT} WARN, ${SKIP_COUNT} NOT MEASURED, $((${#SUMMARY[@]} - FAIL_COUNT - WARN_COUNT - SKIP_COUNT)) OK"
       echo
       echo "=== Summary ==="
       for line in "${SUMMARY[@]}"; do
