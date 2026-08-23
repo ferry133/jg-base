@@ -6,7 +6,7 @@ metadata:
   namespace: flux-system
 spec:
   interval: 1h
-  path: ./kubernetes/apps/extras/default/echo/app
+  path: ./kubernetes/apps/base/default/echo/app
   postBuild:
     substituteFrom:
       - name: cluster-secrets
