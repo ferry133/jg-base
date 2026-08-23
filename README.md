@@ -25,7 +25,8 @@ kubernetes/
       cert-manager/
       claudecode/
         claude-code/    ← Claude Code web IDE (instances rendered per-user)
-      default/          ← namespace only
+      default/
+        echo/           ← echo-ext.<domain> / echo-int.<domain> reachability probe
       flux-system/
         flux-operator/
         flux-instance/
@@ -38,7 +39,6 @@ kubernetes/
       claudecode/
         postgres/       ← dedicated PostgreSQL for claude-code
       default/
-        echo/
         homebridge/
         mariadb/
         mqtt/
@@ -67,11 +67,13 @@ kubernetes/
 >
 > `storage/local-path-provisioner` is **not** an extra either, as of 2026-08-11 — every
 > cluster gets the `local-path` class, NAS or not. See the migration note below.
+>
+> `default/echo` is **not** an extra either, as of 2026-08-23 — every cluster answers on
+> `echo-ext.<domain>` and `echo-int.<domain>`. See the migration note below.
 
 | Extra | Description | Requires |
 |-------|-------------|----------|
 | `claudecode/postgres` | Dedicated PostgreSQL for claude-code (MCP memory server) | `claudecode_postgres_password` |
-| `default/echo` | HTTP echo service (debug/test) | — |
 | `default/homebridge` | Homebridge smart home bridge | — |
 | `default/mariadb` | MariaDB database | — |
 | `default/mqtt` | MQTT broker | — |
@@ -246,6 +248,47 @@ cluster-apps-base reconciled on the new jg-base revision
   → Kustomization/local-path-provisioner recreated at the base path
   → StorageClass back, provisioner 1/1 Running
 ```
+
+## Migration: `default/echo` extra → base, split into ext + int (2026-08-23)
+
+`echo` used to be an opt-in extra with a single route on `envoy-external`, named
+`echo.<domain>` from the Helm release name. It is now a base app on every cluster and
+publishes two names off one pod:
+
+| Name | Gateway | What a 200 from it proves |
+|---|---|---|
+| `echo-ext.<domain>` | `envoy-external` | the public path — Cloudflare DNS → tunnel → external gateway → a pod |
+| `echo-int.<domain>` | `envoy-internal` | the LAN path — k8s-gateway/LAN address → internal gateway → a pod |
+
+The two are worth having separately because they fail separately, and until now a
+cluster had no cheap way to say *which* half was down. Both are served by the same
+Deployment, so a 200 on one and a timeout on the other is a statement about the path,
+not about the workload.
+
+**`echo.<domain>` is gone.** Any check, bookmark or `daily_check_endpoints` entry
+pointing at it has to move to `echo-ext.<domain>`.
+
+Objects, before → after:
+
+| Object | before | after |
+|---|---|---|
+| `Kustomization/echo` (flux-system) | owned by `extras-echo`, path `apps/extras/default/echo` | owned by `cluster-apps-base`, path `apps/base/default/echo` |
+| `HelmRelease/echo` (default) | owned by `Kustomization/echo` | **unchanged** |
+| `HTTPRoute/echo` | from `route.app` | **replaced** by `echo-ext` + `echo-int` |
+
+Same ownership race as the two migrations above — `Kustomization/echo` keeps its name, so
+the new owner can adopt it in place only if it reconciles before the retiring
+`extras-echo` finalizer prunes it. Use the two-push recipe in the 2026-08-07 section,
+and check the owner label before deciding whether the `deletionPolicy: Orphan` step is
+needed.
+
+**Unlike the other two, nothing here is worth protecting.** echo has no PVC and no
+state; if it loses the race the release is uninstalled and `cluster-apps-base` puts it
+back on the next reconcile. Losing the race costs a few minutes of a debug endpoint, so
+on a cluster where the Orphan step is inconvenient, skip it and let it recreate.
+
+Clusters that listed `default/echo` in `cluster.yaml` when this landed: **jcom**,
+**jgt-talos-accept**. Every other cluster gains the app with nothing to retire.
 
 ## Bootstrap Order
 

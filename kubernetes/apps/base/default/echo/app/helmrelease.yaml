@@ -58,11 +58,32 @@ spec:
       app:
         endpoints:
           - port: http
+    # Two routes, one backend. The point of echo on every cluster is to answer
+    # "which of the two paths in front of this cluster is broken" without a
+    # second thing to deploy: echo-ext arrives through Cloudflare tunnel →
+    # envoy-external, echo-int through the LAN address → envoy-internal. Same
+    # pod answers both, and the response body echoes the headers, so the two
+    # names are told apart by what the request looked like on arrival, not by
+    # which replica served it.
+    #
+    # The route keys are what name the HTTPRoutes: app-template renders
+    # route.ext → HTTPRoute/echo-ext and route.int → HTTPRoute/echo-int
+    # (verified against app-template 4.6.2).
     route:
-      app:
-        hostnames: ["{{ .Release.Name }}.${SECRET_DOMAIN}"]
+      ext:
+        hostnames: ["echo-ext.${SECRET_DOMAIN}"]
         parentRefs:
           - name: envoy-external
+            namespace: network
+            sectionName: https
+        rules:
+          - backendRefs:
+              - identifier: app
+                port: *port
+      int:
+        hostnames: ["echo-int.${SECRET_DOMAIN}"]
+        parentRefs:
+          - name: envoy-internal
             namespace: network
             sectionName: https
         rules:

@@ -69,6 +69,15 @@ varies. A cluster with those fields unset runs the Job and exits 0 with a "not
 configured" log line rather than failing daily — see the guard at the top of
 `run-check.sh` in `app/configmap.yaml`.
 
+**`base/default/echo` is a base app** (since 2026-08-23) — one `http-https-echo` pod
+publishing two names, `echo-ext.<domain>` on `envoy-external` and `echo-int.<domain>` on
+`envoy-internal`. Nothing per-cluster here either, so the whole app lives in `jg-base`.
+It exists to separate the two ingress paths when something is unreachable: the external
+name exercises Cloudflare DNS → tunnel → external gateway, the internal one exercises
+LAN address → internal gateway, and one backend serves both, so a difference between
+them is a statement about the path and not about the workload. The route *keys* are what
+name the HTTPRoutes (`route.ext` → `HTTPRoute/echo-ext`), so don't rename them casually.
+
 Config is generated from Jinja2 templates in `templates/` using [makejinja](https://github.com/mirkolenz/makejinja), driven by `cluster.yaml` and `nodes.yaml`.
 
 See @cluster.yaml and @nodes.yaml for the primary config inputs.
