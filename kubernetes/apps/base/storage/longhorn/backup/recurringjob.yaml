@@ -1,0 +1,33 @@
+---
+# Daily off-node backup of every Longhorn volume (ferry133/jg-base#7).
+#
+# Applied only where backup-ks.yaml is un-suspended by the per-user repo,
+# which happens exactly where `longhorn_backup_target` is set. Without a target
+# this object is not idle — it runs and fails every day — which is why it is
+# gated rather than shipped alongside the HelmRelease.
+apiVersion: longhorn.io/v1beta2
+kind: RecurringJob
+metadata:
+  name: daily-backup
+  namespace: longhorn-system
+spec:
+  name: daily-backup
+  task: backup
+  # UTC. Longhorn renders recurring jobs into Kubernetes CronJobs and sets no
+  # spec.timeZone, so the cluster's CronJob default applies and that is UTC —
+  # 18:00 UTC is 02:00 the next day in Asia/Taipei, which is what this is
+  # chosen for. ⚠️ That mapping is read from the Longhorn source and the
+  # CronJob default, NOT observed on a running cluster; if the first backup
+  # lands at 18:00 local instead, this is the line that is wrong.
+  cron: "0 18 * * *"
+  # "default" is not a group anyone has to create: Longhorn puts a volume in it
+  # whenever the volume carries no recurring-job label of its own. So this
+  # covers postgres-data today and any Longhorn volume added later without
+  # anyone remembering to opt it in — the failure mode of an explicit list is
+  # that the volume created next year is silently unprotected.
+  groups:
+    - default
+  # Seven daily backups. Longhorn keeps `retain` snapshots on the volume as
+  # well as `retain` backups on the target, so this also bounds local space.
+  retain: 7
+  concurrency: 1

@@ -417,6 +417,105 @@ backup would make it *look* appliance-ready while still failing on the live volu
 worse than leaving it obviously NAS-only. Parameterising those seven is a separate
 change.
 
+## Longhorn backups (optional, off by default)
+
+`defaultReplicaCount: 2` survives a node dying. It does not survive `kubectl delete pvc`
+or a corrupt table — both are faithfully replicated to every replica. Until
+[#7](https://github.com/ferry133/jg-base/issues/7) the Longhorn layer had no backups at
+all: measured on jg-jiahd 2026-08-17, `backuptargets.longhorn.io/default` had an empty
+URL and there were zero `recurringjobs`. Note the diagnosis that matters there — the URL
+field was **empty, not broken**. Never configured and configured-but-unreachable look
+almost the same in the UI and want opposite fixes.
+
+One variable, optional:
+
+```yaml
+LONGHORN_BACKUP_TARGET: "nfs://10.9.2.13:/volume3/backup1/longhorn"
+```
+
+### A cluster that sets neither renders byte-identically to today
+
+This is the property that lets an `apps/base/` change carry a LAN address that most
+clusters cannot reach. It is measured, not assumed — `helm template` of chart 1.12.0,
+diffing the **entire** render:
+
+| values | full-render diff vs today |
+|---|---|
+| `backupTarget:` unset (null) | **no difference at all** |
+| `backupTarget: ""` (quoted empty) | `+ backup-target:` |
+| `backupTarget: nfs://…` | `+ backup-target: nfs://…` |
+
+Which is why `helmrelease.yaml` writes `backupTarget: ${LONGHORN_BACKUP_TARGET:=}`
+**unquoted**. The chart guards each key with `if not (kindIs "invalid" ...)`; a null is
+dropped, an empty string is written. Kustomize does not preserve the quotes you write
+anyway, so the value domain is the only place this can be controlled — the same trap as
+`NODE_DNS_PATH` in `daily-check`, arrived at from the other direction.
+
+### Two things that would have silently done nothing
+
+- **`defaultSettings.backupTarget` does not exist in chart 1.12.0.** The key is
+  `defaultBackupStore.backupTarget`; `templates/default-resource.yaml` is what reads it.
+  Helm accepts unknown values without complaint, so the wrong key would have produced a
+  cluster that looks configured and never backs anything up.
+- **`longhorn/ks.yaml` had no `postBuild`.** Flux substitutes nothing at all unless
+  `postBuild` is present, so `${LONGHORN_BACKUP_TARGET:=}` would have reached Helm as a
+  literal 28-character string and been stored as the backup target URL. Adding a
+  `${VAR}` to a manifest is only half the change; the Kustomization that builds it has
+  to be asking for substitution.
+
+### Why the RecurringJob is shipped suspended, not selected by a variable
+
+The obvious shape is the one `extras/*/postgres` uses — `path:
+.../backup/${NAS_BACKUP:=nfs}`, one real directory and one empty one. **It does not
+work for a base app**, and the first attempt at this change proved it in CI:
+
+```
+ERROR: Kustomization 'flux-system/longhorn-backup' path field
+'...backup/${LONGHORN_BACKUP:=none}' is not a directory
+```
+
+`cluster-apps` walks `./kubernetes/apps/base` and nothing else, so every Kustomization
+under `base/` is collected by `flux-local test` — which performs no substitution, takes
+the `${...}` literally, and dies at collection, taking all 37 tests with it. The extras
+precedent survives only because extras are never reachable from `apps/base`, so CI has
+never walked one. **That pattern is untested there, not proven.**
+
+So the gate is the mechanism base apps already use: the patch loop in the per-user
+`flux/cluster/ks.yaml` that suspends `nfs-client-provisioner`, `longhorn`, `spegel`.
+The polarity is inverted on purpose — those are on by default and switched off; this is
+**off by default and switched on**, because a cluster whose per-user repo has not
+re-rendered must keep exactly today's behaviour, and today no cluster has a Longhorn
+backup. jg-cluster-template emits `suspend: false` wherever `longhorn_backup_target` is
+set, and nothing else turns it on.
+
+This is strictly better than the variable path, not merely a workaround: `path` is a
+real directory on every cluster, so `flux-local test` builds and validates the
+RecurringJob on every PR. The gated object ends up **more** tested than an un-gated one.
+
+`backup-ks.yaml` deliberately has **no `dependsOn: [longhorn]`**. It would not close the
+race it appears to close — `longhorn` runs with `wait: false` and does not wait on its
+HelmRelease, so it is Ready long before the CRD exists — and it would cost a permanent
+not-Ready row on every cluster where `longhorn` is suspended, because a Flux
+Kustomization depending on a suspended one waits forever. An alarm that is always on is
+an alarm nobody reads. `retryInterval: 5m` covers the real case instead.
+
+### Not verified
+
+- **Nothing has been backed up or restored.** The NAS export `/volume3/backup1` is known
+  to accept the existing `pg_dump` writes from a root pod, and Longhorn's
+  instance-manager also runs as root, so it *should* be writable — but no Longhorn
+  backup has been taken and none has been restored. A backup target that has never
+  restored is a hypothesis. `/volume3/backup1/longhorn` does not exist on the NAS yet.
+- **The cron is in UTC by inference.** Longhorn sets no `spec.timeZone` on the CronJobs
+  it renders, so `0 18 * * *` should fire at 02:00 Asia/Taipei. Read from the source and
+  the CronJob default, not observed on a running cluster.
+- **Whether an already-running Longhorn picks the target up without a manager restart.**
+  The chart writes it into the `longhorn-default-resource` ConfigMap, which
+  longhorn-manager reads by name; default-resource values are documented as applying to
+  settings the user has not overridden. jg-jiahd has never set this one, so it should
+  apply — untested. Check with
+  `kubectl get backuptargets.longhorn.io -n longhorn-system -o wide`.
+
 ## CI: `flux-local` and Secret `data:` placeholders
 
 `.github/workflows/flux-local.yaml` builds every Kustomization and HelmRelease in the
