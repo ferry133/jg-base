@@ -1,0 +1,29 @@
+---
+# Deliberately empty — the "this cluster has no Longhorn backup target" half,
+# and the default (ferry133/jg-base#7).
+#
+# The sibling Flux Kustomization selects between ./nfs and ./none:
+#
+#     path: ./kubernetes/apps/base/storage/longhorn/backup/${LONGHORN_BACKUP:=none}
+#
+# ## Why this default is `none` when NAS_BACKUP's is `nfs`
+#
+# Same principle, opposite value, and the difference is the point. Both
+# defaults answer one question: what does a cluster whose cluster-secrets
+# predates the variable do? For NAS_BACKUP the honest answer was `nfs`, because
+# every cluster already had a pg_dump CronJob and defaulting to `none` would
+# have silently switched working backups off. Here **no cluster has a Longhorn
+# backup at all** — measured on jg-jiahd 2026-08-17, `backuptargets.longhorn.io/default`
+# had an empty URL and there were zero recurringjobs — so defaulting to `nfs`
+# would instead hand every replicated-storage cluster a RecurringJob whose
+# target is unset, i.e. a daily job that fails daily.
+#
+# The rule is "changes nothing until someone asks", not "always defaults on".
+#
+# ## Zero objects is a clean build
+#
+# `kustomize build` on this directory exits 0 with empty output, and Flux
+# reports the Kustomization Ready with an empty inventory. Measured.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources: []

@@ -1,0 +1,46 @@
+---
+# The RecurringJob half of Longhorn, split into its own Kustomization so that a
+# cluster with no backup target renders nothing here (ferry133/jg-base#7).
+#
+# `${LONGHORN_BACKUP:=none}` selects the directory; see backup/none for why the
+# default is `none` while NAS_BACKUP's is `nfs`.
+#
+# ## Why there is no dependsOn
+#
+# The obvious `dependsOn: [longhorn]` is wrong twice.
+#
+# It would not buy what it looks like it buys: `longhorn`'s Kustomization has
+# `wait: false` and does not wait on the HelmRelease either, so it reports
+# Ready as soon as the HelmRelease *object* is applied — long before the chart
+# has installed the RecurringJob CRD. The race it appears to close stays open.
+#
+# And it would cost something real: `longhorn` is suspended from the per-user
+# repo on every cluster that is not on replicated storage, and a Flux
+# Kustomization that depends on a suspended one waits forever. That would put a
+# permanent not-Ready row in `flux get ks` on most of the fleet — an alarm that
+# is always on, which is an alarm nobody reads.
+#
+# So instead: no dependency, and `retryInterval` well under `interval` so that
+# the one case where the CRD really is missing (a cluster opting in at the same
+# moment Longhorn first installs) heals in minutes rather than at the next
+# hourly tick. On every other cluster the selected directory is empty, needs no
+# CRD, and reconciles clean.
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: longhorn-backup
+  namespace: flux-system
+spec:
+  interval: 1h
+  retryInterval: 5m
+  path: ./kubernetes/apps/base/storage/longhorn/backup/${LONGHORN_BACKUP:=none}
+  postBuild:
+    substituteFrom:
+      - name: cluster-secrets
+        kind: Secret
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: jg-base
+    namespace: flux-system
+  wait: false

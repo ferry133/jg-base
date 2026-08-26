@@ -44,6 +44,30 @@ spec:
       # server, and a drain that waits forever for a volume is worse than one
       # that reports it.
       nodeDrainPolicy: block-for-eviction-if-contains-last-replica
+    # Optional off-node backup target (ferry133/jg-base#7). Longhorn's
+    # defaultReplicaCount only survives a node dying; it does not survive a
+    # `kubectl delete pvc` or a corrupt table, and until this existed the
+    # Longhorn layer had no backups at all.
+    #
+    # NOT `defaultSettings.backupTarget` — that key does not exist in chart
+    # 1.12.0. Measured: `defaultSettings` contains no backupTarget, and
+    # templates/default-resource.yaml reads `.Values.defaultBackupStore.*` into
+    # the `longhorn-default-resource` ConfigMap. Setting it under
+    # defaultSettings would have been accepted silently by Helm and done
+    # nothing, which reads exactly like a backup target that is configured.
+    #
+    # Deliberately unquoted. The chart guards each key with
+    # `if not (kindIs "invalid" ...)`, so a *null* is omitted from the ConfigMap
+    # while an empty *string* is written as `backup-target: `. Unquoted, an
+    # unset variable substitutes to nothing and YAML parses that as null, so a
+    # cluster that never sets this renders byte-identical to today — measured
+    # both ways with helm template, see README.
+    #
+    # This only substitutes because ks.yaml carries postBuild.substituteFrom.
+    # It did not until this change; without it Helm receives the literal string
+    # `${LONGHORN_BACKUP_TARGET:=}` as the backup target URL.
+    defaultBackupStore:
+      backupTarget: ${LONGHORN_BACKUP_TARGET:=}
     persistence:
       # Not the cluster default. Bulk data does not need replication, and making
       # this the default would quietly move every existing PVC onto it.

@@ -10,6 +10,13 @@ metadata:
 spec:
   interval: 1h
   path: ./kubernetes/apps/base/storage/longhorn/app
+  # Added with the backup target (#7). Flux performs no substitution at all
+  # unless postBuild is present, so before this the `${...}` in helmrelease.yaml
+  # would have reached Helm verbatim.
+  postBuild:
+    substituteFrom:
+      - name: cluster-secrets
+        kind: Secret
   prune: true
   sourceRef:
     kind: GitRepository

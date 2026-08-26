@@ -15,3 +15,7 @@ resources:
   - ./nfs-subdir/ks.yaml
   # Suspended unless storage_backend is "replicated" — see its ks.yaml.
   - ./longhorn/ks.yaml
+  # Deliberately NOT suspended alongside longhorn: it selects an empty
+  # directory unless LONGHORN_BACKUP says otherwise, so on a cluster without
+  # replicated storage it reconciles clean with zero objects (#7).
+  - ./longhorn/backup-ks.yaml
