@@ -1,10 +1,10 @@
 ---
 # Daily off-node backup of every Longhorn volume (ferry133/jg-base#7).
 #
-# Only rendered when LONGHORN_BACKUP=nfs, which jg-cluster-template derives from
-# whether `longhorn_backup_target` is set. Without a backup target this object
-# is not "idle" — it runs and fails every day — which is why it is gated by a
-# directory rather than shipped alongside the HelmRelease.
+# Applied only where backup-ks.yaml is un-suspended by the per-user repo,
+# which happens exactly where `longhorn_backup_target` is set. Without a target
+# this object is not idle — it runs and fails every day — which is why it is
+# gated rather than shipped alongside the HelmRelease.
 apiVersion: longhorn.io/v1beta2
 kind: RecurringJob
 metadata:

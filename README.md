@@ -427,11 +427,10 @@ URL and there were zero `recurringjobs`. Note the diagnosis that matters there �
 field was **empty, not broken**. Never configured and configured-but-unreachable look
 almost the same in the UI and want opposite fixes.
 
-Two variables, both optional:
+One variable, optional:
 
 ```yaml
 LONGHORN_BACKUP_TARGET: "nfs://10.9.2.13:/volume3/backup1/longhorn"
-LONGHORN_BACKUP: "nfs"     # derived from longhorn_backup_target, never hand-set
 ```
 
 ### A cluster that sets neither renders byte-identically to today
@@ -464,26 +463,39 @@ anyway, so the value domain is the only place this can be controlled — the sam
   `${VAR}` to a manifest is only half the change; the Kustomization that builds it has
   to be asking for substitution.
 
-### Why the RecurringJob lives behind a directory switch
+### Why the RecurringJob is shipped suspended, not selected by a variable
 
-Same mechanism as `NAS_BACKUP` above — Flux cannot branch on "is this set", so the
-selector arrives as its own value and picks a path:
+The obvious shape is the one `extras/*/postgres` uses — `path:
+.../backup/${NAS_BACKUP:=nfs}`, one real directory and one empty one. **It does not
+work for a base app**, and the first attempt at this change proved it in CI:
 
-```yaml
-path: ./kubernetes/apps/base/storage/longhorn/backup/${LONGHORN_BACKUP:=none}
+```
+ERROR: Kustomization 'flux-system/longhorn-backup' path field
+'...backup/${LONGHORN_BACKUP:=none}' is not a directory
 ```
 
-**The default is `none`, the opposite of `NAS_BACKUP`'s `nfs`, for the same reason.**
-Both answer "what does a cluster that has not re-rendered do?". Every cluster already
-had a `pg_dump` CronJob, so `NAS_BACKUP` had to default to keeping it. *No* cluster has
-a Longhorn backup, so defaulting this to `nfs` would hand every replicated-storage
-cluster a nightly job with nowhere to write. The rule is "changes nothing until someone
-asks", not "defaults on".
+`cluster-apps` walks `./kubernetes/apps/base` and nothing else, so every Kustomization
+under `base/` is collected by `flux-local test` — which performs no substitution, takes
+the `${...}` literally, and dies at collection, taking all 37 tests with it. The extras
+precedent survives only because extras are never reachable from `apps/base`, so CI has
+never walked one. **That pattern is untested there, not proven.**
+
+So the gate is the mechanism base apps already use: the patch loop in the per-user
+`flux/cluster/ks.yaml` that suspends `nfs-client-provisioner`, `longhorn`, `spegel`.
+The polarity is inverted on purpose — those are on by default and switched off; this is
+**off by default and switched on**, because a cluster whose per-user repo has not
+re-rendered must keep exactly today's behaviour, and today no cluster has a Longhorn
+backup. jg-cluster-template emits `suspend: false` wherever `longhorn_backup_target` is
+set, and nothing else turns it on.
+
+This is strictly better than the variable path, not merely a workaround: `path` is a
+real directory on every cluster, so `flux-local test` builds and validates the
+RecurringJob on every PR. The gated object ends up **more** tested than an un-gated one.
 
 `backup-ks.yaml` deliberately has **no `dependsOn: [longhorn]`**. It would not close the
 race it appears to close — `longhorn` runs with `wait: false` and does not wait on its
-HelmRelease, so it is Ready long before the `RecurringJob` CRD exists — and it would cost
-a permanent not-Ready row on every cluster where `longhorn` is suspended, because a Flux
+HelmRelease, so it is Ready long before the CRD exists — and it would cost a permanent
+not-Ready row on every cluster where `longhorn` is suspended, because a Flux
 Kustomization depending on a suspended one waits forever. An alarm that is always on is
 an alarm nobody reads. `retryInterval: 5m` covers the real case instead.
 

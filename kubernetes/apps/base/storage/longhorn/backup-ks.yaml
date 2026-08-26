@@ -1,43 +1,63 @@
 ---
-# The RecurringJob half of Longhorn, split into its own Kustomization so that a
-# cluster with no backup target renders nothing here (ferry133/jg-base#7).
+# The RecurringJob half of Longhorn, split into its own Kustomization and
+# shipped SUSPENDED (ferry133/jg-base#7).
 #
-# `${LONGHORN_BACKUP:=none}` selects the directory; see backup/none for why the
-# default is `none` while NAS_BACKUP's is `nfs`.
+# ## Why suspended in git rather than selected by a variable
 #
-# ## Why there is no dependsOn
+# The obvious shape is the one `extras/*/postgres` uses:
+# `path: .../backup/${NAS_BACKUP:=nfs}`, one real directory and one empty one.
+# That works there and does not work here, for a reason worth writing down:
+# `cluster-apps` walks `./kubernetes/apps/base` and nothing else, so every
+# Kustomization under base/ is collected by `flux-local test` in CI — and
+# flux-local performs no variable substitution, so a `${...}` in a `path` is
+# taken literally and the whole suite dies at collection:
 #
-# The obvious `dependsOn: [longhorn]` is wrong twice.
+#     ERROR: Kustomization 'flux-system/longhorn-backup' path field
+#     '...backup/${LONGHORN_BACKUP:=none}' is not a directory
 #
-# It would not buy what it looks like it buys: `longhorn`'s Kustomization has
-# `wait: false` and does not wait on the HelmRelease either, so it reports
-# Ready as soon as the HelmRelease *object* is applied — long before the chart
-# has installed the RecurringJob CRD. The race it appears to close stays open.
+# Measured on the first attempt at this change. The extras precedent survives
+# only because extras are not reachable from `apps/base` and CI never walks
+# them — i.e. that pattern is untested, not proven.
 #
-# And it would cost something real: `longhorn` is suspended from the per-user
-# repo on every cluster that is not on replicated storage, and a Flux
-# Kustomization that depends on a suspended one waits forever. That would put a
-# permanent not-Ready row in `flux get ks` on most of the fleet — an alarm that
-# is always on, which is an alarm nobody reads.
+# ## Why suspended rather than absent
 #
-# So instead: no dependency, and `retryInterval` well under `interval` so that
-# the one case where the CRD really is missing (a cluster opting in at the same
-# moment Longhorn first installs) heals in minutes rather than at the next
-# hourly tick. On every other cluster the selected directory is empty, needs no
-# CRD, and reconciles clean.
+# So the gate has to be something a per-user repo can flip, and this repo
+# already has exactly one: the patch loop in the per-user `flux/cluster/ks.yaml`
+# that suspends `nfs-client-provisioner`, `longhorn`, `spegel` and friends.
+#
+# The polarity here is inverted deliberately. Those are on by default and get
+# switched off; this is off by default and gets switched on, because a cluster
+# whose per-user repo has not re-rendered must keep exactly today's behaviour —
+# and today no cluster has a Longhorn backup at all. Shipping this active would
+# hand every replicated-storage cluster a nightly job with nowhere to write,
+# and every non-replicated one a RecurringJob against a CRD no chart installs.
+#
+# jg-cluster-template emits the `suspend: false` patch wherever
+# `longhorn_backup_target` is set. Nothing else turns it on.
+#
+# The upside over the variable-path shape: `path` is a real directory on every
+# cluster, so `flux-local test` builds the RecurringJob and validates it on
+# every PR. The gated object is more tested here, not less.
 apiVersion: kustomize.toolkit.fluxcd.io/v1
 kind: Kustomization
 metadata:
   name: longhorn-backup
   namespace: flux-system
 spec:
+  suspend: true
   interval: 1h
+  # Well under `interval` so the one race that can really happen — a cluster
+  # opting in at the moment Longhorn first installs, before the RecurringJob
+  # CRD exists — heals in minutes rather than at the next hourly tick.
+  #
+  # There is deliberately no `dependsOn: [longhorn]`. It would not close that
+  # race (`longhorn` runs `wait: false` and does not wait on its HelmRelease
+  # either, so it is Ready long before the CRD exists) and it would cost a
+  # permanent not-Ready row on every cluster where `longhorn` is suspended,
+  # because a Flux Kustomization depending on a suspended one waits forever.
+  # An alarm that is always on is an alarm nobody reads.
   retryInterval: 5m
-  path: ./kubernetes/apps/base/storage/longhorn/backup/${LONGHORN_BACKUP:=none}
-  postBuild:
-    substituteFrom:
-      - name: cluster-secrets
-        kind: Secret
+  path: ./kubernetes/apps/base/storage/longhorn/backup
   prune: true
   sourceRef:
     kind: GitRepository
