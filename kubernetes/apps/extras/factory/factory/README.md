@@ -131,12 +131,29 @@ today:
 |---|---|
 | Customer-cluster kubeconfig | Obtained from Omni, not from any RBAC on jcom (D2). **Expires by handover, not by policy** — see below. Lifetime *during company management* is still open |
 
-**Whatever factory holds for a customer cluster stops working when that cluster
-is handed over**, and that is a property of the credential rather than a rule
+**An Omni-issued credential for a customer cluster stops working when that
+cluster is handed over** — a property of the credential rather than a rule
 someone has to remember. Ruled 2026-08-25: customer machines are removed from
 Omni at handover. Control is not transferred to a customer-run Omni — nobody
 runs one — so the cluster's owner is issued two credentials against their own
 cluster instead.
+
+⚠️ **That covers Omni-issued passes and nothing else, and the exception is not
+hypothetical.** A `--break-glass` talosconfig is signed by the *cluster's own*
+Talos CA and authenticates **straight to the nodes** — measured here on
+jg-jiahd's: its `endpoints` are the three node addresses, not Omni's URL, and it
+carries `crt`/`key`/`ca` where an Omni-proxy config carries none. Removing
+machines from Omni does not touch the nodes' Talos PKI, so **any break-glass
+certificate keeps working after handover**, and jg-jiahd is holding one with
+about 335 days left. The only revocation is rotating the cluster CA, and Omni's
+break-glass taint cannot tell you how many were ever issued — it is a saturating
+boolean that remembers only the most recent.
+
+So the handover statement has to be two sentences, not one. "Removed from Omni"
+revokes the passes Omni issued. It says nothing about a break-glass certificate
+in anyone's hands — a former employee's, or a copy in a backup. Written as one
+sentence it reads as complete coverage, and a handover package would then claim
+"revoked" over a credential that is still live.
 
 The reason this belongs next to the row rather than only in the handover
 document is what a 2026-08-26 remeasurement established about what these
