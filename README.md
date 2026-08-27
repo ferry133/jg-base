@@ -509,9 +509,19 @@ object that has never reconciled has no `status.conditions`, so daily-check's ch
 counts it as neither passing nor failing.
 
 **If a cluster is retired without re-rendering**, the patch never changes and the
-RecurringJob stays. `kubectl delete recurringjob -n longhorn-system daily-backup` is the
-manual close, but the supported path is to clear `longhorn_backup_target` and
+RecurringJob stays. The supported close is to clear `longhorn_backup_target` and
 `task configure` — that is what moves the switch to `disabled`.
+
+⚠️ **`kubectl delete recurringjob -n longhorn-system daily-backup` is not a complete
+manual close**, and this README said it was until the close path was actually run.
+Deleting the job stops the writing; it does not remove the destination.
+`BackupTarget/default` keeps the URL with `available: true` — measured, see
+`backup-ks.yaml` — so the cluster still holds where its backups went and the
+relationship to that share. For a cluster being retired, that is the part that matters.
+**What to do about the surviving CR is not established**: whether to delete it, blank
+its URL, and whether Longhorn simply recreates it, has not been tested. Do not infer a
+command from this paragraph — see the correction on
+[#29](https://github.com/ferry133/jg-base/issues/29).
 
 ### Why the gate is not `${...}` in the path
 
