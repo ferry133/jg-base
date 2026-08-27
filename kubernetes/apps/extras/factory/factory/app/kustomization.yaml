@@ -9,4 +9,5 @@ resources:
   - ./rbac.yaml
   - ./ocirepository.yaml
   - ./secret.yaml
+  - ./credentials-secret.yaml
   - ./helmrelease.yaml

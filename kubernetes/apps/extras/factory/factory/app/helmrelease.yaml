@@ -91,6 +91,62 @@ spec:
               # to its first non-127 address.
               TTYD_INTERFACE: 127.0.0.1
               TTYD_AUTH_HEADER: X-Forwarded-Email
+              # --- provisioning credentials (../credentials-secret.yaml) ---
+              #
+              # EXPLICIT `secretKeyRef` per variable, never `envFrom`. This is
+              # the discriminating half of the shape, not a style choice.
+              # `envFrom: - secretRef:` injects a bag of variables that appears
+              # nowhere in the pod spec, so "does this container hold the Omni
+              # key" becomes unanswerable by reading the Deployment — and the
+              # answer it gives instead is byte-identical to "it holds nothing".
+              # That exact reading error is on the record: the 2026-08-23 audit
+              # concluded "zero credentials" from an empty `secretKeyRef` list
+              # without asking `envFrom`, and was right by luck. Listed one per
+              # line, the pod spec IS the inventory.
+              #
+              # Deliberately NOT on the oauth2-proxy sidecar. Nothing there
+              # needs Omni, GitHub or Cloudflare, and a credential reachable
+              # from the container that terminates untrusted HTTP is a
+              # different blast radius than one reachable only from the shell
+              # behind it.
+              OMNI_SERVICE_ACCOUNT_KEY:
+                valueFrom:
+                  secretKeyRef:
+                    name: factory-credentials
+                    key: omniServiceAccountKey
+              OMNI_ENDPOINT:
+                valueFrom:
+                  secretKeyRef:
+                    name: factory-credentials
+                    key: omniEndpoint
+              GH_TOKEN:
+                valueFrom:
+                  secretKeyRef:
+                    name: factory-credentials
+                    key: githubToken
+              CLOUDFLARE_API_TOKEN:
+                valueFrom:
+                  secretKeyRef:
+                    name: factory-credentials
+                    key: cloudflareApiToken
+              # Same key, second name — fleet-ops's tunnel probe reads
+              # CF_TOKEN. See the note in ../credentials-secret.yaml; this
+              # collapses to one name once that runbook picks one.
+              CF_TOKEN:
+                valueFrom:
+                  secretKeyRef:
+                    name: factory-credentials
+                    key: cloudflareApiToken
+              # Points git at the fleet-ops deploy key mounted below.
+              # `IdentitiesOnly=yes` because without it ssh offers every
+              # identity it can find and GitHub answers with whichever account
+              # the first accepted key belongs to — a deploy key scoped to one
+              # repo silently widening back to an account is the thing having
+              # two GitHub credentials exists to prevent.
+              GIT_SSH_COMMAND: >-
+                ssh -i /home/claude/.ssh/fleet-ops
+                -o IdentitiesOnly=yes
+                -o StrictHostKeyChecking=accept-new
             probes:
               # ttyd is on loopback, so a kubelet tcpSocket probe cannot reach
               # it — check from inside the pod.
@@ -219,12 +275,48 @@ spec:
         storageClass: local-path
         accessMode: ReadWriteOnce
         size: 5Gi
-        globalMounts:
-          - path: /home/claude/.claude
-          # gnome-keyring's store — Claude's OAuth tokens land here via
-          # secret-service; unmounted, they die with the pod.
-          - path: /home/claude/.local/share/keyrings
-            subPath: keyrings
+        # `advancedMounts`, not `globalMounts`, and the difference was measured
+        # rather than reasoned: rendered with globalMounts the chart mounted
+        # this claim into oauth2-proxy as well, because "global" means every
+        # container in the controller and not every mount of this container.
+        #
+        # What lands there is Claude Code's own credentials — `.credentials.json`
+        # and a 41 KB `.claude.json`, measured on the running pod 2026-08-23.
+        # oauth2-proxy has no use for either, and it is the container that
+        # terminates untrusted HTTP from the internet. Handing the process on
+        # the outside of the gate the agent's identity is the kind of reach that
+        # is invisible in the values file and obvious in the rendered spec.
+        advancedMounts:
+          factory:
+            app:
+              - path: /home/claude/.claude
+              # gnome-keyring's store — Claude's OAuth tokens land here via
+              # secret-service; unmounted, they die with the pod.
+              - path: /home/claude/.local/share/keyrings
+                subPath: keyrings
+      # The fleet-ops deploy key, as a file, because SSH will not take a key
+      # any other way.
+      #
+      # `subPath`, so ONLY this key lands on disk. Mounting the whole Secret as
+      # a directory would write the GitHub PAT and the Cloudflare token there
+      # too, and a directory that accumulates credential files is read by the
+      # next person as the place credentials live. The other three stay
+      # env-only.
+      #
+      # 0400: ssh refuses a private key any group or other bit can reach
+      # ("UNPROTECTED PRIVATE KEY FILE"), and running as uid 0 does not exempt
+      # it — the mode check in OpenSSH has no root case. A 0644 mount would
+      # fail every clone while looking correctly configured.
+      fleet-ops-key:
+        type: secret
+        name: factory-credentials
+        defaultMode: 0400
+        advancedMounts:
+          factory:
+            app:
+              - path: /home/claude/.ssh/fleet-ops
+                subPath: fleetOpsDeployKey
+                readOnly: true
       oauth2-emails:
         type: configMap
         identifier: oauth2-emails
@@ -247,6 +339,21 @@ spec:
       #      would put the credential-holding pod permanently outside any policy
       #      anyone later writes for it — while a policy sitting in the repo
       #      would read as though it applied.
+      # ../rbac.yaml declares `automountServiceAccountToken: false` on the
+      # ServiceAccount and both that file and README.md state the pod carries no
+      # token. That was FALSE as deployed, and only a render shows it: the chart
+      # defaults this field to `true` on the pod spec, and Kubernetes resolves
+      # the conflict in the pod's favour, not the ServiceAccount's. Rendered
+      # against app-template 4.6.2, `main`'s own values produce
+      # `automountServiceAccountToken: true` — so factory has been running with
+      # a mounted API token since 2.4 landed, under a comment saying it does not.
+      #
+      # The token grants close to nothing (the SA has no Role, no RoleBinding,
+      # no ClusterRole), so this is not an escalation. It is the other failure
+      # this directory keeps cataloguing: a control that reads as present, is
+      # cited as present in two files, and is not in effect. Set here because
+      # here is the level that wins.
+      automountServiceAccountToken: false
       securityContext:
         # uid 0, matching the claude-code instances this image is built from.
         # Note what it is NOT doing: root in this container grants no cluster

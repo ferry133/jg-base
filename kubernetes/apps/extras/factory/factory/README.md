@@ -10,8 +10,21 @@ trailers `omnictl` depends on (D1, and the 2026-07-30 note in
 fleet's highest-value credentials meet. That concentration is the point of this
 document.
 
-**Status: partially built.** The namespace, the ServiceAccount and its
-(deliberately empty) RBAC exist. The workload does not — see *Not yet decided*.
+**Status, remeasured 2026-08-26.** Namespace, ServiceAccount, its (deliberately
+empty) RBAC *and* the workload all exist — `deploy/factory` 2/2 Running with the
+HelmRelease at v3 when jcom was last measured (2026-08-23), image pinned by
+digest. What this line said until now was "the workload does not [exist]", which
+was true when written and stopped being true without anything in this directory
+changing. That is the failure this whole document is about, arriving in the
+document itself: **a record of a gap that closed reads exactly like a statement
+of one that is open**, and a reader checking the image question got the wrong
+answer from the same directory that contains the answer.
+
+What is *not* yet true is the thing §2's title claims. The credentials below are
+now wired into the pod (see *Where each credential is mounted*), but wiring is
+not issuance: until ferry133 issues them and they reach `cluster-secrets`, every
+one of them renders empty and this is a terminal, not a provisioning
+environment.
 
 ## The credentials
 
@@ -22,7 +35,57 @@ None of these is in this repo; this is the inventory, not the store.
 |---|---|---|---|---|
 | **Omni Admin service account** | Create clusters, join machines, issue per-cluster kubeconfig | Every cluster Omni manages, present and future | Full control of the entire managed fleet, including clusters not yet built. The worst single item here | `omnictl serviceaccount renew` / recreate; update the Secret and restart factory |
 | **GitHub PAT** | Create and populate each customer's private cluster repo | Every repo the token's account can reach | Write access to cluster manifests fleet-wide — a repo write is a deploy, on a 1h Flux interval, with no review gate | Revoke and reissue in GitHub; prefer a fine-grained token scoped to the repos it must create |
-| **Cloudflare parent-account token** | DNS records and Tunnel credentials for each customer zone | The operator's Cloudflare account, which holds every customer zone | DNS for every customer domain: traffic redirection, certificate issuance via DNS-01, and tunnel takeover | Roll the token in the Cloudflare dashboard; scope to `Zone - DNS - Edit` plus `Account - Cloudflare Tunnel - Read` |
+| **Cloudflare parent-account token** | DNS records and Tunnel credentials for each customer zone | The operator's Cloudflare account, which holds every customer zone | DNS for every customer domain: traffic redirection, certificate issuance via DNS-01, and tunnel takeover | Roll the token in the Cloudflare dashboard; scope to `Zone - DNS - Edit` plus `Account - Cloudflare Tunnel - **Edit**` — see below, this row said `Read` and was wrong |
+| **Cloudflare origin cert** (`~/.cloudflared/cert.pem`) — **not held by factory, and that is the open question, not the answer** | Creating a tunnel. Produced by `cloudflared tunnel login`, i.e. a browser session, not an API call | The Cloudflare account whose browser session signed it — *which is not necessarily the account the zone is in* | Same as the token row, plus one failure the token cannot cause: the tunnel is created in whichever account the cert belongs to | Re-run `cloudflared tunnel login`. ferry133 has ruled the procedure moves to `POST /accounts/{id}/cfd_tunnel`, which removes this credential and makes the account id an explicit argument — **ruled, not yet verified** |
+
+### The Cloudflare row said `Read`, and every token issued from it could not build a tunnel
+
+Corrected 2026-08-26. `Read` is enough to *list* tunnels and not to *create*
+one, and the difference was measured rather than argued (2026-08-23, against
+jg-janncotcc's live token — which had itself been issued by following this very
+row):
+
+| Verb | Same token, same account, same path | Result |
+|---|---|---|
+| `GET /accounts/{id}/cfd_tunnel` | | ✅ `success=true`, four tunnels listed |
+| `POST /accounts/{id}/cfd_tunnel` | | ❌ `{"code":10000,"message":"Authentication error"}` |
+
+**The only variable is the verb**, which makes it a controlled pair rather than
+a single failure — and the account-level `GET` passing rules out the competing
+explanation, that this is a zone-only token which cannot reach account
+endpoints at all. It reaches them; it may not write.
+
+Two honest boundaries. `10000 Authentication error` is Cloudflare's generic
+code, shared between insufficient permission and other auth failures; the verb
+pair and the account read narrow it to permission, but **the token's permission
+groups were never read directly**. Both readings call for the same repair — issue
+one with `Tunnel:Edit` — so the correction is robust to that unknown. And no
+tunnel was actually created on that attempt, so *"a tunnel can be built through
+the API"* remains unproven: whether the credentials JSON can be assembled,
+whether `cloudflared` accepts it, and whether the resulting tunnel reaches the
+edge are all still unmeasured.
+
+**Why nobody hit this until now, and why that matters more than the typo.**
+Tunnels have so far been created interactively with
+`cloudflared tunnel login` → `~/.cloudflared/cert.pem`. That origin cert is a
+credential, it was not in the table above until this edit, and **it was masking
+the error in the row that is**. The missing row and the wrong row are two ends
+of one defect.
+
+That missing row has already caused an outage, so it is not a theoretical
+omission. `jg-janncotcc`'s tunnel was built in `Jiahdadm@gmail.com's Account`
+while the `janncot.cc` zone lives in `Ferry133@gmail.com's Account`, because the
+workstation's `cert.pem` belonged to the former. `external.janncot.cc` answered
+HTTP 530 / error 1033 — **and every cheaper check passed**: the tunnel was
+Healthy inside its own account, the pod was 1/1 with four edge connections, the
+DNS record existed. It is the instance of this file's own sentence: *a row
+missing from the table is not an accepted risk, it is an unrecorded one, and
+from outside the two are identical.*
+
+It is recorded here rather than deleted on the strength of the ruling, because
+the API path is decided and **unverified** — the write half of that token still
+returns `Authentication error`. If the API path proves out, this row becomes
+"was required, removed by design"; it does not become nothing.
 
 ### `age.key` — deliberately not held, and that is the point
 
@@ -66,7 +129,136 @@ today:
 
 | Material | Note |
 |---|---|
-| Customer-cluster kubeconfig | Obtained from Omni, not from any RBAC on jcom (D2). Lifetime is an open question — see below |
+| Customer-cluster kubeconfig | Obtained from Omni, not from any RBAC on jcom (D2). **Expires by handover, not by policy** — see below. Lifetime *during company management* is still open |
+
+**An Omni-issued credential for a customer cluster stops working when that
+cluster is handed over** — a property of the credential rather than a rule
+someone has to remember. Ruled 2026-08-25: customer machines are removed from
+Omni at handover. Control is not transferred to a customer-run Omni — nobody
+runs one — so the cluster's owner is issued two credentials against their own
+cluster instead.
+
+⚠️ **That covers Omni-issued passes and nothing else, and the exception is not
+hypothetical.** A `--break-glass` talosconfig is signed by the *cluster's own*
+Talos CA and authenticates **straight to the nodes** — measured here on
+jg-jiahd's: its `endpoints` are the three node addresses, not Omni's URL, and it
+carries `crt`/`key`/`ca` where an Omni-proxy config carries none. Removing
+machines from Omni does not touch the nodes' Talos PKI, so **any break-glass
+certificate keeps working after handover**, and jg-jiahd is holding one with
+about 335 days left. The only revocation is rotating the cluster CA, and Omni's
+break-glass taint cannot tell you how many were ever issued — it is a saturating
+boolean that remembers only the most recent.
+
+So the handover statement has to be two sentences, not one. "Removed from Omni"
+revokes the passes Omni issued. It says nothing about a break-glass certificate
+in anyone's hands — a former employee's, or a copy in a backup. Written as one
+sentence it reads as complete coverage, and a handover package would then claim
+"revoked" over a credential that is still live.
+
+The reason this belongs next to the row rather than only in the handover
+document is what a 2026-08-26 remeasurement established about what these
+credentials *are*. An earlier conclusion held that Omni's `Talosconfig` and
+`Kubeconfig` RPCs "directly sign client certificates". They do not: an
+`omnictl talosconfig` is 229 bytes with zero `crt`/`key`/`ca` fields, carrying
+only Omni's own endpoints and a `siderov1` identity, and the kubeconfig has no
+`client-certificate-data` either — it shells out to `oidc-login` against Omni.
+**They are passes issued by Omni, not certificates issued by the cluster.**
+Which means removal from Omni is not merely an administrative step that ought to
+be followed by revocation; it *is* the revocation. There is no leftover to
+forget.
+
+What that does **not** settle, and what this inventory is the right place to
+decide: during company management, one long-lived per-cluster credential held in
+factory versus one re-minted per use with the Omni service account. That
+trade-off is untouched by the ruling — it is the last open credential question
+here, and it is open in both directions (standing risk versus more use of the
+highest-blast-radius item).
+
+## Where each credential is mounted
+
+Added 2026-08-26, and the reason it did not exist before is worth one sentence:
+this inventory described a design and was read as describing a deployment. Its
+Omni row carried a rotation procedure ending *"update the Secret and restart
+factory"* for a Secret that did not exist, and nobody had checked. The pod was
+measured for the first time on 2026-08-23 and held **none** of the three.
+
+`app/credentials-secret.yaml` and `app/helmrelease.yaml` now wire them. What is
+below is the shape, because the shape is what makes the question answerable
+later:
+
+| Credential | Secret key | Reaches the container as | Env / path |
+|---|---|---|---|
+| Omni service account | `omniServiceAccountKey` | `env[].valueFrom.secretKeyRef` | `OMNI_SERVICE_ACCOUNT_KEY` |
+| Omni endpoint | `omniEndpoint` | `env[].valueFrom.secretKeyRef` | `OMNI_ENDPOINT` |
+| GitHub provisioning token | `githubToken` | `env[].valueFrom.secretKeyRef` | `GH_TOKEN` |
+| Cloudflare token | `cloudflareApiToken` | `env[].valueFrom.secretKeyRef` | `CLOUDFLARE_API_TOKEN` **and** `CF_TOKEN` (one value, two names — fleet-ops's probe reads the second; collapse when that runbook picks one) |
+| fleet-ops read-only deploy key | `fleetOpsDeployKey` (b64 in `data:`) | `volumes[].secret`, `subPath`, mode `0400` | `/home/claude/.ssh/fleet-ops`, reached via `GIT_SSH_COMMAND` |
+
+All on the **`app` container only**. `oauth2-proxy` holds the three
+`OAUTH2_PROXY_*` keys of `factory-secret` and nothing else — rendered and
+checked, not assumed.
+
+**`envFrom` is deliberately not used anywhere here.** A `secretRef` under
+`envFrom` injects a bag of variables that appears nowhere in the pod spec, so
+"does this container hold the Omni key" stops being answerable by reading the
+Deployment — and the answer it gives instead is byte-identical to "it holds
+nothing". That is not hypothetical: the 2026-08-23 audit concluded "zero
+credentials" from an empty `env[].valueFrom.secretKeyRef` list *without asking
+`envFrom`*, and happened to be right. Listed one per line, the pod spec is the
+inventory. Anyone re-running that audit should ask all three shapes —
+`envFrom`, `env[].valueFrom.secretKeyRef`, `volumes[].secret`.
+
+**The `app` container runs as uid 0** (`defaultPodOptions.securityContext`,
+confirmed in the rendered spec). That closes the loose thread left by the
+2026-08-23 measurement: `~/.claude/.credentials.json` on the PVC is `root:root
+0600`, so a non-root `app` could not read its own Claude credentials. It is
+root, so it can. Read off the spec the kubelet enforces, not off `id` inside a
+running container.
+
+### Where the values come from — and why they are all empty today
+
+Every value is a Flux `postBuild` substitution from `cluster-secrets`, so no
+material is in this repo. The variables are:
+
+| Variable | Carries |
+|---|---|
+| `FACTORY_OMNI_SA_KEY` | Omni service account key, `--role Operator`, short TTL |
+| `FACTORY_OMNI_ENDPOINT` | override only; defaults to the in-cluster path |
+| `FACTORY_GITHUB_TOKEN` | fine-grained PAT for creating customer repos |
+| `FACTORY_FLEET_OPS_DEPLOY_KEY_B64` | base64 of the read-only deploy key |
+| `FACTORY_CLOUDFLARE_TOKEN` | scoped token, `Zone:DNS:Edit` + `Tunnel:Edit` |
+
+⚠️ **None of these is declared in `jg-cluster-template` yet** — no
+`cluster.schema.cue` field, no line in `cluster-secrets.sops.yaml.j2` — so every
+one renders empty on every cluster, today, including jcom. That is sequencing,
+not oversight: the consuming half is reviewable here, the declaring half is
+`jg-cluster-template`'s, and the values are ferry133's to issue. **This file
+landing deploys nothing**; the pod gains five env names and one zero-byte file.
+
+Empty is legible rather than silent, which is the only reason it is an
+acceptable interim state. `omnictl` treats an empty `OMNI_SERVICE_ACCOUNT_KEY`
+as unset and refuses to authenticate, `gh` reports no token, and a zero-byte
+private key fails at key load. None of them degrades into looking as though it
+worked.
+
+`FACTORY_OMNI_ENDPOINT` is the exception, and on purpose: it defaults to
+`http://omni.omni.svc.cluster.local:8080` — the `omni` extra's own Service, its
+`service.main.omniPort`, and `http` because that Service is h2c with TLS
+terminating at the ingress. So the endpoint half of 2.6 is configured the moment
+this lands, and only the credential half waits. It is a literal rather than a
+required variable for the same reason `--trusted-proxy-ip` is a literal: factory
+is jcom-only by D1, and no `cluster-secrets` variable carries this.
+
+⚠️ **2.6 is configured, not exercised.** That omnictl and the Go SDK accept an
+`http://` endpoint, and that Omni accepts service-account auth over cleartext
+in-cluster, are both read off configuration rather than off a call. What *has*
+been measured (jcom, 2026-08-18) is only the transport underneath:
+`omni.omni.svc.cluster.local` resolves to `10.43.2.239` and 8080/8090/8095 are
+open. The gRPC-trailer question 2.6 actually asks is untouched — and its cheap
+half does not need the credential, since an *unauthenticated* stream still
+returns its status in trailers, so a clean `PermissionDenied` would prove
+trailers survive ClusterIP + cluster DNS. That needs `grpcurl` in the image,
+which is `k8scc`'s.
 
 ## Checking a credential: assert its scope, never its validity
 
@@ -295,27 +487,55 @@ jg-base's shared structure and has not been made.
 
 ## What this directory does and does not grant
 
-The ServiceAccount has no Role, no RoleBinding and no ClusterRole, and
-`automountServiceAccountToken: false`. That is not minimalism for its own sake:
-factory's work is against Omni, GitHub and Cloudflare, its authority over
-customer clusters comes from an Omni-issued kubeconfig rather than from jcom
-(D2), and mounted Secrets need no API permission to read. Anything that later
-needs a verb should have to add it here and justify it.
+The ServiceAccount has no Role, no RoleBinding and no ClusterRole. That is not
+minimalism for its own sake: factory's work is against Omni, GitHub and
+Cloudflare, its authority over customer clusters comes from an Omni-issued
+kubeconfig rather than from jcom (D2), and mounted Secrets need no API
+permission to read. Anything that later needs a verb should have to add it here
+and justify it.
+
+### `automountServiceAccountToken: false` was stated in two files and in effect in neither
+
+Found and fixed 2026-08-26. `app/rbac.yaml` sets it on the ServiceAccount, this
+paragraph asserted it, and **the pod had a token mounted anyway**: app-template
+writes `automountServiceAccountToken: true` onto the pod spec by default, and
+Kubernetes resolves a pod/ServiceAccount conflict in the *pod's* favour. The
+fix is one line in `app/helmrelease.yaml`, at the level that actually decides.
+
+Measured, not deduced — `helm template` against app-template 4.6.2 with `main`'s
+own values rendered `automountServiceAccountToken: true`. So this has been the
+state since 2.4 landed.
+
+It is a small escalation and a large instance. The token grants close to nothing
+because the SA has no bindings, so nothing was reachable that was not reachable
+before. What it cost is the property this file trades on: **a control cited in
+two places, believed by everyone reading either, and not in effect.** Neither
+citation could have caught it, because both were describing the input rather
+than the output. The render is the only thing that separates them, which is why
+it is now the thing this directory checks.
+
+The same render found a second one: the `claude-config` claim was mounted with
+`globalMounts`, and *global* means every container in the controller — so
+oauth2-proxy, the process terminating untrusted HTTP from the internet, had
+Claude Code's own `.credentials.json` mounted at `/home/claude/.claude`. Now
+`advancedMounts`, `app` only.
 
 ## Not yet decided
 
-- **There is no factory image, and nothing builds one.** The change's task list
-  mentions an image exactly twice — 2.8 asks that it contain no credential
-  material, and `design.md:145` asks the same — and no task anywhere produces
-  it. So 2.7 (verify the toolchain inside the container) and 2.8 (verify the
-  image is credential-free) have nothing to inspect, and 2.4's HelmRelease
-  cannot name a `repository` and `tag` without inventing them. This is a gap in
-  the change rather than a decision waiting to be made: §2 assumes an artifact
-  no section creates.
-- **Customer-cluster credential lifetime** (`design.md:167`). Holding one long
-  is standing risk; re-fetching each time needs Omni Admin, the item with the
-  largest blast radius. Still unresolved — and note this is now the only
-  credential question left open, since the `age.key` one closed by scope.
+- **~~There is no factory image, and nothing builds one.~~ Closed 2026-08-17.**
+  `k8scc` builds a factory stage, 2.7 compared its tool pins line by line, 2.8
+  scanned all 28 layers of the published manifest, and
+  `app/helmrelease.yaml:77` pins it by digest. Struck through rather than
+  deleted, because the bullet is a small case study in its own right: it read as
+  a current statement of a gap for nine days after the gap closed, in the same
+  directory as the HelmRelease that closed it.
+- **Customer-cluster credential lifetime** (`design.md:167`), narrowed but not
+  closed. The handover half is settled — the credential dies when the machines
+  leave Omni (see the customer-cluster row above). What is open is the operating
+  policy while the company manages the cluster: hold one long-lived per-cluster
+  credential, or re-mint per use with the Omni service account. Standing risk
+  against more frequent use of the highest-blast-radius item. Still the only
+  credential question open, since the `age.key` one closed by scope.
 - **Escrow is settled and is not in this list any more.** factory does not hold
   customer key material (2026-08-17); the section above records why, and why
   reversing it would need `deployment-profiles` 8.3 to have actually run first.
