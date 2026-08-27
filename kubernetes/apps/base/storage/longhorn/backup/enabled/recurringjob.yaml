@@ -14,9 +14,18 @@ spec:
   name: daily-backup
   task: backup
   # UTC, and this is now measured rather than read. Longhorn renders recurring
-  # jobs into Kubernetes CronJobs and sets no spec.timeZone, so the cluster's
-  # CronJob default applies and that is UTC — 18:00 UTC is 02:00 the next day
-  # in Asia/Taipei, which is what this is chosen for.
+  # jobs into Kubernetes CronJobs, and the CronJob it produces carries no
+  # spec.timeZone, so the cluster's CronJob default applies and that is UTC —
+  # 18:00 UTC is 02:00 the next day in Asia/Taipei, which is what this is
+  # chosen for.
+  #
+  # "carries no timeZone" is not a choice Longhorn made and it is not something
+  # this file could override: **the RecurringJob CRD has no such field.**
+  # Measured against chart 1.12.0's bundled CRDs — RecurringJobSpec v1beta2 has
+  # exactly concurrency, cron, groups, labels, name, parameters, retain, task,
+  # and `timeZone` appears zero times in the whole RecurringJob definition. So
+  # there is no way to pin a zone here at all; the cluster default is not the
+  # default that was picked, it is the only thing there is.
   #
   # This comment used to end with the condition that would falsify it: "if the
   # first backup lands at 18:00 local instead, this is the line that is wrong."
@@ -47,9 +56,16 @@ spec:
   # retired draft of this comment claimed there was. Checked against
   # origin/main: base/monitoring/backup and base/monitoring/daily-check set
   # `timeZone: "Etc/UTC"` explicitly, and extras/default/trello-notifier sets
-  # `Asia/Taipei`. So the repo is split, this job is in the half that cannot
-  # declare a zone at all — Longhorn exposes no field for it — and that is
-  # exactly why the mapping had to be measured instead of assumed.
+  # `Asia/Taipei`. So the repo is split, and this job is not simply in the
+  # "doesn't set one" half — it is in a class of its own that *cannot* set one,
+  # which is exactly why the mapping had to be measured instead of assumed.
+  #
+  # ⚠️ Counting matches for the string `timeZone` does not answer "does it set
+  # one". This very comment mentions `spec.timeZone`, so a string count puts
+  # this file in the "sets one" column — which is the opposite of the truth,
+  # and it is how a parallel session reached the wrong split. Two of us ran a
+  # command with that flaw; what separated the right answer from the wrong one
+  # was printing the matched line instead of counting it, not a better command.
   cron: "0 18 * * *"
   # "default" is not a group anyone has to create: Longhorn puts a volume in it
   # whenever the volume carries no recurring-job label of its own. So this
