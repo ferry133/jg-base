@@ -24,8 +24,32 @@ spec:
   # fired at 18:00:06Z. It did not land at 18:00 local. The line is right, and
   # it is right for the reason it claimed (ferry133/jg-jiahd#3).
   #
-  # Kept rather than deleted because a falsification condition that was
-  # actually checked is worth more than one that was merely stated.
+  # The marker is discharged rather than deleted, because **what let the
+  # measurement settle anything is that the falsifier was written down BEFORE
+  # it**. A comment that had only asserted the mapping would have been equally
+  # true and would have proved nothing on being checked. (That sentence is not
+  # mine — it came from a parallel PR by another session that was retired when
+  # the two collided; it is the one thing in it that could not be derived from
+  # this version, so it is carried forward rather than lost with the branch.)
+  #
+  # Scope: one observation, one cluster, one Longhorn version. It says the
+  # rendering path behaves as described today; it does not promise Longhorn will
+  # never start setting spec.timeZone.
+  #
+  # ⚠️ This measurement is load-bearing well outside this file, and that is not
+  # obvious from here. Five other schedules in this repo set no `timeZone` and
+  # encode the offset in the hour, i.e. they rely on the same cluster default
+  # this just measured: extras/claudecode/postgres and extras/default/postgres
+  # backups (0 18), extras/default/linebot (0 19), and freepbx backup and
+  # file-backup (0 19, 0 20).
+  #
+  # There is NO repo-wide "always UTC hours" convention to lean on, and a
+  # retired draft of this comment claimed there was. Checked against
+  # origin/main: base/monitoring/backup and base/monitoring/daily-check set
+  # `timeZone: "Etc/UTC"` explicitly, and extras/default/trello-notifier sets
+  # `Asia/Taipei`. So the repo is split, this job is in the half that cannot
+  # declare a zone at all — Longhorn exposes no field for it — and that is
+  # exactly why the mapping had to be measured instead of assumed.
   cron: "0 18 * * *"
   # "default" is not a group anyone has to create: Longhorn puts a volume in it
   # whenever the volume carries no recurring-job label of its own. So this
