@@ -235,11 +235,26 @@ not oversight: the consuming half is reviewable here, the declaring half is
 `jg-cluster-template`'s, and the values are ferry133's to issue. **This file
 landing deploys nothing**; the pod gains five env names and one zero-byte file.
 
-Empty is legible rather than silent, which is the only reason it is an
+Empty is legible **at the point of use**, which is the only reason it is an
 acceptable interim state. `omnictl` treats an empty `OMNI_SERVICE_ACCOUNT_KEY`
 as unset and refuses to authenticate, `gh` reports no token, and a zero-byte
 private key fails at key load. None of them degrades into looking as though it
 worked.
+
+⚠️ **"At the point of use" is the whole of the claim, and an earlier draft of
+this paragraph overstated it.** Nothing outside the pod reports an unset
+credential: measured by another session on jcom, the three credentials read
+`len=0` while every external indicator stayed green. So an empty credential is
+loud to whoever runs a command and **completely silent to anyone watching** —
+which is this document's own subject arriving one more time. Do not read
+"legible" as "someone will notice".
+
+The consequence for anyone tracking this work: **declaring the variables does
+not turn anything from red to green, because nothing was red.** Green before the
+declaration and green after it are the same green. The only assertion that
+separates "issued" from "not issued" is reading the length inside the pod, and
+until something does that on a schedule, the state of these credentials is
+carried by this file rather than by any check.
 
 `FACTORY_OMNI_ENDPOINT` is the exception, and on purpose: it defaults to
 `http://omni.omni.svc.cluster.local:8080` — the `omni` extra's own Service, its
