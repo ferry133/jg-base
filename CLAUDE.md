@@ -2,6 +2,11 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+> **Agent R&R（2026-08-28 ferry133 裁定）:** 這個 agent 擁有 `jg-base` 與
+> `jg-cluster-template`；所有 user repo 由 fleet-ops agent 擁有。名冊與跨 repo
+> 協作規則的唯一持有者是 fleet-ops `docs/agents/responsibilities.md`
+> —— 這裡只留指標，不複述。
+
 ## What This Repo Is
 
 **`ferry133/jg-base`** — shared base repo for ~20 Kubernetes home-ops clusters managed by ferry133.
