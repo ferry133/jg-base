@@ -527,22 +527,45 @@ not-Ready row on every cluster where `longhorn` is suspended, because a Flux
 Kustomization depending on a suspended one waits forever. `retryInterval: 5m` covers the
 real case instead.
 
-### Not verified
+### Verified since, and where
 
-- **Nothing has been backed up or restored.** The NAS export `/volume3/backup1` is known
-  to accept the existing `pg_dump` writes from a root pod, and Longhorn's
-  instance-manager also runs as root, so it *should* be writable — but no Longhorn
-  backup has been taken and none has been restored. A backup target that has never
-  restored is a hypothesis. `/volume3/backup1/longhorn` does not exist on the NAS yet.
-- **The cron is in UTC by inference.** Longhorn sets no `spec.timeZone` on the CronJobs
-  it renders, so `0 18 * * *` should fire at 02:00 Asia/Taipei. Read from the source and
-  the CronJob default, not observed on a running cluster.
-- **Whether an already-running Longhorn picks the target up without a manager restart.**
-  The chart writes it into the `longhorn-default-resource` ConfigMap, which
-  longhorn-manager reads by name; default-resource values are documented as applying to
-  settings the user has not overridden. jg-jiahd has never set this one, so it should
-  apply — untested. Check with
-  `kubectl get backuptargets.longhorn.io -n longhorn-system -o wide`.
+Everything this section once listed as unverified was verified on **jg-jiahd**, in that
+repo's issues — and none of it came back here on its own. The list below sat claiming
+"nothing has been backed up" for days after a backup had been taken and restored. That
+is the failure mode this repo keeps writing about, arriving from the direction that is
+hardest to see: **the record did not rot, the world moved and the record held still.**
+Nothing here was measured by this repo; each line names its source so the next reader
+can date it.
+
+| once unverified | now | source |
+|---|---|---|
+| `/volume3/backup1/longhorn` does not exist | created | jg-jiahd#2 box 1 |
+| nothing has been backed up | backups exist, `Completed` | jg-jiahd#2 box 3 |
+| nothing has been restored | restored, data read back out | jg-jiahd#2 box 4 |
+| the cron is UTC **by inference** | **measured**: `spec.timeZone` is `<none>` and a job fired at `18:00:06Z` = 02:00 Asia/Taipei | jg-jiahd#3, 2026-08-28 |
+| clearing the target clears it in the cluster | **false** — `BackupTarget/default` survives, `available: true` | #33, 2026-08-28 |
+
+### Still not verified
+
+- **That a backup succeeds after the close/reopen cycle.** jg-jiahd was taken through
+  off→on on 2026-08-28 (#33). The RecurringJob came back, but at the time of writing no
+  backup has been created since — `executionCount: 0`, `CronJob.lastScheduleTime:
+  <none>`, next fire 2026-08-28 18:00 UTC. Tracked in
+  [jg-jiahd#3](https://github.com/ferry133/jg-jiahd/issues/3). **The two backups that do
+  exist predate the reopen**, and they look exactly like an answer: `Completed`, on the
+  cron, newest-first. Using them would be proving the reopen worked with state from
+  before it.
+- **Whether a running Longhorn needs a manager restart to pick up a new target.** A
+  backup was produced after the target was set, so it *was* picked up; nobody recorded
+  whether longhorn-manager restarted in between, so the restart question itself is
+  untouched rather than answered.
+- **What to do with `BackupTarget/default` when retiring a cluster.** It survives a git
+  close. Deleting it, blanking its URL, and whether Longhorn recreates it are all
+  untested — see the correction on
+  [#29](https://github.com/ferry133/jg-base/issues/29).
+- **One unexplained backup.** A backup at `06:06:08Z` on jg-jiahd is not on the cron and
+  has no established cause. Recorded because an anomaly nobody writes down is
+  indistinguishable from one that did not happen.
 
 ## CI: `flux-local` and Secret `data:` placeholders
 

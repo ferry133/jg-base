@@ -13,12 +13,19 @@ metadata:
 spec:
   name: daily-backup
   task: backup
-  # UTC. Longhorn renders recurring jobs into Kubernetes CronJobs and sets no
-  # spec.timeZone, so the cluster's CronJob default applies and that is UTC —
-  # 18:00 UTC is 02:00 the next day in Asia/Taipei, which is what this is
-  # chosen for. ⚠️ That mapping is read from the Longhorn source and the
-  # CronJob default, NOT observed on a running cluster; if the first backup
-  # lands at 18:00 local instead, this is the line that is wrong.
+  # UTC, and this is now measured rather than read. Longhorn renders recurring
+  # jobs into Kubernetes CronJobs and sets no spec.timeZone, so the cluster's
+  # CronJob default applies and that is UTC — 18:00 UTC is 02:00 the next day
+  # in Asia/Taipei, which is what this is chosen for.
+  #
+  # This comment used to end with the condition that would falsify it: "if the
+  # first backup lands at 18:00 local instead, this is the line that is wrong."
+  # jg-jiahd, 2026-08-28: `CronJob spec.timeZone: <none>`, and a scheduled job
+  # fired at 18:00:06Z. It did not land at 18:00 local. The line is right, and
+  # it is right for the reason it claimed (ferry133/jg-jiahd#3).
+  #
+  # Kept rather than deleted because a falsification condition that was
+  # actually checked is worth more than one that was merely stated.
   cron: "0 18 * * *"
   # "default" is not a group anyone has to create: Longhorn puts a volume in it
   # whenever the volume carries no recurring-job label of its own. So this
