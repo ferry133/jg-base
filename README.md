@@ -463,11 +463,50 @@ anyway, so the value domain is the only place this can be controlled — the sam
   `${VAR}` to a manifest is only half the change; the Kustomization that builds it has
   to be asking for substitution.
 
-### Why the RecurringJob is shipped suspended, not selected by a variable
+### Turning it on, and the part that is harder — turning it off
 
-The obvious shape is the one `extras/*/postgres` uses — `path:
-.../backup/${NAS_BACKUP:=nfs}`, one real directory and one empty one. **It does not
-work for a base app**, and the first attempt at this change proved it in CI:
+The gate is `Kustomization/longhorn-backup`, which has three states:
+
+| state | shipped by | `suspend` | `path` | applied |
+|---|---|---|---|---|
+| never asked for | jg-base default | `true` | `backup/enabled` | nothing |
+| on | jg-cluster-template patch | `false` | `backup/enabled` | the RecurringJob |
+| off, after being on | jg-cluster-template patch | `false` | `backup/**disabled**` | nothing |
+
+The third row is the whole of [#29](https://github.com/ferry133/jg-base/issues/29).
+Off is **not** a return to `suspend: true`, because **suspend stops reconciliation; it
+does not remove what reconciliation already created.** Measured on a different app in
+this repo: 2026-08-19, jcom had `lan-address-probe` suspended with its Deployment still
+running 7 days later and a stray `pool-discovered` no Service used.
+
+Suspending to turn backups off would leave `daily-backup` in `longhorn-system` and
+silence the only Flux object that would have reported it, in the same instant — an
+orphan and its alarm switched off together. #28 refused `dependsOn: [longhorn]` because
+an alarm that is always on is an alarm nobody reads; this is the mirror defect, an alarm
+that can never go off, and it is worse because the first is at least visible.
+
+What the orphan would then do is **unmeasured, and both answers are bad.** Clearing
+`LONGHORN_BACKUP_TARGET` makes the chart omit `backup-target` from the
+`longhorn-default-resource` ConfigMap, and omitting a key is not the same as setting it
+empty — Longhorn applies default-resource values to settings the user has not
+overridden, so a previously-set target may simply persist. So the orphan either fails
+nightly against an unset target, or keeps writing backups for a cluster that believes it
+stopped. An empty `path` makes the question moot: the Kustomization keeps reconciling,
+its inventory goes empty, Flux prunes the RecurringJob, and the alarm stays armed.
+
+A cluster that never turned it on stays on row 1 and is untouched by all of this: an
+object that has never reconciled has no `status.conditions`, so daily-check's check 2
+counts it as neither passing nor failing.
+
+**If a cluster is retired without re-rendering**, the patch never changes and the
+RecurringJob stays. `kubectl delete recurringjob -n longhorn-system daily-backup` is the
+manual close, but the supported path is to clear `longhorn_backup_target` and
+`task configure` — that is what moves the switch to `disabled`.
+
+### Why the gate is not `${...}` in the path
+
+The obvious shape — `path: .../backup/${LONGHORN_BACKUP:=disabled}`, which is what
+`extras/*/postgres` does — kills CI:
 
 ```
 ERROR: Kustomization 'flux-system/longhorn-backup' path field
@@ -475,29 +514,18 @@ ERROR: Kustomization 'flux-system/longhorn-backup' path field
 ```
 
 `cluster-apps` walks `./kubernetes/apps/base` and nothing else, so every Kustomization
-under `base/` is collected by `flux-local test` — which performs no substitution, takes
-the `${...}` literally, and dies at collection, taking all 37 tests with it. The extras
-precedent survives only because extras are never reachable from `apps/base`, so CI has
-never walked one. **That pattern is untested there, not proven.**
-
-So the gate is the mechanism base apps already use: the patch loop in the per-user
-`flux/cluster/ks.yaml` that suspends `nfs-client-provisioner`, `longhorn`, `spegel`.
-The polarity is inverted on purpose — those are on by default and switched off; this is
-**off by default and switched on**, because a cluster whose per-user repo has not
-re-rendered must keep exactly today's behaviour, and today no cluster has a Longhorn
-backup. jg-cluster-template emits `suspend: false` wherever `longhorn_backup_target` is
-set, and nothing else turns it on.
-
-This is strictly better than the variable path, not merely a workaround: `path` is a
-real directory on every cluster, so `flux-local test` builds and validates the
-RecurringJob on every PR. The gated object ends up **more** tested than an un-gated one.
+under `base/` is collected by `flux-local test`, which substitutes nothing and dies at
+collection, taking all 37 tests with it. The extras precedent survives only because
+extras are never reachable from `apps/base`, so CI has never walked one — **untested
+there, not proven.** Keeping a literal path is also what lets flux-local build and
+validate the RecurringJob on every PR.
 
 `backup-ks.yaml` deliberately has **no `dependsOn: [longhorn]`**. It would not close the
 race it appears to close — `longhorn` runs with `wait: false` and does not wait on its
 HelmRelease, so it is Ready long before the CRD exists — and it would cost a permanent
 not-Ready row on every cluster where `longhorn` is suspended, because a Flux
-Kustomization depending on a suspended one waits forever. An alarm that is always on is
-an alarm nobody reads. `retryInterval: 5m` covers the real case instead.
+Kustomization depending on a suspended one waits forever. `retryInterval: 5m` covers the
+real case instead.
 
 ### Not verified
 

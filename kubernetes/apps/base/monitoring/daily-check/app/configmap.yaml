@@ -142,12 +142,32 @@ data:
     fi
 
     # 2. Flux Kustomizations
-    BAD_KS=$(kubectl get kustomization -A -o json 2>/dev/null | \
-      jq -r '.items[] | select(.status.conditions[]? | select(.type=="Ready" and .status!="True")) | "\(.metadata.namespace)/\(.metadata.name)"')
-    if [[ -z "$BAD_KS" ]]; then
-      record ok "Flux Kustomizations all Ready"
-    else
+    #
+    # Split by `spec.suspend`, because the two are not the same finding and one
+    # of them cannot be fixed by anything this cluster will do on its own.
+    #
+    # A suspended Kustomization does not reconcile, so whatever Ready it last
+    # wrote is frozen there. If it failed and was then suspended, `Ready=False`
+    # stays forever and no reconcile will ever clear it — reporting that as a
+    # live failure is an alarm that can never go off, which this repo treats as
+    # worse than no alarm because it teaches people to skip the row. It is a
+    # warning naming a stale status instead.
+    #
+    # `[]?` still matters: an object that has never reconciled has no
+    # conditions, produces zero rows here, and is counted as neither. That is
+    # what lets a new Kustomization ship suspended to every cluster (see
+    # storage/longhorn/backup-ks.yaml) without turning this check red.
+    KS_JSON=$(kubectl get kustomization -A -o json 2>/dev/null)
+    BAD_KS=$(echo "$KS_JSON" | \
+      jq -r '.items[] | select(.spec.suspend != true) | select(.status.conditions[]? | select(.type=="Ready" and .status!="True")) | "\(.metadata.namespace)/\(.metadata.name)"')
+    STALE_KS=$(echo "$KS_JSON" | \
+      jq -r '.items[] | select(.spec.suspend == true) | select(.status.conditions[]? | select(.type=="Ready" and .status!="True")) | "\(.metadata.namespace)/\(.metadata.name)"')
+    if [[ -n "$BAD_KS" ]]; then
       record fail "Flux Kustomizations" "Not Ready: $(echo "$BAD_KS" | tr '\n' ' ')"
+    elif [[ -n "$STALE_KS" ]]; then
+      record warn "Flux Kustomizations" "suspended while not Ready, so this status is frozen and will not clear itself: $(echo "$STALE_KS" | tr '\n' ' ')"
+    else
+      record ok "Flux Kustomizations all Ready"
     fi
 
     # 3. HelmReleases

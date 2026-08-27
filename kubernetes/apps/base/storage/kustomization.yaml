@@ -15,8 +15,8 @@ resources:
   - ./nfs-subdir/ks.yaml
   # Suspended unless storage_backend is "replicated" — see its ks.yaml.
   - ./longhorn/ks.yaml
-  # Ships suspended and is un-suspended from the per-user repo wherever a
-  # Longhorn backup target is configured — the inverse of how the entries above
-  # are switched off. See backup-ks.yaml for why the gate is a suspend rather
-  # than a variable in `path` (#7).
+  # Ships suspended; the per-user repo switches it between an empty path and a
+  # populated one. Off is an empty `path`, NOT a return to suspend — suspend
+  # stops reconciliation without removing what it created, which would orphan
+  # the RecurringJob and silence its alarm together (#7, #29).
   - ./longhorn/backup-ks.yaml

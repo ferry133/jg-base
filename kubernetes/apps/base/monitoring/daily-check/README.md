@@ -33,7 +33,7 @@ No cross-cluster checks. Each cluster is self-contained for operability.
 | # | Check | FAIL condition |
 |---|---|---|
 | 1 | Nodes Ready | Any node not in `Ready` |
-| 2 | Flux Kustomizations | Any non-`Ready=True` |
+| 2 | Flux Kustomizations | Any non-`Ready=True` **and not suspended**. A suspended one that is not Ready is a *warning*, not a failure: suspension freezes whatever Ready it last wrote, so no reconcile will ever clear it and reporting it as live is an alarm that can never go off. One that has never reconciled has no conditions and counts as neither (ferry133/jg-base#29). |
 | 3 | HelmReleases | Any non-`Ready=True` |
 | 4 | Pod state | Any pod not in `Running`/`Completed`/`Succeeded` |
 | 5 | Pod restarts (last 24h) | Any pod that restarted within the last 24h (warning; recency-based, not lifetime total) |

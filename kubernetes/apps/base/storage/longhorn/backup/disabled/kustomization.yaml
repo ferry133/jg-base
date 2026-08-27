@@ -1,0 +1,28 @@
+---
+# Deliberately empty — the "Longhorn backups are off on this cluster" position
+# of the switch (ferry133/jg-base#29).
+#
+# ## Why an empty directory and not a suspend
+#
+# Off used to mean `suspend: true` on the sibling Kustomization. Turning ON
+# that way was fine. Turning OFF was not: **suspend stops reconciliation, it
+# does not remove what reconciliation already created.** The RecurringJob stays
+# in longhorn-system, and the one Flux object that would have reported it goes
+# quiet in the same instant — an orphan and its alarm switched off together.
+#
+# Not a guess about Flux. This repo has already measured the shape, on a
+# different app: 2026-08-19, jcom had `lan-address-probe` suspended=true with
+# its Deployment running 7 days and a stray `pool-discovered` no Service used.
+# See daily-check's configmap.yaml, check 17.
+#
+# An empty directory keeps the Kustomization reconciling with nothing in it, so
+# Flux's inventory goes empty and prunes the RecurringJob. The alarm stays
+# armed because the object stays alive.
+#
+# ## Zero objects is a clean build
+#
+# `kustomize build` here exits 0 with empty output and Flux reports Ready with
+# an empty inventory. Measured.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources: []
