@@ -338,15 +338,39 @@ data:
     #
     # The list is the declaration of intent, because nothing here can derive it.
     # "Is this endpoint supposed to be reachable from outside" is not a property
-    # of the name or of DNS: the appliance failure that prompted #43 and a
-    # deliberately internal name produce the identical observation — no public
-    # record, resolves internally. Considered and not taken: reading the
-    # HTTPRoute's parentRef to see which gateway serves the hostname. That is
-    # material rather than a name pattern, and it is the honest version if this
-    # ever needs to discriminate automatically; it is not done because it adds
-    # cluster queries to answer a question the operator already answered by
-    # choosing what to put in the list. The failure message says this, because
-    # the person who hits it is reading the report, not this comment.
+    # of the name or of DNS. Both sides were measured on 2026-08-28, and they
+    # are the same observation:
+    #
+    #   im.janncot.cc      during the outage (SHOULD be external)
+    #                        -> no public A record, resolves inside the cluster
+    #   echo-int.janncot.cc deliberately internal
+    #                        -> no public A record, resolves inside the cluster
+    #
+    # So anything keying on the name or on DNS is guessing intent. The two wrong
+    # guesses do not cost the same: guessing "internal, so skip" turns a real
+    # outage silent, guessing "external, so fail" is merely noisy. **When it is
+    # genuinely unclear whether to alarm, alarming is the safe side** — the
+    # inverse of the rule check 18 follows, and not in tension with it, because
+    # there the level was asserting something the probe could not support.
+    #
+    # Considered and not taken: reading the HTTPRoute's parentRef to see which
+    # gateway serves the hostname. Not because it costs a cluster query —
+    # that reason falls over the moment someone points out operators mistype
+    # lists, which they do. It is not taken because **it answers a different
+    # question**:
+    #
+    #   "is this external endpoint reachable from outside?"   <- this check
+    #   "does the endpoint list agree with the routing?"      <- parentRef
+    #
+    # The second is worth checking on its own (a list naming echo-int while its
+    # HTTPRoute sits on envoy-internal is a real contradiction). Folded in here,
+    # a red row would no longer say which of the two failed — which is exactly
+    # the mistake #43's own acceptance condition made by combining "can the
+    # logic go red" with "does it behave in a real container". If parentRef is
+    # ever done it is a NEW check, not an upgrade of this one.
+    #
+    # The failure message carries the operator-facing half of this, because the
+    # person who hits it is reading the report, not this comment.
     if [[ -n "$ENDPOINTS_TO_PROBE" ]]; then
       ENDPOINT_FAILS=()
       ENDPOINT_UNMEASURED=()
