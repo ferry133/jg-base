@@ -79,7 +79,13 @@ run() {  # $1=NODE_DNS_PATH  $2=what dig returns  $3=expected row prefix
 # The probe itself, where it is valid.
 run lan    10.9.1.254   "[ok]"
 run lan    192.168.1.20 "[ok]"
-run lan    ""           "[fail]"
+# warn, not fail, since #41. Only FAIL_COUNT gates the dead-man ping, and an
+# unresolvable internal name is a fact about LAN DNS provisioning rather than
+# about whether this cluster is alive (ferry133's ruling, and the reasoning is
+# in the configmap next to the record call). This line is the assertion that
+# keeps it from drifting back: a `fail` here would silently re-arm the
+# every-morning-Down behaviour of #6.
+run lan    ""           "[warn]"
 run lan    104.21.5.6   "[warn]"
 
 # Where it is not valid, and where nothing is known. Both must SAY so. Emitting
