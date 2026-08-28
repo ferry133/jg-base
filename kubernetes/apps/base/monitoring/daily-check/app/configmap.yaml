@@ -327,6 +327,26 @@ data:
     # public name and the edge answer, not that an arbitrary internet client
     # gets through. It is strictly more than before — it can now be red — but a
     # true outside vantage is still the only thing that measures the whole path.
+    #
+    # ⚠️ ENDPOINTS_TO_PROBE is by definition a list of names that MUST be
+    # reachable from OUTSIDE. An internal-only name belongs in no part of it:
+    # `echo-int.<domain>` is published on envoy-internal and correctly has no
+    # public A record, so this check would call a correctly configured cluster
+    # broken every morning. That is the mirror of the defect this rewrite fixes
+    # — not a false green but a **false red**, and a false red gets silenced,
+    # after which it reads exactly like coverage.
+    #
+    # The list is the declaration of intent, because nothing here can derive it.
+    # "Is this endpoint supposed to be reachable from outside" is not a property
+    # of the name or of DNS: the appliance failure that prompted #43 and a
+    # deliberately internal name produce the identical observation — no public
+    # record, resolves internally. Considered and not taken: reading the
+    # HTTPRoute's parentRef to see which gateway serves the hostname. That is
+    # material rather than a name pattern, and it is the honest version if this
+    # ever needs to discriminate automatically; it is not done because it adds
+    # cluster queries to answer a question the operator already answered by
+    # choosing what to put in the list. The failure message says this, because
+    # the person who hits it is reading the report, not this comment.
     if [[ -n "$ENDPOINTS_TO_PROBE" ]]; then
       ENDPOINT_FAILS=()
       ENDPOINT_UNMEASURED=()
@@ -344,7 +364,7 @@ data:
           continue
         fi
         if [[ -z "$PUB_IP" ]]; then
-          ENDPOINT_FAILS+=("${ep_host}=no public DNS record")
+          ENDPOINT_FAILS+=("${ep_host}=no public DNS record (if this name is internal-only it does not belong in DAILY_CHECK_ENDPOINTS, which is a list of names that MUST be reachable from outside)")
           continue
         fi
         if [[ "$PUB_IP" =~ ^(10\.|172\.(1[6-9]|2[0-9]|3[01])\.|192\.168\.) ]]; then

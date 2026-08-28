@@ -43,7 +43,7 @@ No cross-cluster checks. Each cluster is self-contained for operability.
 | 9 | TLS certificates | Any cert <14 days from expiry (warning) |
 | 10 | Warning events | >20 Warning events in last hour (warning) |
 | 11 | Cloudflare tunnel pods | Any not `Running` |
-| 12 | External endpoint probes | Optional; any non-2xx/3xx (if `ENDPOINTS_TO_PROBE` set) |
+| 12 | External endpoint probes | Optional; resolves each name over DoH and probes the **public** address with `curl --resolve`. `fail` if there is no public record or it answers non-2xx/3xx; `skip` if no public resolver is reachable or the record is RFC1918. ⚠️ **External names only** — an internal-only name such as `echo-int.<domain>` correctly has no public record and would be reported broken every day (if `ENDPOINTS_TO_PROBE` set) |
 | 13 | NAS reachability | NFS port 2049 not reachable (if `NAS_SERVER` set) |
 | 14 | Node resource pressure | CPU >80% or Memory >85% (warning) |
 | 15 | Flux GitRepository sources | Any non-`Ready=True` + DiskPressure conditions |
