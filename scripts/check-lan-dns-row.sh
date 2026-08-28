@@ -15,6 +15,12 @@
 # logic. A copy here would drift, and the copy that drifts keeps passing.
 #
 # Usage: scripts/check-lan-dns-row.sh    (exit 0 if every case matches)
+#
+# Run by CI since ferry133/jg-base#32 — the `scripts` job in
+# .github/workflows/flux-local.yaml, gated by `Flux Local Success`.
+# Before that nothing executed it: it had guarded a row that shipped
+# broken twice while never once being run, and an unrun test and a
+# passing test are the same colour on a pull request.
 
 set -euo pipefail
 
@@ -23,7 +29,14 @@ CM="$ROOT/kubernetes/apps/base/monitoring/daily-check/app/configmap.yaml"
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 
-command -v yq >/dev/null || { echo "yq required"; exit 1; }
+command -v yq >/dev/null || {
+  # Loud, not silent — a `|| exit 0` here would turn "I could not measure"
+  # into "passed", which is the exact trade this script exists to refuse.
+  echo "yq required. CI installs it pinned (version + sha256) in the"
+  echo "'scripts' job of .github/workflows/flux-local.yaml; match that"
+  echo "version locally rather than picking one."
+  exit 1
+}
 yq -r '.data."run-check.sh"' "$CM" > "$WORK/run-check.sh"
 
 # Slice out the block under test. Failing to find it must abort, never silently
