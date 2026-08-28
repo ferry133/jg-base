@@ -337,6 +337,19 @@ data:
     # after which it reads exactly like coverage.
     #
     # The list is the declaration of intent, because nothing here can derive it.
+    # It is narrower than "external names", and the extra clause was learned the
+    # first time the rule was actually applied (fleet-ops, 2026-08-29, filling
+    # daily_check_endpoints on jg-jiahd and jcom): a name whose workload is
+    # scaled to zero answers HTTP 503 while being completely valid at the DNS
+    # layer — public A record, Cloudflare-proxied, indistinguishable from a
+    # healthy one until the probe runs. `cc.jiahd.cc` and `cc.janncot.com` were
+    # both in that state. Following "external names only" mechanically would
+    # have put a permanent red on two correctly configured clusters.
+    #
+    # So the list means: reachable from outside AND expected to be serving.
+    # That second half is intent again and equally underivable — a 503 from a
+    # deliberately idled workload and a 503 from a crashed one are the same
+    # response.
     # "Is this endpoint supposed to be reachable from outside" is not a property
     # of the name or of DNS. Both sides were measured on 2026-08-28, and they
     # are the same observation:

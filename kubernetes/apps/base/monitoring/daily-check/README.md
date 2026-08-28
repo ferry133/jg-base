@@ -43,7 +43,7 @@ No cross-cluster checks. Each cluster is self-contained for operability.
 | 9 | TLS certificates | Any cert <14 days from expiry (warning) |
 | 10 | Warning events | >20 Warning events in last hour (warning) |
 | 11 | Cloudflare tunnel pods | Any not `Running` |
-| 12 | External endpoint probes | Optional; resolves each name over DoH and probes the **public** address with `curl --resolve`. `fail` if there is no public record or it answers non-2xx/3xx; `skip` if no public resolver is reachable or the record is RFC1918. ⚠️ **External names only** — an internal-only name such as `echo-int.<domain>` correctly has no public record and would be reported broken every day (if `ENDPOINTS_TO_PROBE` set) |
+| 12 | External endpoint probes | Optional; resolves each name over DoH and probes the **public** address with `curl --resolve`. `fail` if there is no public record or it answers non-2xx/3xx; `skip` if no public resolver is reachable or the record is RFC1918. ⚠️ **External names with a backend you expect to answer** — two ways to get a permanent red from a correctly configured cluster: an internal-only name such as `echo-int.<domain>` has no public record by design, and a name whose workload is scaled to zero answers HTTP 503 (measured 2026-08-29: `cc.jiahd.cc` and `cc.janncot.com`, both fully valid at the DNS layer — public A record, Cloudflare-proxied — and only the probe separates them). Neither is a fault; both would be reported as one (if `ENDPOINTS_TO_PROBE` set) |
 | 13 | NAS reachability | NFS port 2049 not reachable (if `NAS_SERVER` set) |
 | 14 | Node resource pressure | CPU >80% or Memory >85% (warning) |
 | 15 | Flux GitRepository sources | Any non-`Ready=True` + DiskPressure conditions |
