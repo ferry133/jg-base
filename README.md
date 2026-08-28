@@ -485,23 +485,43 @@ orphan and its alarm switched off together. #28 refused `dependsOn: [longhorn]` 
 an alarm that is always on is an alarm nobody reads; this is the mirror defect, an alarm
 that can never go off, and it is worse because the first is at least visible.
 
-What the orphan would then do is **unmeasured, and both answers are bad.** Clearing
-`LONGHORN_BACKUP_TARGET` makes the chart omit `backup-target` from the
-`longhorn-default-resource` ConfigMap, and omitting a key is not the same as setting it
-empty — Longhorn applies default-resource values to settings the user has not
-overridden, so a previously-set target may simply persist. So the orphan either fails
-nightly against an unset target, or keeps writing backups for a cluster that believes it
-stopped. An empty `path` makes the question moot: the Kustomization keeps reconciling,
-its inventory goes empty, Flux prunes the RecurringJob, and the alarm stays armed.
+What the orphan would then do was written here as **unmeasured, with both answers bad.**
+It was measured on jg-jiahd on 2026-08-28, and it is the worse of the two: **clearing the
+target in git does not clear the target in the cluster.** The ConfigMap key goes away and
+`BackupTarget/default` keeps the URL with `available: true`, so a close path built on
+`suspend` would have left the RecurringJob writing to a destination that is still there
+and still writable — going on *succeeding*, quietly backing up a cluster whose operator
+turned backups off in git and watched the commit merge. Not failing. Failing was the
+visible answer, and it was not the real one.
+
+The three measured lines live in `backup-ks.yaml`'s comment, not here — one holder, so
+the two cannot drift apart. (They already did once: #33 updated the manifest and left
+this paragraph claiming the thing was unmeasured.)
+
+That makes the empty `path` right for a stronger reason than the one it was merged on.
+It was chosen to make the question moot; the answer, had anyone asked, was silent
+success. The Kustomization keeps reconciling, its inventory goes empty, Flux prunes the
+RecurringJob, and the alarm stays armed — and the surviving target has nothing left to
+act on it.
 
 A cluster that never turned it on stays on row 1 and is untouched by all of this: an
 object that has never reconciled has no `status.conditions`, so daily-check's check 2
 counts it as neither passing nor failing.
 
 **If a cluster is retired without re-rendering**, the patch never changes and the
-RecurringJob stays. `kubectl delete recurringjob -n longhorn-system daily-backup` is the
-manual close, but the supported path is to clear `longhorn_backup_target` and
+RecurringJob stays. The supported close is to clear `longhorn_backup_target` and
 `task configure` — that is what moves the switch to `disabled`.
+
+⚠️ **`kubectl delete recurringjob -n longhorn-system daily-backup` is not a complete
+manual close**, and this README said it was until the close path was actually run.
+Deleting the job stops the writing; it does not remove the destination.
+`BackupTarget/default` keeps the URL with `available: true` — measured, see
+`backup-ks.yaml` — so the cluster still holds where its backups went and the
+relationship to that share. For a cluster being retired, that is the part that matters.
+**What to do about the surviving CR is not established**: whether to delete it, blank
+its URL, and whether Longhorn simply recreates it, has not been tested. Do not infer a
+command from this paragraph — see the correction on
+[#29](https://github.com/ferry133/jg-base/issues/29).
 
 ### Why the gate is not `${...}` in the path
 
