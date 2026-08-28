@@ -370,7 +370,23 @@ data:
     # ever done it is a NEW check, not an upgrade of this one.
     #
     # The failure message carries the operator-facing half of this, because the
-    # person who hits it is reading the report, not this comment.
+    # person who hits it is reading the report, not this comment. It gives BOTH
+    # readings and says the check cannot separate them — malignant first (the
+    # record is gone, i.e. an outage) and benign second (the name is internal
+    # and should not be in the list).
+    #
+    # Writing only the benign one, which an earlier version did, hands a
+    # reassuring sentence to whoever is looking at a real outage. Narrowing it
+    # instead — only hint "internal-only" when the name NEVER had a public
+    # record — was considered and is not possible: that needs history, and each
+    # run is stateless. A single run sees "no public A record now" and cannot
+    # separate "never had one" from "had one until an hour ago". That is the
+    # same indistinguishability as the intent question above, moved onto the
+    # time axis.
+    #
+    # So the message states its own limit rather than picking a side. Narrowing
+    # would have made it silent in one of the two cases, and silence is the
+    # thing this whole rewrite exists to remove.
     if [[ -n "$ENDPOINTS_TO_PROBE" ]]; then
       ENDPOINT_FAILS=()
       ENDPOINT_UNMEASURED=()
@@ -388,7 +404,7 @@ data:
           continue
         fi
         if [[ -z "$PUB_IP" ]]; then
-          ENDPOINT_FAILS+=("${ep_host}=no public DNS record (if this name is internal-only it does not belong in DAILY_CHECK_ENDPOINTS, which is a list of names that MUST be reachable from outside)")
+          ENDPOINT_FAILS+=("${ep_host}=no public DNS record — either the record is gone (an outage: this name was reachable before) or this name is internal-only and does not belong in DAILY_CHECK_ENDPOINTS. This check cannot tell which; look at the zone")
           continue
         fi
         if [[ "$PUB_IP" =~ ^(10\.|172\.(1[6-9]|2[0-9]|3[01])\.|192\.168\.) ]]; then
