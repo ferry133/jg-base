@@ -264,6 +264,26 @@ jobs:
       # `needs` without this would let it be skipped on main and still leave
       # this check green -- which is #23's defect, re-created by the act of
       # fixing #32.
+      #
+      # ⚠️ NEITHER of these two steps has ever been observed to fire. First
+      # push-path execution was 2026-08-28 (runs 33216543714 / 33216563481):
+      # both evaluated and both came out `skipped`, which is correct because
+      # `test` and `scripts` both succeeded -- but a condition that evaluated
+      # false is not a guard that has been shown to work. They are recorded as
+      # unexercised rather than counted as passing.
+      #
+      # Deliberately NOT manufactured: firing them needs `test` to actually
+      # fail or be skipped on main, i.e. breaking main. Reproducing it on a
+      # fork was offered and declined -- a fork runs a different copy of this
+      # workflow, so what it demonstrates is discounted, and the size of the
+      # discount is not visible in the result. That is the same shape this
+      # whole file exists to remove, so buying confidence that way costs more
+      # than the gap.
+      #
+      # The mechanism itself does have a demonstration: the `pre-job` half of
+      # #25 was reproduced red (run 32645334405) against the same
+      # `needs.*.result` gating. That is evidence for the construct, not for
+      # these two steps.
       - name: Did the script tests actually run on main?
         if: ${{ github.event_name == 'push' && needs.scripts.result != 'success' }}
         run: |
