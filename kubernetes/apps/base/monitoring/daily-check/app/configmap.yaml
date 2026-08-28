@@ -387,6 +387,22 @@ data:
     # So the message states its own limit rather than picking a side. Narrowing
     # would have made it silent in one of the two cases, and silence is the
     # thing this whole rewrite exists to remove.
+    #
+    # ⚠️ STATE OF VERIFICATION, 2026-08-28 (fleet-ops session, on jg-janncotcc,
+    # against the deployed ConfigMap):
+    #
+    #   ok    exercised -- "External endpoints reachable via public DNS"
+    #   fail  exercised -- an internal-only name in the list produced the row
+    #         above and FAIL_COUNT=1, by overriding ENDPOINTS_TO_PROBE only,
+    #         with no change to cluster configuration
+    #   skip  NOT exercised
+    #
+    # The skip branch is the one that most needed it and the one that could not
+    # be reached: forcing it means blocking BOTH DoH providers from the pod,
+    # which is deliberate damage to a live cluster. It is left explicitly
+    # unverified rather than presumed from the other two passing -- if it is
+    # broken, its symptom is reading "could not measure" as something else,
+    # which is the subject of #43 rather than an unrelated risk.
     if [[ -n "$ENDPOINTS_TO_PROBE" ]]; then
       ENDPOINT_FAILS=()
       ENDPOINT_UNMEASURED=()
