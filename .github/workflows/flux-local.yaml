@@ -55,6 +55,7 @@ jobs:
             kubernetes/**
             .github/workflows/flux-local.yaml
             .github/scripts/**
+            scripts/**
 
   test:
     name: Flux Local Test
@@ -79,10 +80,74 @@ jobs:
       - name: Verify no placeholder survived the stub
         run: python3 .github/scripts/stub-secret-data-placeholders.py --check kubernetes
 
-      - name: Run flux-local test
+      # Same class of problem one field over: a ${VAR} in a Kustomization
+      # spec.path is not substituted in dry-run either, and an unresolvable
+      # path aborts collection for the whole run. This is what kept
+      # apps/extras/** out of CI entirely (#37).
+      - name: Stub Flux placeholders in Kustomization spec.path
+        run: python3 .github/scripts/stub-kustomization-path-vars.py kubernetes
+
+      - name: Verify no path placeholder survived the stub
+        run: python3 .github/scripts/stub-kustomization-path-vars.py --check kubernetes
+
+      - name: Run flux-local test (base)
         uses: docker://ghcr.io/allenporter/flux-local:v8.1.0
         with:
           args: test --enable-helm --all-namespaces --path /github/workspace/kubernetes/flux/cluster -v
+
+      # apps/extras/** is unreachable from the cluster entry point by design —
+      # extras are selected by each per-user repo, not by this one — so the run
+      # above walks base/ only and reported success on PRs that changed nothing
+      # but extras (#37, measured on PR #30). Pointing flux-local straight at
+      # the directory makes it collect every extras Kustomization it finds, so
+      # there is no second list of "which extras exist" to drift.
+      #
+      # Verified locally before landing: 20 Kustomizations collected, factory /
+      # omni / freepbx / linebot / postgres / synophoto / homebridge / mariadb /
+      # mqtt / trello-notifier / ingress-nginx / cloudflare-tunnel-lan all
+      # present, HelmReleases rendered. And it can fail — a bad resource ref in
+      # extras/factory exits 4, not 0.
+      - name: Run flux-local test (extras)
+        uses: docker://ghcr.io/allenporter/flux-local:v8.1.0
+        with:
+          args: test --enable-helm --all-namespaces --path /github/workspace/kubernetes/apps/extras -v
+
+  scripts:
+    name: Repo Script Tests
+    needs: pre-job
+    runs-on: ubuntu-latest
+    # Same `!cancelled()` reasoning as `test` above: pre-job is skipped on
+    # push, and a dependant of a skipped job is skipped by default.
+    if: ${{ !cancelled() && (github.event_name == 'push' || needs.pre-job.outputs.any_changed == 'true') }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      # `scripts/check-lan-dns-row.sh` needs yq, and this repo declares no
+      # toolchain at all — no .mise.toml, no .tool-versions, no Taskfile. The
+      # script's own `command -v yq || exit 1` was correct and unheard, because
+      # nothing ran it (#32).
+      #
+      # Pinned by version AND digest. A version alone is a name, and the thing
+      # this repo keeps relearning is that a name is not an instance.
+      - name: Install yq
+        env:
+          YQ_VERSION: v4.48.1
+          YQ_SHA256: 99df6047f5b577a9d25f969f7c3823ada3488de2e2115b30a0abb10d9324fd9f
+        run: |
+          set -euo pipefail
+          curl -fsSL -o /tmp/yq \
+            "https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/yq_linux_amd64"
+          echo "${YQ_SHA256}  /tmp/yq" | sha256sum -c -
+          sudo install -m 0755 /tmp/yq /usr/local/bin/yq
+          yq --version
+
+      # The repo's only behavioural regression test for a daily-check row, and
+      # until now nothing executed it. The row it guards has shipped broken
+      # twice (#16, #18); a test nobody runs and a test that passes are the
+      # same colour on this page.
+      - name: daily-check LAN DNS row
+        run: bash scripts/check-lan-dns-row.sh
 
   diff:
     name: Flux Local Diff
@@ -170,7 +235,7 @@ jobs:
     # whole run went red either way, but branch protection gates on this check,
     # not on the run. On push pre-job is `skipped`, not `failure`, so this does
     # not affect main.
-    needs: ["pre-job", "test", "diff"]
+    needs: ["pre-job", "test", "diff", "scripts"]
     runs-on: ubuntu-latest
     if: ${{ always() }}
     steps:
@@ -187,6 +252,16 @@ jobs:
         if: ${{ github.event_name == 'push' && needs.test.result != 'success' }}
         run: |
           echo "::error::Flux Local Test did not run on main (result: ${{ needs.test.result }})"
+          exit 1
+
+      # `scripts` gets the same treatment for the same reason. Adding a job to
+      # `needs` without this would let it be skipped on main and still leave
+      # this check green -- which is #23's defect, re-created by the act of
+      # fixing #32.
+      - name: Did the script tests actually run on main?
+        if: ${{ github.event_name == 'push' && needs.scripts.result != 'success' }}
+        run: |
+          echo "::error::Repo Script Tests did not run on main (result: ${{ needs.scripts.result }})"
           exit 1
 
       - name: All jobs passed or skipped?
