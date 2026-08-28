@@ -591,7 +591,38 @@ data:
           if [[ "$LAN_ANS" =~ ^(10\.|172\.(1[6-9]|2[0-9]|3[01])\.|192\.168\.) ]]; then
             record ok "LAN resolves internal names (${LAN_ANS})"
           elif [[ -z "$LAN_ANS" ]]; then
-            record fail "LAN cannot resolve internal names" "${INTERNAL_NAME} did not resolve through this node's ordinary resolution path, so a client on this LAN cannot reach anything by name either. The cluster itself may be entirely healthy — start at fleet-ops docs/operations/router-dns.md"
+            # warn and not fail (ferry133, 2026-08-28, ferry133/jg-base#41):
+            # "if cannot get internal.<domain>'s IP, just clear alarm this issue
+            # which might be related to DNS setting. Do not alarm the cluster
+            # failure."
+            #
+            # This is the third check in this file to reach that conclusion, and
+            # the other two both named THIS one as the counterexample: check 16
+            # ("a permanently red row, which is the failure mode check 18
+            # already documents") and check 21 ("that is exactly #6: check 18
+            # FAILs every day under the shipping DNS default"). Only FAIL_COUNT
+            # gates the dead-man ping at the end of this script, so `fail` here
+            # pings /fail and healthchecks.io shows the whole cluster Down.
+            #
+            # The old message already said "the cluster itself may be entirely
+            # healthy" while recording `fail`, which pinged /fail and said the
+            # opposite. The level, not the prose, is what the dashboard reads.
+            #
+            # There is also a limit on what this probe can support. INTERNAL_NAME
+            # is served by k8s-gateway and only reaches a node if the LAN router
+            # forwards ${SECRET_DOMAIN} to it — a router-side provisioning step
+            # outside this cluster. An empty answer therefore cannot separate
+            # "that step was never done" from "it was done and broke": both are
+            # NXDOMAIN, byte for byte. `fail` asserted the second on evidence
+            # that cannot distinguish it from the first.
+            #
+            # Why this became urgent rather than staying theoretical:
+            # jg-cluster-template#29 changed node_dns_servers to default to
+            # node_default_gateway, which is always private, so NODE_DNS_PATH
+            # now derives to `lan` where it used to derive to `public`. #6 was
+            # survived by not probing at all; that shelter is gone, and the
+            # structural fix was never made. This is it.
+            record warn "LAN cannot resolve internal names" "${INTERNAL_NAME} did not resolve through this node's ordinary resolution path, so a client on this LAN cannot reach anything by name either. This is a LAN DNS provisioning fact, not a statement about this cluster — the cluster may be entirely healthy, and it is deliberately not counted as a cluster failure. Start at fleet-ops docs/operations/router-dns.md"
           else
             record warn "LAN resolves internal names to an unexpected address" "${INTERNAL_NAME} resolved to ${LAN_ANS}, which is not an address on this LAN"
           fi
