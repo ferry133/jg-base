@@ -64,23 +64,46 @@ and the failure mode is the worst one available: the token exists, looks
 correct, and does nothing — silently, in a Secret, until the first real
 provisioning run, at a customer site, under time pressure.
 
-**One argument decides this without needing the API tested.** The issue that
-raised it noted, honestly, that nobody had actually watched Cloudflare reject an
-operator token against a customer zone. That test is not needed, because even if
-cross-account access *were* obtainable — by adding the company as a member of
-the customer's account — **handover is obliged to remove every company-added
-account member**. A credential the handover procedure must revoke is not a
-credential factory can hold for the life of a cluster. It fails by design rather
-than by permission, and permission is the only half the untested question
-covers.
+**One argument decides this without needing the API tested — and it is not the
+first one this file reached for.** The issue that raised it noted, honestly, that
+nobody had watched Cloudflare reject an operator token against a customer zone.
 
-That obligation is not inferred here: it is item 3 of the revocation list in
-`fleet-ops openspec/changes/factory-agent/tasks.md` 6.4, which already required
-removing every company-added account member and rescue address at handover
-(confirmed by the fleet-ops session holding that file, 2026-08-28). The argument
-therefore rests on a written requirement rather than on this file's reading of
-one — worth stating, because an argument that stands in for a measurement should
-be at least as checkable as the measurement would have been.
+The reason that stands is that **the credential cannot be singular, and the
+Secret has one field.**
+
+`cloudflare_token` — the one external-dns and cert-manager's DNS-01 use — lives
+in each customer's *own* cluster: one per cluster, issued when it is built,
+gone when it is handed over. factory is a single workload on jcom serving every
+customer, so under D11 it would need **one token per customer account, held
+simultaneously**, plus somewhere to keep them apart and a rule for which one
+applies to which delivery. `cloudflareApiToken` is a scalar. That single field
+*is* the dead premise, written down: it can only be right if one credential
+reaches every customer zone, which is exactly what stopped being true.
+
+This survives the open question below. Even if a customer issues a token scoped
+to their own zone and hands it over, factory needs N of them and a per-customer
+store — so the field as designed is wrong either way, and the decision does not
+depend on which way that question goes.
+
+### The argument this replaced, and why it was wrong
+
+An earlier version of this section argued: handover is obliged to remove every
+company-added account member (`fleet-ops openspec/changes/factory-agent/tasks.md`
+6.4, item 3), so a credential handover must revoke cannot be one factory holds
+for the life of a cluster.
+
+**That property does not discriminate.** `fleet-ops docs/operations/handover-inventory.md`
+carries `cloudflare_token` with the instruction to revoke it and not hand it
+over — it is *also* a Cloudflare credential handover must revoke, and it exists,
+is held, and is correct. A test that both the kept and the removed credential
+pass is not a test. It was also blind to the open path below, which needs no
+account membership at all and so falls outside 6.4 entirely.
+
+Caught by the fleet-ops session that raised #44, on review. Recorded rather than
+quietly swapped, because the removal is the same either way and **a decision
+resting on a reason that can be knocked down gets overturned the day someone
+knocks it down — and whoever overturns it will have only this paragraph to go
+on.**
 
 That also settles the origin-cert row above, in the same direction and harder:
 `cloudflared tunnel login` is a browser session, and it now has to happen *in
