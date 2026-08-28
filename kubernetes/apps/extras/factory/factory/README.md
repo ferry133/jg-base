@@ -68,11 +68,19 @@ provisioning run, at a customer site, under time pressure.
 raised it noted, honestly, that nobody had actually watched Cloudflare reject an
 operator token against a customer zone. That test is not needed, because even if
 cross-account access *were* obtainable — by adding the company as a member of
-the customer's account — **handover requires removing every company-added member
-from it**. A credential that the handover procedure is obliged to revoke is not
-a credential factory can hold for the life of a cluster. It fails by design
-rather than by permission, and permission is the only half the untested question
+the customer's account — **handover is obliged to remove every company-added
+account member**. A credential the handover procedure must revoke is not a
+credential factory can hold for the life of a cluster. It fails by design rather
+than by permission, and permission is the only half the untested question
 covers.
+
+That obligation is not inferred here: it is item 3 of the revocation list in
+`fleet-ops openspec/changes/factory-agent/tasks.md` 6.4, which already required
+removing every company-added account member and rescue address at handover
+(confirmed by the fleet-ops session holding that file, 2026-08-28). The argument
+therefore rests on a written requirement rather than on this file's reading of
+one — worth stating, because an argument that stands in for a measurement should
+be at least as checkable as the measurement would have been.
 
 That also settles the origin-cert row above, in the same direction and harder:
 `cloudflared tunnel login` is a browser session, and it now has to happen *in
