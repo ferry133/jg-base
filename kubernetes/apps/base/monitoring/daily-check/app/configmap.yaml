@@ -232,7 +232,13 @@ data:
         record fail "Postgres backup" "Last job status: ${LAST_STATUS}, time: ${LAST_TIME}"
       fi
     else
-      record ok "Postgres backup (CronJob not deployed)"
+      # skip, not ok (#43). "There is no CronJob here" is an absence of
+      # measurement, and a ✅ against a line reading "backup" is read as
+      # "backups are fine". The data may well be covered by offsite-backup —
+      # another row says so — but this row cannot see that, and a check that
+      # renders identically whether or not it looked is the thing this report
+      # exists not to do.
+      record skip "Postgres backup" "no backup CronJob is deployed here, so this row measured nothing — it is not a statement that the data is unprotected, nor that it is protected"
     fi
 
     # 7. Postgres pod
@@ -279,21 +285,145 @@ data:
       record fail "Cloudflare tunnel pods" "$(echo "$TUNNEL_BAD" | tr '\n' '; ')"
     fi
 
-    # 11. HTTPS endpoint probes
+    # 11. External endpoint reachability (ferry133/jg-base#43).
+    #
+    # This check used to `curl "$url"` straight from the pod, and on every
+    # cluster here that measures the wrong thing. k8s-gateway serves split DNS,
+    # so an external name resolves to the LAN address of envoy-internal and the
+    # probe reaches the internal gateway. Measured 2026-08-28 on an appliance
+    # cluster: this row was `✅ External endpoints OK`, FAIL_COUNT=0, while an
+    # off-site vantage got FAILED / HTTP 000 for the same names — that zone had
+    # no public A record at all. **Not reachable from anywhere outside, and
+    # this check was green.**
+    #
+    # It also stayed green after the zone was fixed, so its two states are
+    # indistinguishable: it has never carried information about the thing its
+    # name claims.
+    #
+    # The fix is to resolve the name the way the outside world does and then
+    # force the connection to that address:
+    #
+    #   1. Resolve over DoH. **HTTPS on 443, not UDP/53** — a LAN router that
+    #      transparently redirects all outbound :53 makes `dig @1.1.1.1` answer
+    #      from the router while looking like a public query, which is the trap
+    #      the factory README documents and the one #43 hit on a workstation.
+    #      Naming a public resolver is not the same as reaching one.
+    #   2. `curl --resolve host:443:<public-ip>`, which bypasses the pod
+    #      resolver entirely, so the request follows public DNS → Cloudflare
+    #      edge → tunnel rather than the LAN shortcut.
+    #
+    # THREE outcomes, not two, because "I could not measure this" is a distinct
+    # answer and a two-outcome check files it under `ok`:
+    #
+    #   fail  - resolves nowhere publicly, or the public path answers non-2xx/3xx
+    #   skip  - no public resolver reachable, or the public record is RFC1918
+    #   ok    - a public address answered
+    #
+    # NXDOMAIN is confirmed against a SECOND resolver before it counts as a
+    # failure: one resolver having a bad moment must not mark a healthy cluster
+    # down. An address from either is enough to proceed.
+    #
+    # Honest boundary: this still runs inside the cluster, so it proves the
+    # public name and the edge answer, not that an arbitrary internet client
+    # gets through. It is strictly more than before — it can now be red — but a
+    # true outside vantage is still the only thing that measures the whole path.
+    #
+    # ⚠️ ENDPOINTS_TO_PROBE is by definition a list of names that MUST be
+    # reachable from OUTSIDE. An internal-only name belongs in no part of it:
+    # `echo-int.<domain>` is published on envoy-internal and correctly has no
+    # public A record, so this check would call a correctly configured cluster
+    # broken every morning. That is the mirror of the defect this rewrite fixes
+    # — not a false green but a **false red**, and a false red gets silenced,
+    # after which it reads exactly like coverage.
+    #
+    # The list is the declaration of intent, because nothing here can derive it.
+    # "Is this endpoint supposed to be reachable from outside" is not a property
+    # of the name or of DNS. Both sides were measured on 2026-08-28, and they
+    # are the same observation:
+    #
+    #   im.janncot.cc      during the outage (SHOULD be external)
+    #                        -> no public A record, resolves inside the cluster
+    #   echo-int.janncot.cc deliberately internal
+    #                        -> no public A record, resolves inside the cluster
+    #
+    # So anything keying on the name or on DNS is guessing intent. The two wrong
+    # guesses do not cost the same: guessing "internal, so skip" turns a real
+    # outage silent, guessing "external, so fail" is merely noisy. **When it is
+    # genuinely unclear whether to alarm, alarming is the safe side** — the
+    # inverse of the rule check 18 follows, and not in tension with it, because
+    # there the level was asserting something the probe could not support.
+    #
+    # Considered and not taken: reading the HTTPRoute's parentRef to see which
+    # gateway serves the hostname. Not because it costs a cluster query —
+    # that reason falls over the moment someone points out operators mistype
+    # lists, which they do. It is not taken because **it answers a different
+    # question**:
+    #
+    #   "is this external endpoint reachable from outside?"   <- this check
+    #   "does the endpoint list agree with the routing?"      <- parentRef
+    #
+    # The second is worth checking on its own (a list naming echo-int while its
+    # HTTPRoute sits on envoy-internal is a real contradiction). Folded in here,
+    # a red row would no longer say which of the two failed — which is exactly
+    # the mistake #43's own acceptance condition made by combining "can the
+    # logic go red" with "does it behave in a real container". If parentRef is
+    # ever done it is a NEW check, not an upgrade of this one.
+    #
+    # The failure message carries the operator-facing half of this, because the
+    # person who hits it is reading the report, not this comment. It gives BOTH
+    # readings and says the check cannot separate them — malignant first (the
+    # record is gone, i.e. an outage) and benign second (the name is internal
+    # and should not be in the list).
+    #
+    # Writing only the benign one, which an earlier version did, hands a
+    # reassuring sentence to whoever is looking at a real outage. Narrowing it
+    # instead — only hint "internal-only" when the name NEVER had a public
+    # record — was considered and is not possible: that needs history, and each
+    # run is stateless. A single run sees "no public A record now" and cannot
+    # separate "never had one" from "had one until an hour ago". That is the
+    # same indistinguishability as the intent question above, moved onto the
+    # time axis.
+    #
+    # So the message states its own limit rather than picking a side. Narrowing
+    # would have made it silent in one of the two cases, and silence is the
+    # thing this whole rewrite exists to remove.
     if [[ -n "$ENDPOINTS_TO_PROBE" ]]; then
       ENDPOINT_FAILS=()
+      ENDPOINT_UNMEASURED=()
       for url in $ENDPOINTS_TO_PROBE; do
-        code=$(curl -ksI -o /dev/null -w '%{http_code}' --max-time 10 "$url" || echo "000")
+        ep_host="${url#*://}"; ep_host="${ep_host%%/*}"; ep_host="${ep_host%%:*}"
+        PUB_IP=""; DOH_REACHED=0
+        for doh in "https://cloudflare-dns.com/dns-query" "https://dns.google/resolve"; do
+          doh_ans=$(curl -fsS -m 10 -H 'accept: application/dns-json' "${doh}?name=${ep_host}&type=A" 2>/dev/null) || continue
+          DOH_REACHED=1
+          PUB_IP=$(echo "$doh_ans" | jq -r '[(.Answer // [])[] | select(.type == 1) | .data] | first // empty' 2>/dev/null)
+          [[ -n "$PUB_IP" ]] && break
+        done
+        if [[ $DOH_REACHED -eq 0 ]]; then
+          ENDPOINT_UNMEASURED+=("${ep_host}=no public resolver reachable")
+          continue
+        fi
+        if [[ -z "$PUB_IP" ]]; then
+          ENDPOINT_FAILS+=("${ep_host}=no public DNS record — either the record is gone (an outage: this name was reachable before) or this name is internal-only and does not belong in DAILY_CHECK_ENDPOINTS. This check cannot tell which; look at the zone")
+          continue
+        fi
+        if [[ "$PUB_IP" =~ ^(10\.|172\.(1[6-9]|2[0-9]|3[01])\.|192\.168\.) ]]; then
+          ENDPOINT_UNMEASURED+=("${ep_host}=public record is private (${PUB_IP}), unreachable from outside by design")
+          continue
+        fi
+        code=$(curl -ksI -o /dev/null -w '%{http_code}' --max-time 10 --resolve "${ep_host}:443:${PUB_IP}" "$url" || echo "000")
         if [[ "$code" =~ ^(2|3) ]]; then
-          : # OK
+          : # reachable over the public path
         else
-          ENDPOINT_FAILS+=("$url=$code")
+          ENDPOINT_FAILS+=("$url=$code via ${PUB_IP}")
         fi
       done
-      if [[ ${#ENDPOINT_FAILS[@]} -eq 0 ]]; then
-        record ok "External endpoints OK"
+      if [[ ${#ENDPOINT_FAILS[@]} -gt 0 ]]; then
+        record fail "External endpoints unreachable from outside" "$(printf '%s; ' "${ENDPOINT_FAILS[@]}")"
+      elif [[ ${#ENDPOINT_UNMEASURED[@]} -gt 0 ]]; then
+        record skip "External endpoints" "$(printf '%s; ' "${ENDPOINT_UNMEASURED[@]}")this row cannot claim external reachability, and saying so is not the same as saying it is fine"
       else
-        record fail "External endpoints" "$(printf '%s; ' "${ENDPOINT_FAILS[@]}")"
+        record ok "External endpoints reachable via public DNS"
       fi
     fi
 
