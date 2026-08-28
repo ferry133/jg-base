@@ -35,10 +35,71 @@ None of these is in this repo; this is the inventory, not the store.
 |---|---|---|---|---|
 | **Omni Admin service account** | Create clusters, join machines, issue per-cluster kubeconfig | Every cluster Omni manages, present and future | Full control of the entire managed fleet, including clusters not yet built. The worst single item here | `omnictl serviceaccount renew` / recreate; update the Secret and restart factory |
 | **GitHub PAT** | Create and populate each customer's private cluster repo | Every repo the token's account can reach | Write access to cluster manifests fleet-wide — a repo write is a deploy, on a 1h Flux interval, with no review gate | Revoke and reissue in GitHub; prefer a fine-grained token scoped to the repos it must create |
-| **Cloudflare parent-account token** | DNS records and Tunnel credentials for each customer zone | The operator's Cloudflare account, which holds every customer zone | DNS for every customer domain: traffic redirection, certificate issuance via DNS-01, and tunnel takeover | Roll the token in the Cloudflare dashboard; scope to `Zone - DNS - Edit` plus `Account - Cloudflare Tunnel - **Edit**` — see below, this row said `Read` and was wrong |
-| **Cloudflare origin cert** (`~/.cloudflared/cert.pem`) — **not held by factory, and that is the open question, not the answer** | Creating a tunnel. Produced by `cloudflared tunnel login`, i.e. a browser session, not an API call | The Cloudflare account whose browser session signed it — *which is not necessarily the account the zone is in* | Same as the token row, plus one failure the token cannot cause: the tunnel is created in whichever account the cert belongs to | Re-run `cloudflared tunnel login`. ferry133 has ruled the procedure moves to `POST /accounts/{id}/cfd_tunnel`, which removes this credential and makes the account id an explicit argument — **ruled, not yet verified** |
+| ~~**Cloudflare parent-account token**~~ — **not held, by decision (2026-08-28)** | It was to write DNS records and tunnel credentials for each customer zone | — | — | Nothing to rotate. The row's premise died with D11; see *The Cloudflare credential is gone* below |
+| **Cloudflare origin cert** (`~/.cloudflared/cert.pem`) — **not held, and now structurally cannot be** | Creating a tunnel. Produced by `cloudflared tunnel login`, i.e. a browser session, not an API call | The Cloudflare account whose browser session signed it | The tunnel is created in whichever account the cert belongs to — this has already caused an outage, see below | Re-run `cloudflared tunnel login` **in the customer's account**. That is a person at a browser, in an account the company does not own; it is not a credential factory can be given |
 
-### The Cloudflare row said `Read`, and every token issued from it could not build a tunnel
+### The Cloudflare credential is gone, because its premise was
+
+That row used to read *"the operator's Cloudflare account, **which holds every
+customer zone**"*. **It does not, and the whole row was built on that clause.**
+
+**Decided** (D11, ferry133, 2026-08-25): each customer's Cloudflare account is
+registered under the customer's own Google identity. The company operates it;
+it does not own it.
+
+**Measured** (2026-08-28, and re-measured here from public data rather than
+taken on report — Cloudflare DoH and Google DoH agree):
+
+| Zone | Authoritative NS |
+|---|---|
+| `janncot.cc` (a D11-shaped customer) | `beth` / `hans`.ns.cloudflare.com |
+| `jiahd.cc` (operator's own) | `rajeev` / `shubhi`.ns.cloudflare.com |
+
+Cloudflare assigns an NS pair per account. **Two different pairs is two
+different accounts**, which matches the differing `AccountTag` in the two
+clusters' tunnel credentials.
+
+So a token issued from the operator account **cannot touch a customer's zone**,
+and the failure mode is the worst one available: the token exists, looks
+correct, and does nothing — silently, in a Secret, until the first real
+provisioning run, at a customer site, under time pressure.
+
+**One argument decides this without needing the API tested.** The issue that
+raised it noted, honestly, that nobody had actually watched Cloudflare reject an
+operator token against a customer zone. That test is not needed, because even if
+cross-account access *were* obtainable — by adding the company as a member of
+the customer's account — **handover requires removing every company-added member
+from it**. A credential that the handover procedure is obliged to revoke is not
+a credential factory can hold for the life of a cluster. It fails by design
+rather than by permission, and permission is the only half the untested question
+covers.
+
+That also settles the origin-cert row above, in the same direction and harder:
+`cloudflared tunnel login` is a browser session, and it now has to happen *in
+the customer's account*. There is no shape of that which is a secret factory can
+be handed.
+
+**So: factory holds no Cloudflare credential.** The account-level work — zone
+registration, tunnel creation — is a person's, which `factory-agent` 7.3 already
+recorded from the other side: those runbook steps are ones an agent cannot do
+*by design*, because automating them would mean holding the customer's account.
+
+#### What is genuinely open, recorded so the absence stays a decision
+
+A customer could issue a token scoped to their own zone and hand it to the
+company. That path is **unexplored**: nobody has decided who would hold such a
+token, whether it survives handover, or whether it is any better than a person
+doing the step. It is written here rather than omitted for the reason this whole
+file exists — **a considered exclusion and an oversight look identical from
+outside**, and the next person to want Cloudflare automation should land on this
+paragraph rather than on a gap.
+
+### Historical: the Cloudflare row said `Read`, and every token issued from it could not build a tunnel
+
+> Kept because the *method* generalises, not because the row still exists. The
+> credential this describes was removed above; what survives is the shape of the
+> measurement — one variable changed, everything else held.
+
 
 Corrected 2026-08-26. `Read` is enough to *list* tunnels and not to *create*
 one, and the difference was measured rather than argued (2026-08-23, against
@@ -191,7 +252,7 @@ later:
 | Omni service account | `omniServiceAccountKey` | `env[].valueFrom.secretKeyRef` | `OMNI_SERVICE_ACCOUNT_KEY` |
 | Omni endpoint | `omniEndpoint` | `env[].valueFrom.secretKeyRef` | `OMNI_ENDPOINT` |
 | GitHub provisioning token | `githubToken` | `env[].valueFrom.secretKeyRef` | `GH_TOKEN` |
-| Cloudflare token | `cloudflareApiToken` | `env[].valueFrom.secretKeyRef` | `CLOUDFLARE_API_TOKEN` **and** `CF_TOKEN` (one value, two names — fleet-ops's probe reads the second; collapse when that runbook picks one) |
+| ~~Cloudflare token~~ | — | **not mounted** | removed 2026-08-28; the container has no `CLOUDFLARE_API_TOKEN` and no `CF_TOKEN` |
 | fleet-ops read-only deploy key | `fleetOpsDeployKey` (b64 in `data:`) | `volumes[].secret`, `subPath`, mode `0400` | `/home/claude/.ssh/fleet-ops`, reached via `GIT_SSH_COMMAND` |
 
 All on the **`app` container only**. `oauth2-proxy` holds the three
@@ -226,7 +287,6 @@ material is in this repo. The variables are:
 | `FACTORY_OMNI_ENDPOINT` | override only; defaults to the in-cluster path |
 | `FACTORY_GITHUB_TOKEN` | fine-grained PAT for creating customer repos |
 | `FACTORY_FLEET_OPS_DEPLOY_KEY_B64` | base64 of the read-only deploy key |
-| `FACTORY_CLOUDFLARE_TOKEN` | scoped token, `Zone:DNS:Edit` + `Tunnel:Edit` |
 
 ⚠️ **None of these is declared in `jg-cluster-template` yet** — no
 `cluster.schema.cue` field, no line in `cluster-secrets.sops.yaml.j2` — so every
