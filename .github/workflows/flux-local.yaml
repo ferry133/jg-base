@@ -149,6 +149,12 @@ jobs:
       - name: daily-check LAN DNS row
         run: bash scripts/check-lan-dns-row.sh
 
+      # #43: this row was green on a cluster nothing outside could reach. The
+      # `no public record -> fail` case below is the one that used to render
+      # as a pass, so it is the case that has to keep failing.
+      - name: daily-check external endpoint row
+        run: bash scripts/check-external-endpoint-row.sh
+
   diff:
     name: Flux Local Diff
     needs: pre-job
