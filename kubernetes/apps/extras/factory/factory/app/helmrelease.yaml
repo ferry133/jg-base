@@ -124,19 +124,11 @@ spec:
                   secretKeyRef:
                     name: factory-credentials
                     key: githubToken
-              CLOUDFLARE_API_TOKEN:
-                valueFrom:
-                  secretKeyRef:
-                    name: factory-credentials
-                    key: cloudflareApiToken
-              # Same key, second name — fleet-ops's tunnel probe reads
-              # CF_TOKEN. See the note in ../credentials-secret.yaml; this
-              # collapses to one name once that runbook picks one.
-              CF_TOKEN:
-                valueFrom:
-                  secretKeyRef:
-                    name: factory-credentials
-                    key: cloudflareApiToken
+              # No CLOUDFLARE_API_TOKEN and no CF_TOKEN (#44). Both used to
+              # point at one key in factory-credentials; that key is gone,
+              # because an operator-account token cannot reach a customer's
+              # Cloudflare zone under D11 and a credential handover must revoke
+              # is not one this pod can hold. Reason in ../credentials-secret.yaml.
               # Points git at the fleet-ops deploy key mounted below.
               # `IdentitiesOnly=yes` because without it ssh offers every
               # identity it can find and GitHub answers with whichever account
