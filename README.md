@@ -547,14 +547,13 @@ can date it.
 
 ### Still not verified
 
-- **That a backup succeeds after the close/reopen cycle.** jg-jiahd was taken through
-  off→on on 2026-08-28 (#33). The RecurringJob came back, but at the time of writing no
-  backup has been created since — `executionCount: 0`, `CronJob.lastScheduleTime:
-  <none>`, next fire 2026-08-28 18:00 UTC. Tracked in
-  [jg-jiahd#3](https://github.com/ferry133/jg-jiahd/issues/3). **The two backups that do
-  exist predate the reopen**, and they look exactly like an answer: `Completed`, on the
-  cron, newest-first. Using them would be proving the reopen worked with state from
-  before it.
+- ~~That a backup succeeds after the close/reopen cycle.~~ **Verified 2026-08-29**
+  ([jg-jiahd#3](https://github.com/ferry133/jg-jiahd/issues/3), closed): the scheduled
+  job fired at `2026-08-28T18:00:06Z`, `executionCount` went `0`→`1`,
+  `lastScheduleTime` `<none>`→`18:00:00Z`, and 77 blocks totalling 15.6M landed on the
+  NAS with the `.cfg` mtime supplied by the filesystem rather than by Longhorn. The
+  timezone mapping this file records was independently observed there — a second
+  cluster, not a second citation of the same measurement.
 - **Whether a running Longhorn needs a manager restart to pick up a new target.** A
   backup was produced after the target was set, so it *was* picked up; nobody recorded
   whether longhorn-manager restarted in between, so the restart question itself is
@@ -563,9 +562,20 @@ can date it.
   close. Deleting it, blanking its URL, and whether Longhorn recreates it are all
   untested — see the correction on
   [#29](https://github.com/ferry133/jg-base/issues/29).
-- **One unexplained backup.** A backup at `06:06:08Z` on jg-jiahd is not on the cron and
-  has no established cause. Recorded because an anomaly nobody writes down is
-  indistinguishable from one that did not happen.
+- **`retain: 7` has never been exercised.** jg-jiahd holds three backups, so nothing has
+  ever been pruned by it. The field exists and is applied; whether it *retains* is
+  untested, and "declared" and "works" are the distinction this whole section is about.
+- **One unexplained backup, now narrower.** A backup at `06:06:08Z` on jg-jiahd is not on
+  the cron and has no established cause. What is now known: **it was not produced by this
+  RecurringJob** — `executionCount` is 1 after the single scheduled run, and would be 2 if
+  that job had also made the 06:06 one.
+
+  That inference exists only because an acceptance criterion was written to demand
+  `executionCount` as a second, independent source, and was not relaxed when the first
+  source alone already looked conclusive. Had it been relaxed, the number would never
+  have been read at all. Recorded because an anomaly nobody writes down is
+  indistinguishable from one that did not happen — and because what narrowed it is worth
+  keeping next to it.
 
 ## CI: `flux-local` and Secret `data:` placeholders
 
