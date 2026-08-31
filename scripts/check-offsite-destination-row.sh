@@ -57,6 +57,7 @@ PY
 
 bash -n "$WORK/run-check.sh" || { echo "run-check.sh does not parse"; exit 1; }
 
+mkdir -p "$WORK/nobin"  # an empty PATH for the "aws is not installed" case
 NOW=1767225600          # fixed "now" so ages are arithmetic, not wall-clock
 FAILED=0
 declare -A SEEN_LEVEL=()
@@ -64,6 +65,10 @@ declare -A SEEN_LEVEL=()
 # $1=case label  $2=aws mode  $3=object age in hours (or "-")  $4=expected prefix
 run() {
   local label="$1" mode="$2" age="$3" want="$4"
+  # Captured BEFORE the case block: the noaws case rewrites PATH, and saving it
+  # afterwards saved the broken one — every later case then inherited it and hit
+  # `mktemp: command not found`. Found by reading the stderr, not the PASS column.
+  local saved_path="$PATH"
   OUT=""
   CLUSTER_NAME="demo"
   BACKUP_R2_BUCKET="demo-backup"
@@ -87,12 +92,20 @@ run() {
     denied)    aws() { echo "An error occurred (AccessDenied) when calling the ListObjectsV2 operation" >&2; return 1; } ;;
     nocreds)   aws() { printf '{}\n'; }; BACKUP_R2_SECRET_ACCESS_KEY="" ;;
     noendpoint) aws() { printf '{}\n'; }; BACKUP_R2_ENDPOINT="" ;;
-    noaws)     : ;;   # deliberately no function -> command -v aws fails
+    noaws)     # Not merely "define no function": the GitHub runner ships a real
+               # aws, so `command -v aws` succeeded there and this case fell into
+               # the list-failure branch instead — which is ALSO skip, so asserting
+               # the level alone passed it for the wrong reason (caught 2026-08-31
+               # by diffing local output against CI). An empty PATH is what actually
+               # removes the binary; the guard is the first statement in the block,
+               # so nothing external is needed before it fires.
+               PATH="$WORK/nobin" ;;
     unset)     aws() { printf '{}\n'; }; BACKUP_R2_BUCKET="" ;;
   esac
 
   # shellcheck disable=SC1091
   source "$WORK/block.sh"
+  PATH="$saved_path"
   unset -f aws date epoch_of record 2>/dev/null || true
 
   local got="${OUT:-<no row>}"
@@ -121,7 +134,7 @@ run endpoint-offline offline    -   "[skip]"
 run access-denied    denied     -   "[skip]"
 run creds-unset      nocreds    -   "[skip]"
 run endpoint-unset   noendpoint -   "[skip]"
-run aws-missing      noaws      -   "[skip]"
+run aws-missing      noaws      -   "[skip] Off-site backup destination — aws CLI is not installed"
 
 # Readable, but the timestamp means nothing. Said as unknown rather than guessed
 # in either direction: low invents a healthy backup, high invents an outage.
