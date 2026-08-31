@@ -48,7 +48,10 @@ data:
     ENDPOINTS_TO_PROBE="${ENDPOINTS_TO_PROBE:-}"
 
     echo "==> Installing tools"
-    apk add --no-cache --quiet bash curl jq msmtp ca-certificates bind-tools openssl coreutils >/dev/null
+    # aws-cli is for check 21 only (reading the backup destination back).
+    # Proven on this image: base/monitoring/backup installs the same package
+    # on the same alpine:3.20 and uploads with it every night.
+    apk add --no-cache --quiet bash curl jq msmtp ca-certificates bind-tools openssl coreutils aws-cli >/dev/null
     K8S_VERSION=$(curl -fsSL https://dl.k8s.io/release/stable.txt)
     curl -fsSL "https://dl.k8s.io/release/${K8S_VERSION}/bin/linux/amd64/kubectl" -o /usr/local/bin/kubectl
     chmod +x /usr/local/bin/kubectl
@@ -928,7 +931,98 @@ data:
       fi
     fi
 
-    # 21. Stalled provisioning tickets (factory-agent 3.8).
+    # 21. Off-site backup destination — is the archive actually THERE.
+    #
+    # 19 and 20 are both source-side: 19 reads the upload Job's completionTime,
+    # 20 reads a ConfigMap the backup publishes about itself. Both answer "did
+    # this cluster do its part", so all four of these render as a healthy
+    # backup line (ferry133/jg-base#49):
+    #
+    #   - the object deleted after a successful upload
+    #   - bucket or credentials repointed elsewhere while the Job still succeeds
+    #   - the destination full, or the object corrupt on write
+    #   - a replication chain that never carried it to the second site
+    #
+    # Additive, not a replacement. 19 asks "did I send it", this asks "is it
+    # there", and dropping either leaves a half nobody can see.
+    #
+    # `s3api list-objects-v2` and not `aws s3 ls`, deliberately: the whole value
+    # of this row is that "the call failed" and "the call worked, the prefix is
+    # empty" land in DIFFERENT outcomes, and `s3 ls` has been observed to signal
+    # both with the same exit status. list-objects-v2 exits non-zero only when
+    # the request itself failed, and returns JSON with no `Contents` when the
+    # prefix is genuinely empty.
+    if [[ -n "${BACKUP_R2_BUCKET:-}" ]]; then
+      if ! command -v aws >/dev/null 2>&1; then
+        # The apk install above is best-effort and this is a base app. Say so
+        # rather than let a missing tool read as a clean destination.
+        record skip "Off-site backup destination" "aws CLI is not installed in this image, so the destination was not read"
+      elif [[ -z "${BACKUP_R2_ENDPOINT:-}" || -z "${BACKUP_R2_ACCESS_KEY_ID:-}" || -z "${BACKUP_R2_SECRET_ACCESS_KEY:-}" ]]; then
+        # A bucket with no endpoint or no credentials cannot be looked at from
+        # here. skip, not fail: nothing was learned about the backup either way.
+        record skip "Off-site backup destination" "BACKUP_R2_BUCKET is set but endpoint/credentials are not, so the destination cannot be read from this cluster"
+      else
+        DEST_ERR=$(mktemp)
+        if DEST_JSON=$(AWS_ACCESS_KEY_ID="$BACKUP_R2_ACCESS_KEY_ID" \
+                       AWS_SECRET_ACCESS_KEY="$BACKUP_R2_SECRET_ACCESS_KEY" \
+                       AWS_DEFAULT_REGION=auto \
+                       aws s3api list-objects-v2 \
+                         --endpoint-url "$BACKUP_R2_ENDPOINT" \
+                         --bucket "$BACKUP_R2_BUCKET" \
+                         --prefix "${CLUSTER_NAME}/" \
+                         --output json 2>"$DEST_ERR"); then
+          DEST_LISTED=1
+        else
+          DEST_LISTED=0
+          DEST_MSG=$(tr '\n' ' ' <"$DEST_ERR")
+        fi
+        rm -f "$DEST_ERR"
+        if [[ "$DEST_LISTED" -eq 0 ]]; then
+          # The line #49 is most specific about. An unreachable endpoint, a
+          # rejected key, and a credential scoped to PutObject only are all
+          # "we could not look" — a different fact from "the archive is not
+          # there". Folding them into fail turns one network blip into an
+          # apparent data loss, and a row that cries wolf is a row that gets
+          # switched off. The aws error is carried through verbatim so the
+          # reason is legible: AccessDenied reads differently from a timeout.
+          record skip "Off-site backup destination" "could not list s3://${BACKUP_R2_BUCKET}/${CLUSTER_NAME}/ — ${DEST_MSG}"
+        else
+          DEST_LATEST=$(echo "$DEST_JSON" | jq -r '[(.Contents // [])[].LastModified] | sort | last // ""')
+          # `+00:00` to `Z` for epoch_of's busybox fallback. GNU date takes
+          # either and coreutils is installed above, so this costs nothing
+          # today; it stops the sibling image's spelling being a live trap if
+          # this block is ever lifted into it.
+          DEST_LATEST="${DEST_LATEST/+00:00/Z}"
+          DEST_COUNT=$(echo "$DEST_JSON" | jq -r '(.Contents // []) | length')
+          if [[ -z "$DEST_LATEST" ]]; then
+            # Listed fine, nothing there. On a versioned + object-locked bucket
+            # a delete marker produces exactly this, and that is the case this
+            # row exists to catch.
+            record fail "Off-site backup destination empty" "listed s3://${BACKUP_R2_BUCKET}/${CLUSTER_NAME}/ and it holds no objects"
+          else
+            DEST_EPOCH="$(epoch_of "$DEST_LATEST")"
+            if [[ -z "$DEST_EPOCH" ]]; then
+              # Unknown age said as unknown, the same rule 19 and 20 follow.
+              record warn "Off-site backup destination" "cannot parse object timestamp (${DEST_LATEST})"
+            else
+              DEST_AGE_H=$(( ( $(date -u +%s) - DEST_EPOCH ) / 3600 ))
+              # 26h/48h, the same two numbers as check 19 — a different
+              # threshold here produces a report that says the upload is late
+              # on one line and the destination is fine on the next.
+              if (( DEST_AGE_H > 48 )); then
+                record fail "Off-site backup destination stale" "newest object is ${DEST_AGE_H}h old (${DEST_LATEST})"
+              elif (( DEST_AGE_H > 26 )); then
+                record warn "Off-site backup destination late" "newest object is ${DEST_AGE_H}h old"
+              else
+                record ok "Off-site backup destination fresh (${DEST_AGE_H}h ago, ${DEST_COUNT} objects)"
+              fi
+            fi
+          fi
+        fi
+      fi
+    fi
+
+    # 22. Stalled provisioning tickets (factory-agent 3.8).
     #
     # This check NEVER records `fail`, and that is a property of the design
     # rather than an accident of today's threshold. Only FAIL_COUNT gates the
