@@ -155,6 +155,15 @@ jobs:
       - name: daily-check external endpoint row
         run: bash scripts/check-external-endpoint-row.sh
 
+      # #49: checks 19 and 20 are both source-side, so a destination that was
+      # emptied, repointed or never replicated still rendered as a healthy
+      # backup line. The row this guards has to keep `fail` (the archive is not
+      # there) apart from `skip` (we could not look) — the script asserts that
+      # separation directly, not just per-case, because an edit collapsing them
+      # would leave every individual case still looking reasonable.
+      - name: daily-check off-site destination row
+        run: bash scripts/check-offsite-destination-row.sh
+
   diff:
     name: Flux Local Diff
     needs: pre-job

@@ -47,6 +47,16 @@ No cross-cluster checks. Each cluster is self-contained for operability.
 | 13 | NAS reachability | NFS port 2049 not reachable (if `NAS_SERVER` set) |
 | 14 | Node resource pressure | CPU >80% or Memory >85% (warning) |
 | 15 | Flux GitRepository sources | Any non-`Ready=True` + DiskPressure conditions |
+| 21 | Off-site backup destination | Reads the destination back rather than the sender: lists `s3://$BACKUP_R2_BUCKET/$CLUSTER_NAME/` and asserts the newest object is recent. `fail` if the prefix is empty or the newest object is >48h old, `warn` at >26h, and **`skip` whenever the listing itself did not succeed** — unreachable endpoint, rejected key, or a credential scoped to `PutObject` only. That separation is the point (ferry133/jg-base#49): checks 19 and 20 are both source-side, so an object deleted after upload, a bucket repointed elsewhere, or a replication chain that never ran all render as a healthy backup line. Needs `BACKUP_R2_ENDPOINT` / `_ACCESS_KEY_ID` / `_SECRET_ACCESS_KEY` in addition to `_BUCKET`; silent when the bucket is unset |
+
+> ⚠️ **This table is behind the script.** It documents 1–15 and 21; the script
+> also carries **16** (LoadBalancer address assignment), **17** (discovered LAN
+> addresses), **18** (can the LAN still resolve internal names), **19**
+> (off-site backup freshness), **20** (off-site backup coverage) and **22**
+> (stalled provisioning tickets), none of which appear here. The numbers in
+> rows 1–15 are this table's own and no longer line up with the script's
+> comments either. Until that is reconciled, `app/configmap.yaml` is the source
+> of truth — a table that is silently partial reads exactly like a complete one.
 
 Four outcomes, not three:
 - `❌ FAIL` — broken state needing investigation
