@@ -164,6 +164,15 @@ jobs:
       - name: daily-check off-site destination row
         run: bash scripts/check-offsite-destination-row.sh
 
+      # #54: on an appliance the mandatory backup ran nightly, succeeded and
+      # staged nothing, because it only ever captured databases and an appliance
+      # has none. The case that must not regress is `staged_bytes: 0` reporting
+      # `ok` — and the branch ORDER is what decides it: "no databases installed"
+      # sits next to it and used to win first. That is not hypothetical; it was
+      # the state of the fix until this test failed on its first run.
+      - name: daily-check backup coverage row
+        run: bash scripts/check-backup-coverage-row.sh
+
   diff:
     name: Flux Local Diff
     needs: pre-job
