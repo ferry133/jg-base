@@ -900,6 +900,14 @@ data:
         # one shape of absence that means coverage was lost rather than never
         # configured, and it must not reach a green line.
         COV_GONE=$(echo "$COV" | jq -r '.data.regressed // ""')
+        # How many bytes the backup actually staged (ferry133/jg-base#54). The
+        # backup published "encrypted: 1626 bytes" to its own log every night on
+        # an appliance whose archive contained nothing, and nothing read that
+        # log. Carried into the report rather than compared against a constant
+        # here: a full cluster stages ~1.5 MiB and an appliance legitimately far
+        # less, so the number that matters is this cluster's yesterday, and the
+        # reader has that.
+        COV_BYTES=$(echo "$COV" | jq -r '.data.staged_bytes // ""')
         COV_EPOCH="$(epoch_of "$COV_TS")"
         COV_AGE_H=""
         [[ -n "$COV_EPOCH" ]] && COV_AGE_H=$(( ( $(date -u +%s) - COV_EPOCH ) / 3600 ))
@@ -920,13 +928,29 @@ data:
           # backup is late and, on the next line, that coverage is fine.
           record warn "Off-site backup coverage" \
             "status is ${COV_AGE_H}h old and describes an earlier run"
+        elif [[ "$COV_BYTES" == "0" ]]; then
+          # BEFORE the "no databases installed" branch below, and that order is
+          # the entire fix for ferry133/jg-base#54. This is what an appliance
+          # produces: nothing failed, nothing regressed, no database is
+          # installed — every source-side signal green — and the archive holds
+          # nothing. Reached the other way round, "no databases installed" wins
+          # first and reports ok, which is the row #54 was opened about, rebuilt
+          # inside the change meant to remove it. (It was: the test in
+          # scripts/check-backup-coverage-row.sh caught exactly that on the
+          # first run.)
+          #
+          # warn and not fail: only FAIL_COUNT gates the dead-man ping, and a
+          # cluster that genuinely holds nothing worth backing up must not
+          # withhold the ping for every other check. The row still says it.
+          record warn "Off-site backup coverage" \
+            "ran and staged 0 bytes — nothing on this cluster was backed up"
         elif [[ -z "$COV_OK" ]]; then
-          # No databases dumped, none failed, and none lost since the last run:
-          # this cluster installed none of them. A real state, and distinct from
-          # a failure, which is why they are separate keys.
-          record ok "Off-site backup coverage (no databases installed)"
+          # Nothing dumped, but bytes were staged: a cluster whose artifacts all
+          # come from somewhere other than the database list. Distinct from the
+          # branch above, which is why they are separate keys and not one.
+          record ok "Off-site backup coverage (nothing dumped${COV_BYTES:+, ${COV_BYTES} bytes staged})"
         else
-          record ok "Off-site backup coverage (${COV_OK})"
+          record ok "Off-site backup coverage (${COV_OK}${COV_BYTES:+, ${COV_BYTES} bytes staged})"
         fi
       fi
     fi

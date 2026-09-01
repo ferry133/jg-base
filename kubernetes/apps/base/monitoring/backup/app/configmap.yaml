@@ -32,6 +32,18 @@ data:
     # customer, none of which is reconstructible. That is why backup_r2_* is
     # required under the appliance profile rather than optional.
     #
+    # That sentence was true and the code did not implement it (#54). Until
+    # 2026-09-01 this job dumped databases and nothing else, on the reasoning
+    # recorded at the staging check below: the agent's context "lives in the
+    # database, so the dumps above already cover it". **That premise is false on
+    # exactly the profile the paragraph above is about** — an appliance runs no
+    # database at all, so the mandatory backup protected nothing, succeeded every
+    # night, and said so. Measured across three clusters: 1.5 MiB/day on a full
+    # cluster with databases, ~1.6 KB/day on an appliance without.
+    #
+    # So this job now also captures each claude-code instance's config volume,
+    # which is where that context actually lives.
+    #
     # Encrypted to a public key, not a shared secret: R2 holds ciphertext that
     # the operator who owns the R2 account cannot read. Decryption travels with
     # age.key, which is what changes hands at handover.
@@ -162,6 +174,79 @@ data:
 
     log "databases: ${DUMPED} dumped, ${ABSENT} not installed, ${BROKEN} failed"
 
+    # --- agent context (claude-code config volumes) --------------------------
+    # The half #54 found missing. `claudecode/claude-code` is a base app, so
+    # every cluster ships at least one instance, and each one carries a config
+    # PVC holding ~/.claude — the memory, settings and history the agent has
+    # accumulated for that customer. None of it is in any database, and on an
+    # appliance there is no database for it to have been in.
+    #
+    # Captured by exec, not by mounting: instances are RWO and held by a running
+    # pod, and this Job is in another namespace. `kubectl exec ... tar` sidesteps
+    # both, and it is the same technique the dumps above already use, on the same
+    # ClusterRole (`pods/exec: create` is already cluster-wide in rbac.yaml, so
+    # this adds no permission).
+    #
+    # Instances are DISCOVERED, never listed: the names are template-time
+    # structure from `claude_instances` (default ["im"], jg-jiahd pins ["cc"]),
+    # so a hardcoded list here would silently miss whichever instance a cluster
+    # actually runs — the same failure mode as the database list this file
+    # already documents. The discriminator is the mount path rather than the
+    # name, because that is the thing being backed up.
+    #
+    # NOT the keyring, which is the same PVC mounted at a different path
+    # (/home/claude/.local/share/keyrings, subPath keyrings). Excluded by
+    # construction rather than by a filter: tarring ~/.claude simply does not
+    # reach it. D8's test is the right one and the keyring passes it — a login
+    # can be redone, a year of accumulated context cannot — and it keeps the
+    # cluster's live OAuth credential out of an archive that travels off-site.
+    dump_claude_config() {
+      local ns=claudecode
+      local instances
+      # jsonpath and not jq: this image installs bash/age/aws-cli/kubectl and no
+      # jq, and adding a package to read one field is a worse trade than a grep.
+      instances="$(kubectl -n "$ns" get deploy -o jsonpath='{range .items[*]}{.metadata.name}{" "}{.spec.template.spec.containers[*].volumeMounts[*].mountPath}{"\n"}{end}' 2>"$WORK/err" \
+                    | grep -F '/home/claude/.claude' | awk '{print $1}')"
+      if [[ -s "$WORK/err" ]]; then
+        # Could not ask. Not the same as "there are none", and the difference is
+        # the entire subject of this file.
+        log "${ns}: ERROR: cannot list claude-code instances: $(tail -1 "$WORK/err")"
+        BROKEN=$((BROKEN + 1)); FAILED=1; BROKEN_NAMES="${BROKEN_NAMES} ${ns}/claude-config"
+        return 0
+      fi
+      if [[ -z "$instances" ]]; then
+        # A real state: claudecode can be suspended on a cluster. Reported, not
+        # silent, for the same reason an absent database is.
+        log "${ns}: no claude-code instance mounts /home/claude/.claude"
+        ABSENT=$((ABSENT + 1)); ABSENT_NAMES="${ABSENT_NAMES} ${ns}/claude-config"
+        return 0
+      fi
+      local inst out
+      for inst in $instances; do
+        out="claudecode-${inst}-config.tar.gz"
+        log "capturing ${ns}/${inst}:~/.claude"
+        # -C /home/claude .claude, so the archive unpacks as .claude/ rather
+        # than an absolute path.
+        if kubectl -n "$ns" exec "deploy/${inst}" -- tar -czf - -C /home/claude .claude \
+             > "$STAGE/${out}" 2>"$WORK/err"; then
+          if [[ -s "$STAGE/${out}" ]]; then
+            log "  $(wc -c <"$STAGE/${out}") bytes"
+            DUMPED=$((DUMPED + 1)); DUMPED_NAMES="${DUMPED_NAMES} ${ns}/${inst}-config"
+          else
+            log "  ERROR: capture is empty"; rm -f "$STAGE/${out}"
+            BROKEN=$((BROKEN + 1)); FAILED=1; BROKEN_NAMES="${BROKEN_NAMES} ${ns}/${inst}-config"
+          fi
+        else
+          log "  ERROR: $(tail -1 "$WORK/err")"; rm -f "$STAGE/${out}"
+          BROKEN=$((BROKEN + 1)); FAILED=1; BROKEN_NAMES="${BROKEN_NAMES} ${ns}/${inst}-config"
+        fi
+      done
+    }
+
+    dump_claude_config
+
+    log "artifacts staged: ${DUMPED} captured, ${ABSENT} not installed, ${BROKEN} failed"
+
     # Publish the per-database outcome where daily-check can read it.
     #
     # The Job's exit code is one bit and now carries four databases, so
@@ -203,8 +288,23 @@ data:
       log "REGRESSION: dumped on the previous run, absent now:${REGRESSED}"
     fi
 
+    # How much was actually staged, published where a check can act on it. #54's
+    # third condition was that an empty or near-empty archive must not read as a
+    # success, and the gap it named is precise: the log already printed
+    # "encrypted: 1626 bytes" every night and **nothing anywhere said that number
+    # was too small**. A magic floor here would be a guess (a full cluster is
+    # ~1.5 MiB, an appliance legitimately far less), so the number is published
+    # instead and daily-check's check 20 reports it — a size in the daily report
+    # is a number a human compares to yesterday's, which is the comparison no
+    # constant in this file could make correctly.
+    #
+    # `cat | wc -c` rather than `du -sb`: busybox du has no -b.
+    STAGED_BYTES="$(cat "$STAGE"/* 2>/dev/null | wc -c | tr -d ' ')"
+    log "staged ${STAGED_BYTES} bytes across $(ls -1 "$STAGE" 2>/dev/null | wc -l | tr -d ' ') artifact(s)"
+
     if kubectl -n monitoring create configmap offsite-backup-status \
          --from-literal=timestamp="$(date -u '+%Y-%m-%dT%H:%M:%SZ')" \
+         --from-literal=staged_bytes="${STAGED_BYTES}" \
          --from-literal=dumped="${DUMPED_NAMES# }" \
          --from-literal=absent="${ABSENT_NAMES# }" \
          --from-literal=failed="${BROKEN_NAMES# }" \
@@ -218,12 +318,19 @@ data:
       log "WARNING: could not publish status: $(tail -1 "$WORK/cmerr" 2>/dev/null)"
     fi
 
-    # The agent workspace is deliberately NOT here (D8): its files are working
-    # copies that can be recreated, while the context the agent accumulates per
-    # customer cannot — and that lives in the database, so the dumps above
-    # already cover it. A PVC in another namespace cannot be mounted from here
-    # either, so backing it up would mean putting this job in claudecode, which
-    # is the wrong place for it.
+    # D8 said the agent WORKSPACE stays out because its files are working copies
+    # that can be recreated, while the context that cannot be recreated "lives in
+    # the database, so the dumps above already cover it".
+    #
+    # The first half still holds and the workspace is still out. The second half
+    # was wrong, and #54 is what it cost: an appliance runs no database, so on
+    # the one profile where this backup is MANDATORY it covered nothing.
+    #
+    # D8's other objection — "a PVC in another namespace cannot be mounted from
+    # here" — is about MOUNTING, and the capture above does not mount anything.
+    # It execs, exactly as the database dumps twenty lines up already do. The
+    # obstacle was real for the approach D8 had in mind and does not apply to
+    # this one.
     #
     # Nothing here reads kubernetes manifests. Those live in git, which is
     # already the authoritative copy; restoring them from an archive would be
@@ -237,7 +344,11 @@ data:
       if (( BROKEN > 0 )); then
         log "FATAL: every database on this cluster failed to dump"
       else
-        log "no databases installed on this cluster — nothing to back up"
+        # Names what was looked for, not just that nothing was found. Since #54
+        # this covers claude-code config volumes as well as databases, so
+        # reaching here means BOTH were absent — which on a cluster running the
+        # claudecode base app is worth reading twice, not skimming.
+        log "nothing to back up: no databases installed, and no claude-code instance mounting ~/.claude"
       fi
       exit "$FAILED"
     fi
