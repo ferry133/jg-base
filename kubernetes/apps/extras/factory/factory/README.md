@@ -210,11 +210,29 @@ weaken later.
 Two things that would have to be true before revisiting it, neither of which is
 today:
 
-- `deployment-profiles` 8.3's restore drill has never been executed — 8.4 says
-  so in its own text, step 5 written as procedure and marked not executed. So
-  "escrow confirmed" can presently only mean *the file was written*, not *it
-  reads back*. Automating the attestation would stamp that on every customer
-  cluster, once per delivery, which is worse than a human doing it slowly.
+- ~~"escrow confirmed" can presently only mean *the file was written*, not *it
+  reads back*.~~ **Half of this moved on 2026-08-31, and the conclusion it
+  supports got stronger rather than weaker.**
+
+  What changed: an escrow copy was read back and verified for the first time
+  (`jg-janncotcc`) — pulled from the offsite store rather than the local copy,
+  passphrase recovered from the keychain rather than the variable that made it,
+  `age-keygen -y` output byte-identical to the cluster's own key, and closed
+  against `.sops.yaml`'s recipient by `delivery-check.py escrow`. So *reads
+  back* is now demonstrable, and by a runnable check rather than by hand.
+
+  What did **not** change: `deployment-profiles` 8.3's restore drill still has
+  never run. **A recoverable key is not a restorable backup** — the whole
+  restic/offsite path between them is still unmeasured.
+
+  Why this makes the case for a human *stronger*: the hazard this bullet names
+  is a stamp reading "confirmed" on clusters where nothing was checked. That
+  hazard is no longer hypothetical — every other cluster's
+  `age_key_escrowed: true` **was written without this drill existing**, so the
+  fleet is currently carrying exactly the artefact the bullet warns about.
+  Automating the attestation before the drill is a per-delivery procedure would
+  add more of them faster. Revisit when every delivery runs it and a failure is
+  visible, not when one cluster has passed once.
 - Handover already re-keys with `sops updatekeys` against the customer's public
   key (D6), so ciphertext is never decrypted into the repo. Nothing about the
   current flow needs factory to hold the key.
@@ -642,6 +660,24 @@ Claude Code's own `.credentials.json` mounted at `/home/claude/.claude`. Now
   credential, or re-mint per use with the Omni service account. Standing risk
   against more frequent use of the highest-blast-radius item. Still the only
   credential question open, since the `age.key` one closed by scope.
+
+  **One side of that trade got cheaper, measured 2026-08-30/31.** Re-minting was
+  costed partly on the assumption that Omni access needs an interactive browser
+  login; it does not. The `claude-code` Omni service account (present since
+  2026-05-16) removes that step for both `talosctl` and `kubectl` — measured
+  when a fleet-ops session had, the same day, written "unattended provisioning
+  cannot contain a browser step" into a runbook and marked it untested.
+
+  ⚠️ **This lowers the cost of re-minting and says nothing about the other
+  half.** The reason re-mint is not obviously right is the blast radius of using
+  the Omni service account more often, and that is untouched by it being
+  convenient. A cheaper option is not a safer one, and the question stays open.
+
+  It also lands on the co-located-cluster-admin risk below, in the opposite
+  direction: today every agent action runs under ferry133's own Omni identity,
+  so *more* use of the service account is an auditing improvement. Also not a
+  conclusion — recorded so the next reader has both directions rather than
+  whichever one they arrived with.
 - **Escrow is settled and is not in this list any more.** factory does not hold
   customer key material (2026-08-17); the section above records why, and why
   reversing it would need `deployment-profiles` 8.3 to have actually run first.
