@@ -211,28 +211,44 @@ Two things that would have to be true before revisiting it, neither of which is
 today:
 
 - ~~"escrow confirmed" can presently only mean *the file was written*, not *it
-  reads back*.~~ **Half of this moved on 2026-08-31, and the conclusion it
-  supports got stronger rather than weaker.**
+  reads back*.~~ **This threshold is met. It was met on 2026-08-23, and the
+  2026-08-31 edit that claimed otherwise was wrong — see below.**
 
-  What changed: an escrow copy was read back and verified for the first time
-  (`jg-janncotcc`) — pulled from the offsite store rather than the local copy,
-  passphrase recovered from the keychain rather than the variable that made it,
-  `age-keygen -y` output byte-identical to the cluster's own key, and closed
-  against `.sops.yaml`'s recipient by `delivery-check.py escrow`. So *reads
-  back* is now demonstrable, and by a runnable check rather than by hand.
+  `deployment-profiles` 8.3 ran on **2026-08-23** (`fleet-ops` commit
+  `1b63123`, `jg-janncotcc` → `jcom`): the archive was restored using only the
+  backup and the escrowed `age.key`, onto a cluster that had never held that
+  data, and three tables were compared. It carries a positive control — one
+  string in the restored DB was altered and the `episodes` digest moved while
+  the row count stayed at 137, proving a row-count-only comparison would have
+  missed it, and the untouched `knowledge` digest did not move, proving the
+  difference was not an artefact of recomputing.
 
-  What did **not** change: `deployment-profiles` 8.3's restore drill still has
-  never run. **A recoverable key is not a restorable backup** — the whole
-  restic/offsite path between them is still unmeasured.
+  So the sentence struck through above is retired, and the adjacent bullet
+  further down — "reversing it would need 8.3 to have actually run first" — is
+  now a **satisfied** condition rather than a blocking one.
 
-  Why this makes the case for a human *stronger*: the hazard this bullet names
-  is a stamp reading "confirmed" on clusters where nothing was checked. That
-  hazard is no longer hypothetical — every other cluster's
-  `age_key_escrowed: true` **was written without this drill existing**, so the
-  fleet is currently carrying exactly the artefact the bullet warns about.
-  Automating the attestation before the drill is a per-delivery procedure would
-  add more of them faster. Revisit when every delivery runs it and a failure is
-  visible, not when one cluster has passed once.
+  **What 2026-08-31 actually added** is smaller and worth stating accurately:
+  the key round-trip comparison became a *runnable check*
+  (`delivery-check.py escrow`) instead of a hand-performed one. 8.3's own
+  Step 0 record describes the same actions on 2026-08-23, same public key. It
+  was not the first time.
+
+  **What is still open is not "has the drill run" but three things the drill
+  itself recorded as outside its scope:**
+
+  - **Escrow durability.** The passphrase lives only in `login.keychain-db`,
+    with no `sync` attribute — one laptop, one copy. The 08-31 read-back does
+    not touch this at all: it recovered the passphrase from that same keychain.
+  - **The role trap was bypassed, not exercised.** The dump's owner role is
+    `claudecode`, and `jcom` already had that role, so the restore never tested
+    what happens on a cluster that does not.
+  - **`jgt-appliance`'s `age_key_escrowed: true` can no longer be verified** —
+    that cluster is deleted.
+
+  That is why the attestation still should not be automated, and the reason is
+  now the right one: **one cluster passing once is not every delivery passing,
+  and the three items above are what a per-delivery check would have to cover.**
+
 - Handover already re-keys with `sops updatekeys` against the customer's public
   key (D6), so ciphertext is never decrypted into the repo. Nothing about the
   current flow needs factory to hold the key.
@@ -673,14 +689,23 @@ Claude Code's own `.credentials.json` mounted at `/home/claude/.claude`. Now
   the Omni service account more often, and that is untouched by it being
   convenient. A cheaper option is not a safer one, and the question stays open.
 
+  ⚠️ **And the cheaper option expires.** That service account is Admin-role with
+  a TTL of 8760h, created 2026-05-16 — so it lapses around 2026-05-16 + 1 year.
+  A trade-off costed on it is costed on something with an end date, which is not
+  the same as a standing capability.
+
   It also lands on the co-located-cluster-admin risk below, in the opposite
   direction: today every agent action runs under ferry133's own Omni identity,
   so *more* use of the service account is an auditing improvement. Also not a
   conclusion — recorded so the next reader has both directions rather than
   whichever one they arrived with.
 - **Escrow is settled and is not in this list any more.** factory does not hold
-  customer key material (2026-08-17); the section above records why, and why
-  reversing it would need `deployment-profiles` 8.3 to have actually run first.
+  customer key material (2026-08-17); the section above records why. It used to
+  add that reversing it would need `deployment-profiles` 8.3 to have actually
+  run first — **8.3 ran on 2026-08-23**, so that gate is satisfied and is no
+  longer what holds the decision. What holds it now is escrow durability, the
+  untested role trap, and one cluster's attestation being unverifiable; see the
+  bullets above. The decision itself is unchanged.
 - **The workload shape is settled** and recorded here so it is not re-derived:
   spike 1.1 established that Omni's resource access is the COSI state API with
   native watch, so factory is a Deployment holding a long-lived stream rather
