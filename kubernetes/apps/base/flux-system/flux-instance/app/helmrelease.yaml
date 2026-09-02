@@ -24,6 +24,43 @@ spec:
         url: "${FLUX_SYNC_URL}"
         ref: "refs/heads/main"
         path: kubernetes/flux/cluster
+        # The steady-state half of private-repo support (ferry133/jg-base#53,
+        # routed from jg-cluster-template#56). bootstrap already sets a
+        # pullSecret on the FluxInstance it creates; this block then declares
+        # the WHOLE sync stanza, so minutes later Helm re-renders the same
+        # object without one and the SSH URL loses its credential. Bootstrap
+        # working is not the same as the cluster staying up.
+        #
+        # ## What an EMPTY value does, measured rather than assumed
+        #
+        # #53 held this open on exactly one question: most of the fleet is
+        # public and gets "", and nobody had measured whether flux-operator
+        # reads that as "unset" or as "a Secret whose name is the empty string".
+        # Getting it wrong breaks every public cluster at once.
+        #
+        # It cannot happen, and the reason is upstream of flux-operator: chart
+        # 0.43.0's templates/instance.yaml:61 guards the field with
+        # `{{- if .Values.instance.sync.pullSecret }}`, which is false for "",
+        # so the key is never emitted. `helm template` of this exact values
+        # block, three ways:
+        #
+        #   pullSecret unset (today)      -> no pullSecret in the FluxInstance
+        #   pullSecret ""   (public)      -> byte-identical to today, whole render
+        #   pullSecret github-deploy-key  -> exactly one line added
+        #
+        # So the empty value never reaches the API server and flux-operator
+        # never sees it. Same shape as the longhorn backupTarget measurement in
+        # #7: the safety comes from the value domain, not from a runtime check.
+        #
+        # `:=` default because a per-user repo that has not re-rendered has no
+        # FLUX_SYNC_PULL_SECRET at all, and this file's convention everywhere
+        # else is an explicit default rather than relying on what postBuild does
+        # with an undefined name.
+        #
+        # Quoted, deliberately — a rendered YAML scalar decides its own type and
+        # this repo has been bitten three times by that (#16's boolean,
+        # NODE_DNS_PATH, jgct's base_repo_ref). A Secret name is a string.
+        pullSecret: "${FLUX_SYNC_PULL_SECRET:=}"
       commonMetadata:
         labels:
           app.kubernetes.io/name: flux
