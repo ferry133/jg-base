@@ -207,8 +207,21 @@ worst item in the inventory by a wide margin. It is out of scope by decision,
 not mitigated by a control. That is the stronger form and it should not quietly
 weaken later.
 
-Two things that would have to be true before revisiting it, neither of which is
-today:
+Two bullets used to sit here as "conditions, neither of which is true today".
+**Both halves of that sentence were wrong by 2026-09-03, and it is rewritten
+rather than patched:** the first condition has been *satisfied* since
+2026-08-23, and the second was never a condition at all — it is a reason why
+factory does not need the key, which does not become false or true with time.
+
+What actually holds this decision today is neither of them. It is the three
+open items named in the first bullet below: escrow durability, the untested
+role trap, and one cluster's attestation being unverifiable.
+
+**This line is here because it was missed twice.** The 2026-08-31 edit fixed a
+claim in the bullet and left this sentence contradicting it two rows above; the
+2026-09-03 correction fixed the far-away line 683 and again walked past this
+one. Looking a few lines out from the edit has to be an action, not an
+intention.
 
 - ~~"escrow confirmed" can presently only mean *the file was written*, not *it
   reads back*.~~ **This threshold is met. It was met on 2026-08-23, and the
@@ -236,9 +249,14 @@ today:
   **What is still open is not "has the drill run" but three things the drill
   itself recorded as outside its scope:**
 
-  - **Escrow durability.** The passphrase lives only in `login.keychain-db`,
-    with no `sync` attribute — one laptop, one copy. The 08-31 read-back does
-    not touch this at all: it recovered the passphrase from that same keychain.
+  - **Escrow durability.** What is *measured* is one copy: the passphrase in
+    `login.keychain-db` with no `sync` attribute, i.e. a single laptop.
+    ferry133 has said a second copy went into a password manager — **that is
+    stated and has not been verified by anyone**, so it is neither "there" nor
+    "not there", and this bullet deliberately does not collapse it to either.
+    Whoever picks this up next: that second copy is the thing to go and measure.
+    The 08-31 read-back says nothing about durability — it recovered the
+    passphrase from that same keychain.
   - **The role trap was bypassed, not exercised.** The dump's owner role is
     `claudecode`, and `jcom` already had that role, so the restore never tested
     what happens on a cluster that does not.
@@ -689,10 +707,13 @@ Claude Code's own `.credentials.json` mounted at `/home/claude/.claude`. Now
   the Omni service account more often, and that is untouched by it being
   convenient. A cheaper option is not a safer one, and the question stays open.
 
-  ⚠️ **And the cheaper option expires.** That service account is Admin-role with
-  a TTL of 8760h, created 2026-05-16 — so it lapses around 2026-05-16 + 1 year.
-  A trade-off costed on it is costed on something with an end date, which is not
-  the same as a standing capability.
+  ⚠️ **And the cheaper option expires: 2027-05-16.** That service account is
+  Admin-role, TTL 8760h, created 2026-05-16. A trade-off costed on it is costed
+  on something with an end date, not on a standing capability.
+
+  That date is derived from the creation date on record, and **nobody has
+  measured whether it has been renewed** — a renewed service account and one
+  that never was read identically from that line.
 
   It also lands on the co-located-cluster-admin risk below, in the opposite
   direction: today every agent action runs under ferry133's own Omni identity,
