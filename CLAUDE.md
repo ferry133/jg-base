@@ -2,10 +2,18 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-> **Agent R&R（2026-08-28 ferry133 裁定）:** 這個 agent 擁有 `jg-base` 與
-> `jg-cluster-template`；所有 user repo 由 fleet-ops agent 擁有。名冊與跨 repo
-> 協作規則的唯一持有者是 fleet-ops `docs/agents/responsibilities.md`
-> —— 這裡只留指標，不複述。
+> **Agent R&R（2026-08-28 ferry133 裁定；2026-09-03 澄清）:** 「jg-base agent」＝
+> **工作目錄在 `~/coding/jg-base` 的每一個 session**，不是其中任何單一一個。
+> ferry133 原話："all the sessions running on jg-base directory own
+> jg-cluster-template/jg-base repo. Not just only one session own them."
+> 這些 session **共同**擁有 `jg-base` 與 `jg-cluster-template`；所有 user repo 由
+> fleet-ops agent 擁有。名冊與跨 repo 協作規則的唯一持有者是 fleet-ops
+> `docs/agents/responsibilities.md` —— 這裡只留指標，不複述。
+>
+> 舊句「這個 agent 擁有…」曾被兩個 session 各自讀成「我獨自擁有」，同一個缺陷
+> 因此被修兩次（2026-09-03，jgct#67/#68）。共同擁有的配套：**動手實作前先在
+> issue/PR 上留言認領（署 `[ref]`，peer name 會被重配），開工前先查有沒有人已
+> 認領。** 在訊息裡宣告意圖不算認領——訊息只有收件人看得到。
 
 ## What This Repo Is
 
