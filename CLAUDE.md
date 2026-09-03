@@ -7,8 +7,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 > ferry133 原話："all the sessions running on jg-base directory own
 > jg-cluster-template/jg-base repo. Not just only one session own them."
 > 這些 session **共同**擁有 `jg-base` 與 `jg-cluster-template`；所有 user repo 由
-> fleet-ops agent 擁有。名冊與跨 repo 協作規則的唯一持有者是 fleet-ops
-> `docs/agents/responsibilities.md` —— 這裡只留指標，不複述。
+> fleet-ops agent 擁有。名冊與跨 repo 協作規則自 2026-09-03 起住在
+> **`~/coding/CLAUDE.md`**（`~/coding` 下每個 session 啟動時保證載入）；
+> 原話與判例在 fleet-ops `docs/agents/responsibilities.md`。這裡只留指標，不複述。
 >
 > 舊句「這個 agent 擁有…」曾被兩個 session 各自讀成「我獨自擁有」，同一個缺陷
 > 因此被修兩次（2026-09-03，jgct#67/#68）。共同擁有的配套：**動手實作前先在
