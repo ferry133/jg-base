@@ -78,13 +78,13 @@ data:
     # here for it — pg_dump and mariadb-dump are already there, at versions that
     # match the server by construction. Covering another engine means adding a
     # case below, never a package to the CronJob.
-    DUMPED=0 ABSENT=0 BROKEN=0
+    DUMPED=0 ABSENT=0 BROKEN=0 UNCAP=0
     # Names as well as counts. The counts are for the log; the names are what
     # gets published for daily-check, because "one of four failed" and "which
     # one failed" are different questions and only the second is actionable at
     # 08:00. Space-separated strings rather than arrays — see the sed note in
     # the retention block for why this file avoids clever constructs.
-    DUMPED_NAMES="" ABSENT_NAMES="" BROKEN_NAMES=""
+    DUMPED_NAMES="" ABSENT_NAMES="" BROKEN_NAMES="" UNCAP_NAMES=""
 
     dump_db() {
       local engine="$1" ns="$2" deploy="$3" out="$4"
@@ -205,8 +205,8 @@ data:
       local instances
       # jsonpath and not jq: this image installs bash/age/aws-cli/kubectl and no
       # jq, and adding a package to read one field is a worse trade than a grep.
-      instances="$(kubectl -n "$ns" get deploy -o jsonpath='{range .items[*]}{.metadata.name}{" "}{.spec.template.spec.containers[*].volumeMounts[*].mountPath}{"\n"}{end}' 2>"$WORK/err" \
-                    | grep -F '/home/claude/.claude' | awk '{print $1}')"
+      instances="$(kubectl -n "$ns" get deploy -o jsonpath='{range .items[*]}{.metadata.name}{" "}{.spec.replicas}{" "}{.spec.template.spec.containers[*].volumeMounts[*].mountPath}{"\n"}{end}' 2>"$WORK/err" \
+                    | grep -F '/home/claude/.claude' | awk '{print $1" "$2}')"
       if [[ -s "$WORK/err" ]]; then
         # Could not ask. Not the same as "there are none", and the difference is
         # the entire subject of this file.
@@ -221,8 +221,22 @@ data:
         ABSENT=$((ABSENT + 1)); ABSENT_NAMES="${ABSENT_NAMES} ${ns}/claude-config"
         return 0
       fi
-      local inst out
-      for inst in $instances; do
+      local inst want out
+      while read -r inst want; do
+        # Scaled to zero is its own outcome — not ABSENT, not a failure. The
+        # deployment and its PVC, holding whatever context the instance
+        # accumulated, still exist; exec simply has no pod to reach. Folding it
+        # into ABSENT would rebuild #54's shape (content that should be
+        # captured, reading as normal) — and check 20 deliberately does not
+        # read `absent`, so there it would be invisible by the same rule that
+        # protects absent from being read as failed. Own key instead (#61).
+        # Only spec.replicas==0 lands here: a deployment that WANTS a pod and
+        # has none ready is a failure, and the exec below reports it as one.
+        if [[ "$want" == "0" ]]; then
+          log "${ns}/${inst}: present but scaled to 0 — its PVC content exists and exec cannot reach it"
+          UNCAP=$((UNCAP + 1)); UNCAP_NAMES="${UNCAP_NAMES} ${ns}/${inst}-config"
+          continue
+        fi
         out="claudecode-${inst}-config.tar.gz"
         log "capturing ${ns}/${inst}:~/.claude"
         # -C /home/claude .claude, so the archive unpacks as .claude/ rather
@@ -240,12 +254,12 @@ data:
           log "  ERROR: $(tail -1 "$WORK/err")"; rm -f "$STAGE/${out}"
           BROKEN=$((BROKEN + 1)); FAILED=1; BROKEN_NAMES="${BROKEN_NAMES} ${ns}/${inst}-config"
         fi
-      done
+      done <<<"$instances"
     }
 
     dump_claude_config
 
-    log "artifacts staged: ${DUMPED} captured, ${ABSENT} not installed, ${BROKEN} failed"
+    log "artifacts staged: ${DUMPED} captured, ${ABSENT} not installed, ${UNCAP} present but uncapturable, ${BROKEN} failed"
 
     # Publish the per-database outcome where daily-check can read it.
     #
@@ -307,6 +321,7 @@ data:
          --from-literal=staged_bytes="${STAGED_BYTES}" \
          --from-literal=dumped="${DUMPED_NAMES# }" \
          --from-literal=absent="${ABSENT_NAMES# }" \
+         --from-literal=uncapturable="${UNCAP_NAMES# }" \
          --from-literal=failed="${BROKEN_NAMES# }" \
          --from-literal=regressed="${REGRESSED# }" \
          --dry-run=client -o yaml \
