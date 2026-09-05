@@ -908,6 +908,12 @@ data:
         # less, so the number that matters is this cluster's yesterday, and the
         # reader has that.
         COV_BYTES=$(echo "$COV" | jq -r '.data.staged_bytes // ""')
+        # Instances that exist but are scaled to 0 — their PVC content is real
+        # and NOT in the archive (ferry133/jg-base#61). Its own key on purpose:
+        # `absent` is deliberately unread here, so folding this state in there
+        # would make it invisible by the same rule that protects absent from
+        # ever being read as failed.
+        COV_UNCAP=$(echo "$COV" | jq -r '.data.uncapturable // ""')
         COV_EPOCH="$(epoch_of "$COV_TS")"
         COV_AGE_H=""
         [[ -n "$COV_EPOCH" ]] && COV_AGE_H=$(( ( $(date -u +%s) - COV_EPOCH ) / 3600 ))
@@ -928,6 +934,17 @@ data:
           # backup is late and, on the next line, that coverage is fine.
           record warn "Off-site backup coverage" \
             "status is ${COV_AGE_H}h old and describes an earlier run"
+        elif [[ -n "$COV_UNCAP" ]]; then
+          # An instance whose deployment and PVC exist, scaled to 0 — exec has
+          # no pod to reach, so whatever it accumulated is NOT in the archive.
+          # Never ok: present-but-unprotected reading as green is the row #54
+          # was opened about. Not fail either: a deliberate scale-down must not
+          # withhold the dead-man ping — same rule as the 0-bytes row below.
+          # BEFORE that row on purpose: when the only instance is scaled to 0,
+          # this names the cause where "staged 0 bytes" names the symptom.
+          # Real failures still win — the fail branch above is checked first.
+          record warn "Off-site backup coverage" \
+            "present but not captured (scaled to 0): ${COV_UNCAP}${COV_BYTES:+ — ${COV_BYTES} bytes staged}"
         elif [[ "$COV_BYTES" == "0" ]]; then
           # BEFORE the "no databases installed" branch below, and that order is
           # the entire fix for ferry133/jg-base#54. This is what an appliance

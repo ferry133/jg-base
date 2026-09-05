@@ -48,6 +48,8 @@ if "offsite-backup-status" not in blk:
     sys.exit("located a block, but it never reads the status ConfigMap — wrong slice")
 if "staged_bytes" not in blk:
     sys.exit("located a block that never reads staged_bytes — the #54 fix is gone")
+if "uncapturable" not in blk:
+    sys.exit("located a block that never reads uncapturable — the #61 fix is gone")
 (work / "block.sh").write_text(blk)
 PY
 
@@ -110,6 +112,24 @@ run stale-status  "OLD:$OKDATA"                             "[warn]"
 # This MUST NOT be ok.
 run zero-bytes '{"timestamp":"2026-09-01T00:00:00Z","dumped":"","absent":"db/postgres claudecode/claude-config","failed":"","regressed":"","staged_bytes":"0"}' \
   "[warn] Off-site backup coverage — ran and staged 0 bytes"
+
+# ── #61: present but scaled to 0 ────────────────────────────────────────────
+# The deployment and its PVC exist; exec has no pod to reach. Must not be ok
+# (present-but-unprotected reading as green is #54's shape), must not be fail
+# (a deliberate scale-down cannot withhold the dead-man ping), and must name
+# the cause when it is also why 0 bytes were staged.
+run uncap-healthy '{"timestamp":"2026-09-01T00:00:00Z","dumped":"db/postgres claudecode/im-config","absent":"","failed":"","regressed":"","staged_bytes":"3387621","uncapturable":"claudecode/cc-config"}' \
+  "[warn] Off-site backup coverage — present but not captured (scaled to 0): claudecode/cc-config"
+
+# staged_bytes is ALSO 0 here, and the row must say "scaled to 0", not "staged
+# 0 bytes" — this case is the branch-order proof, the same shape the zero-bytes
+# case proved for #54.
+run uncap-only '{"timestamp":"2026-09-01T00:00:00Z","dumped":"","absent":"db/postgres","failed":"","regressed":"","staged_bytes":"0","uncapturable":"claudecode/cc-config"}' \
+  "[warn] Off-site backup coverage — present but not captured (scaled to 0): claudecode/cc-config"
+
+# A real failure outranks it: fail is checked first and must stay first.
+run uncap-and-failed '{"timestamp":"2026-09-01T00:00:00Z","dumped":"","absent":"","failed":"freepbx/mariadb","regressed":"","staged_bytes":"0","uncapturable":"claudecode/cc-config"}' \
+  "[fail]"
 
 echo
 
