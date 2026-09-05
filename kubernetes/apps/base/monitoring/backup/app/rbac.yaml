@@ -5,15 +5,19 @@ metadata:
   name: offsite-backup
   namespace: monitoring
 ---
-# Only what a dump needs: find the deployment, then exec pg_dump inside it.
+# Only what the Job needs: find the deployment, then exec inside it.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
   name: offsite-backup
 rules:
+  # `list` is not optional: dump_claude_config discovers claude-code instances
+  # with an UNNAMED `kubectl get deploy`, and an unnamed get is the list verb,
+  # not get. With only `get` here the whole Job dies Forbidden on every cluster
+  # (#54 round 2) — the named database probes alone do not need it.
   - apiGroups: ["apps"]
     resources: ["deployments"]
-    verbs: ["get"]
+    verbs: ["get", "list"]
   - apiGroups: [""]
     resources: ["pods"]
     verbs: ["get", "list"]
