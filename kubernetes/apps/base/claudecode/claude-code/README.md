@@ -18,27 +18,28 @@ jg-cluster-template patch on re-render — that ratchet is what keeps it from
 fighting a user repo that still renders the pre-2026-09 per-user `im`
 HelmRelease over the same object name.
 
-## `im` runs `latest` — on purpose, and it costs three things
+## `im` is pinned by digest — `latest` lasted one day, and #66 is why
 
-Ruled by ferry133 2026-09-06, against this repo's tag@digest pinning
-convention (`extras/factory` documents why pinning exists — a tag/digest
-divergence bit on 2026-08-18). What is bought: a `k8scc` push to main updates
-every cluster's support terminal with no jgct edit and no re-render of ~20
-user repos (the template-drift trap where `task configure` exits 0 while
-nothing changed). What it costs:
+Ruled by ferry133 2026-09-06 (superseding his same-day `latest` directive,
+which bought fleet-wide updates on a bare `k8scc` push). `latest` did not
+survive contact with spegel: the mirror resolves a mutable tag from whichever
+node still caches it, so on a multi-node cluster the tag freezes at whatever
+was cached first. Measured on jg-jiahd the same day (#66): the pod restarted,
+kubelet said "Successfully pulled … in 200ms", the Deployment said Running —
+and it was a months-old image with a CrashLooping talos-mcp. Three green
+signals, zero discrimination; `imagePullPolicy: Always` does not help because
+it asks the mirror, and the mirror answers with the frozen digest.
 
-1. **No pinned rollback.** The running version appears in no git repo;
-   rolling back means pushing a revert build to `latest`.
-2. **Fleet drift until pods restart.** Flux sees no change on a new `latest`,
-   so nothing restarts; two clusters can run different code under the same
-   label, and `image: latest` reads identical whether current or six months
-   stale — an undiscriminating check.
-3. **GHCR on the start path.** `:latest` implies `imagePullPolicy: Always`,
-   so every pod start needs GHCR reachable; a pinned tag's `IfNotPresent`
-   survived a registry outage on cached nodes.
-
-Accepted for `im` because a support terminal wants freshness more than
-determinism. The factory variant and anything else stays pinned.
+So `im` follows the same tag@digest convention as everything else
+(`extras/factory` documents the original tag/digest divergence that started
+it). What the pin costs — an update now requires a jg-base commit — is paid
+by `scripts/bump-claudecode-image.sh`: run it after a k8scc build, review the
+diff, push; Flux rolls the fleet within the hour, every update is visible in
+git, and rollback is a revert instead of a race to push another `latest`.
+The remaining cost is real: someone (or k8scc's CI, if that automation is
+ever built — tracked in k8scc) has to run it, or the fleet quietly stays on
+the old pin. That failure mode is at least the visible-in-git kind, which
+`latest`-on-spegel was not.
 
 ## PVC adoption / survival
 
