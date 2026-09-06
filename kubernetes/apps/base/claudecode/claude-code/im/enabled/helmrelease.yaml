@@ -80,7 +80,11 @@ spec:
                 && [ -s /etc/oauth2-proxy/allowed-emails ]
                 || { echo "allowed-emails is empty — oauth2-proxy would fail closed, refusing to start instead (jg-base#70)"; exit 1; }
             env:
-              ALLOWED_EMAILS: "${CLAUDECODE_ALLOWED_EMAILS:-}"
+              # FACTORY_, since #75: im is factory's support terminal and its
+              # allowlist comes from factory's auth0.json (jgct#84 ruling (a)).
+              # Customer extra instances keep CLAUDECODE_ALLOWED_EMAILS. No :-
+              # default — an unset value should fail the [ -s ] guard loudly.
+              ALLOWED_EMAILS: "${FACTORY_ALLOWED_EMAILS}"
             securityContext:
               allowPrivilegeEscalation: false
               capabilities: { drop: ["ALL"] }
@@ -241,7 +245,7 @@ spec:
               - --http-address=0.0.0.0:4180
               - --upstream=http://127.0.0.1:7681
               - --provider=oidc
-              - --oidc-issuer-url=https://${CLAUDECODE_AUTH0_DOMAIN}/
+              - --oidc-issuer-url=https://${FACTORY_AUTH0_DOMAIN}/
               - --scope=openid profile email
               - --redirect-url=https://im.${SECRET_DOMAIN}/oauth2/callback
               - --authenticated-emails-file=/etc/oauth2-proxy/allowed-emails
@@ -299,12 +303,14 @@ spec:
                 valueFrom:
                   secretKeyRef:
                     name: claude-code-secret
-                    key: OAUTH2_PROXY_CLIENT_ID
+                    # FACTORY_, since #75 — the plain OAUTH2_PROXY_* keys are
+                    # the customer instances' and stay on the cluster tenant.
+                    key: FACTORY_OAUTH2_PROXY_CLIENT_ID
               OAUTH2_PROXY_CLIENT_SECRET:
                 valueFrom:
                   secretKeyRef:
                     name: claude-code-secret
-                    key: OAUTH2_PROXY_CLIENT_SECRET
+                    key: FACTORY_OAUTH2_PROXY_CLIENT_SECRET
               OAUTH2_PROXY_COOKIE_SECRET:
                 valueFrom:
                   secretKeyRef:
