@@ -171,6 +171,13 @@ jobs:
       - name: daily-check im image pin row
         run: bash scripts/check-image-pin-row.sh
 
+      # #70: a container-runtime ${VAR} that postBuild rewrote to "" locked
+      # every terminal out behind green signals. Every ${X} under kubernetes/
+      # must be declared in the vocabulary or written $${X}; the guard proved
+      # it catches the pre-#69 tree.
+      - name: substitution vocabulary
+        run: bash scripts/check-substitution-vocabulary.sh
+
       # #54: on an appliance the mandatory backup ran nightly, succeeded and
       # staged nothing, because it only ever captured databases and an appliance
       # has none. The case that must not regress is `staged_bytes: 0` reporting
