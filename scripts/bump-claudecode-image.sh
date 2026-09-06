@@ -30,10 +30,22 @@ fi
 # Resolve the digest for this tag from GHCR. Asking the registry (not a
 # cluster, not a mirror) is the point: this is the one place a mutable-tag
 # answer cannot have been frozen by spegel.
-DIGEST="$(gh api "users/ferry133/packages/container/claude-code/versions?per_page=50" \
-  --jq ".[] | select(.metadata.container.tags | index(\"${NEWSHA}\")) | .name" | head -1)"
+#
+# --paginate, not per_page=50: the package accumulates several versions per
+# build, so a fixed window covers a short span and an older tag came back
+# "not found" with a confidently wrong cause attached (#77 — f4001ec existed,
+# was pullable, and the script said the build wasn't done). Three outcomes
+# below, not two: "the lookup itself failed" must not print as "no such tag".
+if ! VERSIONS="$(gh api --paginate "users/ferry133/packages/container/claude-code/versions?per_page=100" \
+     --jq ".[] | select(.metadata.container.tags | index(\"${NEWSHA}\")) | .name" 2>&1)"; then
+  echo "error: could not query GHCR versions (auth or network — not a statement about the tag):" >&2
+  echo "       ${VERSIONS}" >&2
+  exit 2
+fi
+DIGEST="$(printf '%s' "$VERSIONS" | head -1)"
 if [[ ! "$DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]; then
-  echo "error: GHCR has no image tagged '${NEWSHA}' (is the k8scc CI build done?)" >&2
+  echo "error: no image tagged '${NEWSHA}' anywhere in GHCR's version list (all pages checked)." >&2
+  echo "       Wrong sha, or the k8scc build never pushed this tag." >&2
   exit 1
 fi
 PIN="${NEWSHA}@${DIGEST}"
