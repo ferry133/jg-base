@@ -316,6 +316,16 @@ data:
     STAGED_BYTES="$(cat "$STAGE"/* 2>/dev/null | wc -c | tr -d ' ')"
     log "staged ${STAGED_BYTES} bytes across $(ls -1 "$STAGE" 2>/dev/null | wc -l | tr -d ' ') artifact(s)"
 
+    # `uploaded` starts as "no" and is PATCHED to "yes" only after the upload
+    # command returns success (or to "skipped" when the stage is legitimately
+    # empty and there is nothing to send). Publishing happens before the upload
+    # on purpose — the 0-bytes appliance case needs a fresh status either way —
+    # but #63 measured what that position costs unguarded: an upload that
+    # failed left this ConfigMap reading "dumped: ..., failed: (none)", and a
+    # reader concluded the backup was fine on a night nothing left the cluster.
+    # Every path that dies before the upload (archive, encrypt, the upload
+    # itself) now leaves "no" behind WITHOUT having to remember to write it —
+    # the failure paths stay dumb, which is one fewer thing they can forget.
     if kubectl -n monitoring create configmap offsite-backup-status \
          --from-literal=timestamp="$(date -u '+%Y-%m-%dT%H:%M:%SZ')" \
          --from-literal=staged_bytes="${STAGED_BYTES}" \
@@ -324,6 +334,7 @@ data:
          --from-literal=uncapturable="${UNCAP_NAMES# }" \
          --from-literal=failed="${BROKEN_NAMES# }" \
          --from-literal=regressed="${REGRESSED# }" \
+         --from-literal=uploaded="no" \
          --dry-run=client -o yaml \
          | kubectl apply -f - >/dev/null 2>"$WORK/cmerr"; then
       log "published status: configmap/offsite-backup-status"
@@ -365,6 +376,12 @@ data:
         # claudecode base app is worth reading twice, not skimming.
         log "nothing to back up: no databases installed, and no claude-code instance mounting ~/.claude"
       fi
+      # Nothing to send is not a failed send: without this patch the initial
+      # "no" would read as "staged content never left the cluster" and fail
+      # check 20 on every healthy empty night (#63's three values, not two).
+      kubectl -n monitoring patch configmap offsite-backup-status \
+        --type merge -p '{"data":{"uploaded":"skipped"}}' >/dev/null 2>&1 \
+        || log "WARNING: could not mark status uploaded=skipped"
       exit "$FAILED"
     fi
 
@@ -383,6 +400,12 @@ data:
     if aws s3 cp --endpoint-url "$BACKUP_R2_ENDPOINT" --only-show-errors \
          "${ARCHIVE}.age" "s3://${BACKUP_R2_BUCKET}/${KEY}"; then
       log "uploaded s3://${BACKUP_R2_BUCKET}/${KEY}"
+      # Only now does the status say so. If this patch itself fails the error
+      # points the safe way: tomorrow reports a failed upload that succeeded,
+      # instead of a clean night that never left the cluster.
+      kubectl -n monitoring patch configmap offsite-backup-status \
+        --type merge -p '{"data":{"uploaded":"yes"}}' >/dev/null 2>&1 \
+        || log "WARNING: could not mark status uploaded=yes"
     else
       log "FATAL: upload failed"; exit 1
     fi

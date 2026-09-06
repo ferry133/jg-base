@@ -914,6 +914,12 @@ data:
         # would make it invisible by the same rule that protects absent from
         # ever being read as failed.
         COV_UNCAP=$(echo "$COV" | jq -r '.data.uncapturable // ""')
+        # Whether the staged archive actually left the cluster (#63). Three
+        # values: "yes", "no" (published before the upload, never patched —
+        # the run died at or before the upload), "skipped" (nothing to send).
+        # Missing on a status written by a pre-#63 backup: tolerated below so
+        # one transition day does not read as a fleet-wide upload failure.
+        COV_UPLOADED=$(echo "$COV" | jq -r '.data.uploaded // ""')
         COV_EPOCH="$(epoch_of "$COV_TS")"
         COV_AGE_H=""
         [[ -n "$COV_EPOCH" ]] && COV_AGE_H=$(( ( $(date -u +%s) - COV_EPOCH ) / 3600 ))
@@ -923,6 +929,17 @@ data:
           [[ -n "$COV_BAD" ]] && COV_MSG="failed to dump: ${COV_BAD}"
           [[ -n "$COV_GONE" ]] && COV_MSG="${COV_MSG:+${COV_MSG}; }was dumped on the previous run, absent now: ${COV_GONE}"
           record fail "Off-site backup coverage" "$COV_MSG"
+        elif [[ "$COV_UPLOADED" == "no" ]]; then
+          # The run staged content and it never left the cluster (#63): the
+          # dump columns are truthful and the answer to "is it backed up" is
+          # still no. Before the age checks — a stale status whose last word
+          # is "no" is a failure first and old news second (check 19 already
+          # says the job itself failed; this row keeps the COVERAGE answer
+          # from reading clean). Only the literal "no" fails: "skipped" falls
+          # through to the 0-bytes/uncapturable rows that describe it, and ""
+          # (pre-#63 status) keeps yesterday's behavior for the transition.
+          record fail "Off-site backup coverage" \
+            "staged ${COV_BYTES:-?} bytes but the upload never completed — nothing left the cluster"
         elif [[ -z "$COV_AGE_H" ]]; then
           # Unknown age, said as unknown — the same rule check 19 follows twenty
           # lines up. Falling through to ok would assert coverage from a status

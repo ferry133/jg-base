@@ -50,6 +50,8 @@ if "staged_bytes" not in blk:
     sys.exit("located a block that never reads staged_bytes — the #54 fix is gone")
 if "uncapturable" not in blk:
     sys.exit("located a block that never reads uncapturable — the #61 fix is gone")
+if "uploaded" not in blk:
+    sys.exit("located a block that never reads uploaded — the #63 fix is gone")
 (work / "block.sh").write_text(blk)
 PY
 
@@ -130,6 +132,27 @@ run uncap-only '{"timestamp":"2026-09-01T00:00:00Z","dumped":"","absent":"db/pos
 # A real failure outranks it: fail is checked first and must stay first.
 run uncap-and-failed '{"timestamp":"2026-09-01T00:00:00Z","dumped":"","absent":"","failed":"freepbx/mariadb","regressed":"","staged_bytes":"0","uncapturable":"claudecode/cc-config"}' \
   "[fail]"
+
+# ── #63: the status was published before the upload ─────────────────────────
+# A run that staged content and then failed to upload left a status whose dump
+# columns read clean — and a reader concluded the backup was fine on a night
+# nothing left the cluster. uploaded=="no" MUST fail, even though nothing in
+# dumped/failed/regressed says anything is wrong.
+run upload-failed '{"timestamp":"2026-09-01T00:00:00Z","dumped":"claudecode/im-config","absent":"db/postgres","failed":"","regressed":"","staged_bytes":"114","uncapturable":"","uploaded":"no"}' \
+  "[fail] Off-site backup coverage — staged 114 bytes but the upload never completed"
+
+# The same healthy night with the upload confirmed: ok, so the new row carries
+# information rather than warning about everything.
+run upload-ok '{"timestamp":"2026-09-01T00:00:00Z","dumped":"db/postgres claudecode/im-config","absent":"","failed":"","regressed":"","staged_bytes":"1572864","uncapturable":"","uploaded":"yes"}' \
+  "[ok] Off-site backup coverage (db/postgres claudecode/im-config, 1572864 bytes staged)"
+
+# Nothing to send is not a failed send: "skipped" must fall through to the
+# 0-bytes row, not the fail above — three values, not two.
+run upload-skipped '{"timestamp":"2026-09-01T00:00:00Z","dumped":"","absent":"db/postgres claudecode/claude-config","failed":"","regressed":"","staged_bytes":"0","uncapturable":"","uploaded":"skipped"}' \
+  "[warn] Off-site backup coverage — ran and staged 0 bytes"
+
+# (The pre-#63 status with no `uploaded` key at all is the `healthy` case at
+# the top of this file: it must stay ok through the one-day transition.)
 
 echo
 
