@@ -1,0 +1,37 @@
+---
+# The NAS backup half, split from the database so a cluster without a NAS
+# gets nothing here instead of taking the database down with it (#17 — the
+# extras copy of this file carries the full incident writeup).
+#
+# NOT `path: …/backup/${NAS_BACKUP:=nfs}` like the extras copy: base paths
+# cannot carry substitution variables — flux-local collects every
+# Kustomization under kubernetes/apps/base and substitutes nothing, so a
+# `${VAR}` in a path aborts the whole suite at collection (measured, #28;
+# im-ks.yaml carries the pointer). The selector moves to the same
+# jg-cluster-template patch that unsuspends this object: at render time the
+# template knows nas_server and sets `path: …/backup/nfs` or leaves the
+# `none` default below. Shipping `none` + suspended means a never-re-rendered
+# cluster gets no backup CronJob from this object — the extras copy it still
+# runs keeps providing it, so nothing is lost in the half-state.
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: claudecode-db-backup
+  namespace: flux-system
+spec:
+  suspend: true
+  interval: 1h
+  path: ./kubernetes/apps/base/claudecode/postgres/backup/none
+  postBuild:
+    substituteFrom:
+      - name: cluster-secrets
+        kind: Secret
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: jg-base
+    namespace: flux-system
+  targetNamespace: claudecode
+  wait: false
+  dependsOn:
+    - name: claudecode-db
