@@ -1175,6 +1175,57 @@ data:
       fi
     fi
 
+    # 23. base im image pin — is the pinned digest what is actually RUNNING (#66).
+    #
+    # `latest` on a spegel cluster froze silently: the pod restarted, kubelet
+    # said Pulled in 200ms, the Deployment said Running, and it was a
+    # months-old image. The pin (#67) removes the freeze; this row guards the
+    # two ways the pin itself can rot — the spec quietly going back to a
+    # mutable tag, and a pod still running a digest that is not the pinned
+    # one. Cluster-local on purpose: comparing the pin against GHCR needs a
+    # token and answers the same for every cluster, so that comparison lives
+    # in the bump script and k8scc's CI, not in a per-cluster daily report.
+    #
+    # warn and never fail: a rotted pin is #66's RISK returning, not an
+    # outage — the terminal still serves. Only FAIL_COUNT gates the dead-man
+    # ping (see check 22's note).
+    IM_JSON=$(kubectl -n claudecode get deploy im -o json 2>/dev/null || true)
+    if [[ -z "$IM_JSON" ]]; then
+      # A real state, said out loud: claudecode suspended, or no im at all.
+      # Absent and verified must not read alike.
+      record ok "im image pin (no im deployment — nothing checked)"
+    else
+      IM_OWNER=$(echo "$IM_JSON" | jq -r '.metadata.labels["helm.toolkit.fluxcd.io/name"] // ""')
+      if [[ "$IM_OWNER" != "claude-code-im" ]]; then
+        # Pre-handover per-user instance. Pinning is the base HR's contract;
+        # warning here would flag every not-yet-migrated cluster daily, and a
+        # guard that rings on correct input gets switched off.
+        record ok "im image pin (im owned by '${IM_OWNER:-?}', pre-handover — nothing checked)"
+      else
+        IM_UNPINNED=$(echo "$IM_JSON" | jq -r '((.spec.template.spec.containers // []) + (.spec.template.spec.initContainers // []))[] | .image | select(startswith("ghcr.io/ferry133/claude-code")) | select(contains("@sha256:") | not)')
+        IM_PINS=$(echo "$IM_JSON" | jq -r '((.spec.template.spec.containers // []) + (.spec.template.spec.initContainers // []))[] | .image | select(startswith("ghcr.io/ferry133/claude-code")) | select(contains("@sha256:"))' | sed 's/.*@sha256:/sha256:/' | sort -u)
+        if [[ -n "$IM_UNPINNED" ]]; then
+          record warn "im image pin" "not pinned by digest: $(echo "$IM_UNPINNED" | tr '\n' ' ')— the spegel freeze (#66) is back on the table"
+        elif [[ "$(echo "$IM_PINS" | grep -c .)" -ne 1 ]]; then
+          record warn "im image pin" "spec pins disagree across containers: $(echo "$IM_PINS" | tr '\n' ' ')"
+        else
+          IM_SEL=$(echo "$IM_JSON" | jq -r '.spec.selector.matchLabels | to_entries | map("\(.key)=\(.value)") | join(",")')
+          IM_RUN=$(kubectl -n claudecode get pods -l "$IM_SEL" -o json 2>/dev/null \
+            | jq -r '.items[] | ((.status.containerStatuses // []) + (.status.initContainerStatuses // []))[] | .imageID | select(contains("ferry133/claude-code"))' \
+            | sed 's/.*@sha256:/sha256:/' | sort -u)
+          if [[ -z "$IM_RUN" ]]; then
+            record warn "im image pin" "pinned, but no running container to compare (rollout in flight, or the pod is down)"
+          elif [[ "$IM_RUN" == "$IM_PINS" ]]; then
+            record ok "im image pin (running == ${IM_PINS:0:19}…)"
+          else
+            # The #66 shape exactly: spec says one thing, the node runs
+            # another, and no other row on this report can see the difference.
+            record warn "im image pin" "running $(echo "$IM_RUN" | tr '\n' ' ')!= pinned ${IM_PINS} (stale pod, or a mirror answered a frozen reference)"
+          fi
+        fi
+      fi
+    fi
+
     echo "==> Compiling report"
     if [[ $FAIL_COUNT -gt 0 ]]; then
       STATUS_TAG="❌ ${FAIL_COUNT} FAIL"

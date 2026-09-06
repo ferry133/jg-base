@@ -164,6 +164,13 @@ jobs:
       - name: daily-check off-site destination row
         run: bash scripts/check-offsite-destination-row.sh
 
+      # #66: `latest` froze on spegel and three green signals hid a months-old
+      # image. Check 23 compares the running digest against the spec pin; the
+      # case that has to keep warning is running≠pinned — the pin present and
+      # useless is #66 with extra steps.
+      - name: daily-check im image pin row
+        run: bash scripts/check-image-pin-row.sh
+
       # #54: on an appliance the mandatory backup ran nightly, succeeded and
       # staged nothing, because it only ever captured databases and an appliance
       # has none. The case that must not regress is `staged_bytes: 0` reporting
