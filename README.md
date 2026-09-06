@@ -356,7 +356,7 @@ To have Flux reconcile on `git push` instead of polling:
 
 ## NAS backups on a cluster with no NAS
 
-`extras/claudecode/postgres` and `extras/default/postgres` each ship a daily
+`base/claudecode/postgres` and `extras/default/postgres` each ship a daily
 `pg_dump` CronJob writing to a **separate** NAS backup share — separate from the
 live-DB share so it can be ShareSync'd off-site without two-way-syncing live
 database files. It needs a hand-rolled `PersistentVolume` because that share is a
