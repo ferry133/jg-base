@@ -1,0 +1,66 @@
+---
+# The default `im` instance, promoted from the per-user repos into jg-base
+# (ferry133 directive, 2026-09-06): every cluster ships one Claude Code web
+# terminal at im.<domain> with ZERO cluster.yaml configuration. Per-cluster
+# *values* (domain, Auth0 tenant, allowlist, storage classes) arrive at
+# runtime via postBuild from cluster-secrets; there is no template-time
+# structure left in it — that is what allows it to live here.
+#
+# Three states, same switch as longhorn's backup-ks.yaml (#7, #29):
+#
+#   never re-rendered  jg-base's default below: `suspend: true`. Nothing is
+#                      applied, the object never reconciles, so it has no
+#                      status.conditions for daily-check to trip over. This is
+#                      the migration ratchet: a user repo that still renders
+#                      its own `im` HelmRelease (the pre-2026-09 layout) would
+#                      otherwise fight this Kustomization over the same
+#                      object name.
+#
+#   on                 jg-cluster-template patches `suspend: false` and
+#                      `path: .../im/enabled` on every re-render where
+#                      claudecode_auth0 is true (the default). The same render
+#                      drops `im` from the per-user instance list and emits the
+#                      CLAUDECODE_* substitution values — one commit flips a
+#                      cluster atomically.
+#
+#   off after being    `suspend: false` and `path: .../im/disabled` — an empty
+#   on                 directory, NOT a return to `suspend: true`. Suspend
+#                      stops reconciliation without removing what it created
+#                      (measured: jcom lan-address-probe, 2026-08-19); the
+#                      empty path keeps this object reconciling with an empty
+#                      inventory, so Flux prunes the HelmRelease and helm
+#                      uninstalls the release. The PVCs survive that: both are
+#                      rendered with `retain: true` (helm.sh/resource-policy:
+#                      keep).
+#
+# Why the gate is a jgct patch and not `${...}` in this path: `cluster-apps`
+# walks ./kubernetes/apps/base, flux-local collects every Kustomization under
+# it and substitutes nothing — a `${VAR}` in a path aborts the whole suite at
+# collection. Measured on #28; backup-ks.yaml carries the full writeup.
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: claude-code-im
+  namespace: flux-system
+spec:
+  suspend: true
+  interval: 1h
+  # Under `interval` so the enable-time race — chartRef applied before the
+  # shared claude-code Kustomization has the OCIRepository up — heals in
+  # minutes. Deliberately no `dependsOn: [claude-code]`: a Kustomization
+  # depending on a suspended one waits forever, and that failure mode is a
+  # permanent not-Ready row (see backup-ks.yaml on why that alarm shape is
+  # worse than a retry).
+  retryInterval: 5m
+  path: ./kubernetes/apps/base/claudecode/claude-code/im/enabled
+  postBuild:
+    substituteFrom:
+      - name: cluster-secrets
+        kind: Secret
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: jg-base
+    namespace: flux-system
+  targetNamespace: claudecode
+  wait: false

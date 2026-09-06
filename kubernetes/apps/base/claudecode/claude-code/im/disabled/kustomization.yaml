@@ -1,0 +1,17 @@
+---
+# Deliberately empty — the "this cluster opted out of the base im instance"
+# position of the switch (claudecode_auth0: false in cluster.yaml).
+#
+# Same shape and same reasons as storage/longhorn/backup/disabled: an empty
+# path keeps the Kustomization reconciling with an empty inventory, so Flux
+# prunes the HelmRelease and helm uninstalls the release — where a suspend
+# would strand a running root-shell terminal with its only reporting object
+# silenced in the same instant. The two PVCs are rendered with `retain: true`
+# and survive the uninstall; a later re-enable adopts them (same release name,
+# same claim names).
+#
+# `kustomize build` here exits 0 with empty output — measured on the longhorn
+# twin of this file.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources: []

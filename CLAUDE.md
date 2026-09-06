@@ -47,24 +47,31 @@ kubernetes/apps/
 ```
 
 **`base/claudecode/claude-code` is a base app** — every cluster ships one Claude Code
-web terminal at `im.<domain>` (jg-jiahd pins its own to `cc.jiahd.cc` — the reference
-deployment — via an explicit `claude_instances: ["cc"]`),
-so ferry133 always has a remote support path into the cluster that does not depend on
-Omni/SideroLink. Shared pieces (namespace, `cluster-admin` SA, OCIRepository, secrets)
-live here in `jg-base`; the per-instance HelmReleases are still rendered into the
-per-user repo from `claude_instances` (default `["im"]`) because the instance names and
-the `oauth2-proxy` / `talos-mcp` sidecars are template-time *structure*.
-`extras/claudecode/postgres` stays opt-in.
+web terminal at `im.<domain>`, so ferry133 always has a remote support path into the
+cluster that does not depend on Omni/SideroLink. Since 2026-09-06 the **default `im`
+HelmRelease itself lives here** (`claude-code/im/enabled/`, gated by the
+`claude-code-im` Kustomization — three states, documented in `im-ks.yaml`): all
+per-cluster differences reach it as Flux `${VAR}`s from cluster-secrets, so a default
+cluster needs ZERO `claude.*` settings in `cluster.yaml`. `im` runs the **`latest`**
+image tag, deliberately against this repo's pinning convention — a k8scc push updates
+the fleet's support terminals with no per-repo bump; costs and rationale in
+`claude-code/README.md`. Extra instances (jg-jiahd's `cc.jiahd.cc`, per-client support
+shells) are still template-time *structure* rendered into the per-user repo from
+`claude_instances` — which no longer emits `im`. `extras/claudecode/postgres` stays
+opt-in.
 
-**Auth0 OIDC is the default gate** in front of every instance (`claudecode_auth0`,
-default true, in `jg-cluster-template`). The shared Auth0 application's
-domain/client_id/client_secret come from a gitignored `auth0.json` in each cluster
-directory; the oauth2-proxy cookie secret is derived from `age.key` + `cluster_name`.
-Two things this costs, both real: the instance is unreachable until that cluster's
+**Auth0 OIDC is the only gate on `im`** (and the default for extra instances:
+`claudecode_auth0`, default true, in `jg-cluster-template`). Each cluster's own Auth0
+tenant supplies domain/client_id/client_secret (in `cluster.yaml`; sharing a tenant
+requires the explicit `claudecode_auth0_shared` flag — jgct#64); the oauth2-proxy
+cookie secret is derived from `age.key` + `cluster_name`. Two things this costs, both
+real: the instance is unreachable until that cluster's
 `https://<instance>.<domain>/oauth2/callback` is registered in the Auth0 application
 (OIDC mode binds ttyd to loopback — there is no fallback), and the rescue path now
 depends on Auth0 being up. A cluster that cannot accept that sets
-`claudecode_auth0: false` and supplies `ttyd_credential`.
+`claudecode_auth0: false` — which swaps `claude-code-im` to the empty `im/disabled`
+path (PVCs survive: `retain: true`) — and supplies `ttyd_credential` for a basic-auth
+instance of its own via `claude_instances`.
 
 **`base/monitoring/daily-check` is a base app** — every cluster runs its own daily
 health-check CronJob (08:00 Asia/Taipei) that emails a report via Gmail SMTP and pings
