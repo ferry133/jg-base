@@ -59,7 +59,7 @@ spec:
             # Same image as the app container, so this adds no new pull.
             image:
               repository: ghcr.io/ferry133/claude-code
-              tag: latest
+              tag: 9418571@sha256:e34ddd885f535ed86822ea5ca5b5764e66dfc43a025fe0f1690d4f84feb39bd0
             command:
               - bash
               - -c
@@ -73,14 +73,16 @@ spec:
           app:
             image:
               repository: ghcr.io/ferry133/claude-code
-              # `latest`, deliberately, against this repo's pinning convention
-              # (ferry133 directive, 2026-09-06): a k8scc push to main is what
-              # updates the fleet's support terminals, with no per-repo tag
-              # bump. What that costs is written in the app README — no pinned
-              # rollback, version drift until pods restart, and a GHCR
-              # dependency on every pod start (`:latest` implies
-              # imagePullPolicy: Always).
-              tag: latest
+              # Pinned by digest, back on this repo's convention (#66,
+              # ferry133 ruling 2026-09-06 superseding his same-day `latest`
+              # directive). `latest` was measured frozen on spegel clusters:
+              # the mirror answers a tag query from whichever node still
+              # caches it, so jg-jiahd restarted, "Pulled" in 200ms, ran a
+              # months-old image, and every signal read green. A digest is
+              # content-addressed — spegel has nothing to freeze. Updates are
+              # scripts/bump-claudecode-image.sh -> commit, so each one is
+              # visible to Flux and rollback is a revert.
+              tag: 9418571@sha256:e34ddd885f535ed86822ea5ca5b5764e66dfc43a025fe0f1690d4f84feb39bd0
             env:
               # The pod runs as uid 0 (see defaultPodOptions), which would
               # resolve HOME=/root -- but all state (claude config PVC,
@@ -161,7 +163,7 @@ spec:
             # than crash or lie.
             image:
               repository: ghcr.io/ferry133/claude-code
-              tag: latest
+              tag: 9418571@sha256:e34ddd885f535ed86822ea5ca5b5764e66dfc43a025fe0f1690d4f84feb39bd0
             command: ["python3", "/usr/local/bin/talos_mcp_server.py"]
             env:
               TALOSCONFIG: /etc/talos-mcp/talosconfig
