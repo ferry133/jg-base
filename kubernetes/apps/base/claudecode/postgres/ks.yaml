@@ -7,17 +7,21 @@
 # template-time structure remains, which is what allows it to live here.
 #
 # `suspend: true` is the same migration ratchet as im-ks.yaml one directory
-# up: a user repo that still lists the extras copy of this app renders a
-# Kustomization with THIS name pointing at the extras path, and two owners
-# fighting over Kustomization/claudecode-postgres is how a PVC gets pruned
-# (measured 2026-08-07/08). jg-cluster-template flips suspend on re-render,
-# in the same commit that drops the extra from the user repo. The extras copy
-# stays in this repo until every cluster has flipped (only jcom runs it);
-# removing it earlier breaks jcom's live Kustomization mid-transition.
+# up, and the NAME is new — `claudecode-db`, not the extras copy's
+# `claudecode-postgres` — for the same reason im's Kustomization got a new
+# name: the extras object is owned by the user repo's applier, and a base
+# manifest under the SAME name would have cluster-apps and the extras applier
+# force-applying the same object in turns (suspended+base-path vs
+# active+extras-path, flipping hourly; on the re-render day the prune
+# finalizer takes the PVC and Deployment with it — review catch on PR #74).
+# The child objects (Deployment/postgres, PVC/postgres-data, …) keep their
+# names; jcom's handover follows today's im sequence: suspend the old owner,
+# let this one adopt, then drop the extra. The extras copy stays in this repo
+# until every cluster has flipped (only jcom runs it).
 apiVersion: kustomize.toolkit.fluxcd.io/v1
 kind: Kustomization
 metadata:
-  name: claudecode-postgres
+  name: claudecode-db
   namespace: flux-system
 spec:
   suspend: true
