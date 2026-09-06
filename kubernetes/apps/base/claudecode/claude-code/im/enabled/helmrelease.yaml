@@ -69,7 +69,16 @@ spec:
               # file came out empty, and oauth2-proxy failed closed: 403 for
               # everyone on all three im.<domain>. Same trap as D46 in
               # monitoring/backup; the escape is what nfs-subdir's pathPattern uses.
-              - printf '%s' "$${ALLOWED_EMAILS}" | tr ',' '\n' | sed 's/^ *//; s/ *$//' > /etc/oauth2-proxy/allowed-emails
+              # `[ -s ]` after writing: an empty allowlist means oauth2-proxy
+              # admits nobody, and it spent 75 minutes doing exactly that behind
+              # three green signals (#70). A pod that refuses to start is the
+              # loud version of the same lockout — including on a cluster that
+              # simply has not set CLAUDECODE_ALLOWED_EMAILS yet: the terminal
+              # is unusable either way, and only one of the two states shows up.
+              - >-
+                printf '%s' "$${ALLOWED_EMAILS}" | tr ',' '\n' | sed 's/^ *//; s/ *$//' > /etc/oauth2-proxy/allowed-emails
+                && [ -s /etc/oauth2-proxy/allowed-emails ]
+                || { echo "allowed-emails is empty — oauth2-proxy would fail closed, refusing to start instead (jg-base#70)"; exit 1; }
             env:
               ALLOWED_EMAILS: "${CLAUDECODE_ALLOWED_EMAILS:-}"
             securityContext:
