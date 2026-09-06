@@ -48,7 +48,7 @@ spec:
   # ⚠️ This measurement is load-bearing well outside this file, and that is not
   # obvious from here. Five other schedules in this repo set no `timeZone` and
   # encode the offset in the hour, i.e. they rely on the same cluster default
-  # this just measured: extras/claudecode/postgres and extras/default/postgres
+  # this just measured: base/claudecode/postgres and extras/default/postgres
   # backups (0 18), extras/default/linebot (0 19), and freepbx backup and
   # file-backup (0 19, 0 20).
   #

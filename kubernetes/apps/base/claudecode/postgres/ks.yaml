@@ -15,9 +15,14 @@
 # active+extras-path, flipping hourly; on the re-render day the prune
 # finalizer takes the PVC and Deployment with it — review catch on PR #74).
 # The child objects (Deployment/postgres, PVC/postgres-data, …) keep their
-# names; jcom's handover follows today's im sequence: suspend the old owner,
-# let this one adopt, then drop the extra. The extras copy stays in this repo
-# until every cluster has flipped (only jcom runs it).
+# names. jcom — the only cluster that ran the extra — handed over on
+# 2026-09-06 with zero churn, and the sequence is worth keeping: patch the
+# OLD child Kustomization to prune:false first, then push the user-repo
+# commit that drops the extra (extras-postgres gets pruned but leaves its
+# children), and claudecode-db adopts everything by name — pod untouched,
+# zero Released PVs, measured. The extras copy was removed after that
+# handover; a cluster repo that still references
+# kubernetes/apps/extras/claudecode/postgres is pointing at history.
 apiVersion: kustomize.toolkit.fluxcd.io/v1
 kind: Kustomization
 metadata:
