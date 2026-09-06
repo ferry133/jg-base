@@ -63,7 +63,13 @@ spec:
             command:
               - bash
               - -c
-              - printf '%s' "${ALLOWED_EMAILS}" | tr ',' '\n' | sed 's/^ *//; s/ *$//' > /etc/oauth2-proxy/allowed-emails
+              # $${...}: this is the CONTAINER's env var, not a Flux variable. Flux
+              # postBuild rewrote the unescaped form to "" on every cluster on
+              # 2026-09-06 (no ALLOWED_EMAILS in cluster-secrets), the allowlist
+              # file came out empty, and oauth2-proxy failed closed: 403 for
+              # everyone on all three im.<domain>. Same trap as D46 in
+              # monitoring/backup; the escape is what nfs-subdir's pathPattern uses.
+              - printf '%s' "$${ALLOWED_EMAILS}" | tr ',' '\n' | sed 's/^ *//; s/ *$//' > /etc/oauth2-proxy/allowed-emails
             env:
               ALLOWED_EMAILS: "${CLAUDECODE_ALLOWED_EMAILS:-}"
             securityContext:
