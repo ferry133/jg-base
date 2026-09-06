@@ -1,0 +1,16 @@
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: postgres-data
+spec:
+  accessModes: [ReadWriteOnce]
+  # Fallback local-path, not sc-nas: this is a base app now, and a base
+  # fallback must exist on every cluster — an appliance has no NFS class at
+  # all, and a database on NFS was never right anyway (#73). A cluster whose
+  # cluster-secrets carries DB_STORAGE_CLASS (all re-rendered ones) is
+  # unaffected by the fallback.
+  storageClassName: ${DB_STORAGE_CLASS:=local-path}
+  resources:
+    requests:
+      storage: 5Gi

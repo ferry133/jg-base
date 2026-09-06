@@ -1,0 +1,36 @@
+---
+# Explicit memory's PostgreSQL, promoted from extras into jg-base
+# (ferry133 directive 2026-09-06, #73): every cluster ships the database the
+# MCP memory server writes to, with ZERO cluster.yaml configuration. The
+# password arrives at runtime via postBuild from cluster-secrets
+# (CLAUDECODE_POSTGRES_PASSWORD, derived at render time — jgct#85); no
+# template-time structure remains, which is what allows it to live here.
+#
+# `suspend: true` is the same migration ratchet as im-ks.yaml one directory
+# up: a user repo that still lists the extras copy of this app renders a
+# Kustomization with THIS name pointing at the extras path, and two owners
+# fighting over Kustomization/claudecode-postgres is how a PVC gets pruned
+# (measured 2026-08-07/08). jg-cluster-template flips suspend on re-render,
+# in the same commit that drops the extra from the user repo. The extras copy
+# stays in this repo until every cluster has flipped (only jcom runs it);
+# removing it earlier breaks jcom's live Kustomization mid-transition.
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: claudecode-postgres
+  namespace: flux-system
+spec:
+  suspend: true
+  interval: 1h
+  path: ./kubernetes/apps/base/claudecode/postgres/app
+  postBuild:
+    substituteFrom:
+      - name: cluster-secrets
+        kind: Secret
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: jg-base
+    namespace: flux-system
+  targetNamespace: claudecode
+  wait: false
