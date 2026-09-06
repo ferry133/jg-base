@@ -1192,15 +1192,17 @@ data:
     IM_JSON=$(kubectl -n claudecode get deploy im -o json 2>/dev/null || true)
     if [[ -z "$IM_JSON" ]]; then
       # A real state, said out loud: claudecode suspended, or no im at all.
-      # Absent and verified must not read alike.
-      record ok "im image pin (no im deployment — nothing checked)"
+      # skip and not ok — this row measured nothing, and "could not measure"
+      # rendering as a green row is #66's own shape (review catch on PR #68).
+      record skip "im image pin" "no im deployment — this row measured nothing"
     else
       IM_OWNER=$(echo "$IM_JSON" | jq -r '.metadata.labels["helm.toolkit.fluxcd.io/name"] // ""')
       if [[ "$IM_OWNER" != "claude-code-im" ]]; then
         # Pre-handover per-user instance. Pinning is the base HR's contract;
         # warning here would flag every not-yet-migrated cluster daily, and a
-        # guard that rings on correct input gets switched off.
-        record ok "im image pin (im owned by '${IM_OWNER:-?}', pre-handover — nothing checked)"
+        # guard that rings on correct input gets switched off — but skip, not
+        # ok: nothing was measured, and the row says so.
+        record skip "im image pin" "im owned by '${IM_OWNER:-?}', pre-handover — pin not applicable yet"
       else
         IM_UNPINNED=$(echo "$IM_JSON" | jq -r '((.spec.template.spec.containers // []) + (.spec.template.spec.initContainers // []))[] | .image | select(startswith("ghcr.io/ferry133/claude-code")) | select(contains("@sha256:") | not)')
         IM_PINS=$(echo "$IM_JSON" | jq -r '((.spec.template.spec.containers // []) + (.spec.template.spec.initContainers // []))[] | .image | select(startswith("ghcr.io/ferry133/claude-code")) | select(contains("@sha256:"))' | sed 's/.*@sha256:/sha256:/' | sort -u)

@@ -99,9 +99,11 @@ run() { # $1=label $2=deploy json (or ABSENT) $3=pods json $4=expected prefix
 
 PINNED="$(deploy_json claude-code-im "$REPO:9418571@$D1" "$REPO:9418571@$D1" "$REPO:9418571@$D1")"
 
-# Absent and pre-handover are real states and must not ring daily.
-run absent        ABSENT   '{}'                     "[ok] im image pin (no im deployment"
-run pre-handover  "$(deploy_json im "$REPO:9418571")" '{}' "[ok] im image pin (im owned by 'im', pre-handover"
+# Absent and pre-handover are real states: they must not ring daily, and they
+# must not render as a green row either — skip is the third outcome, and
+# folding "could not measure" into "pass" is #66's own shape.
+run absent        ABSENT   '{}'                     "[skip] im image pin — no im deployment"
+run pre-handover  "$(deploy_json im "$REPO:9418571")" '{}' "[skip] im image pin — im owned by 'im', pre-handover"
 
 # The spec quietly back on a mutable tag: the freeze risk returns. warn.
 run unpinned      "$(deploy_json claude-code-im "$REPO:latest" "$REPO:9418571@$D1")" '{}' \
@@ -132,9 +134,16 @@ if [[ "${SEEN[healthy]}" != "ok" ]]; then
   FAILED=$((FAILED + 1))
 fi
 
+if [[ "${SEEN[absent]}" == "ok" || "${SEEN[pre-handover]}" == "ok" ]]; then
+  echo "FAIL  a branch that measured nothing reported ok — could-not-measure"
+  echo "      folded into pass is the exact conflation this row exists to avoid."
+  FAILED=$((FAILED + 1))
+fi
+
 DISTINCT=$(printf '%s\n' "${SEEN[@]}" | sort -u | wc -l | tr -d ' ')
-if (( DISTINCT < 2 )); then
-  echo "FAIL  only ${DISTINCT} distinct level(s) across ${#SEEN[@]} cases."
+if (( DISTINCT < 3 )); then
+  echo "FAIL  only ${DISTINCT} distinct level(s) across ${#SEEN[@]} cases —"
+  echo "      ok, warn and skip should all appear."
   FAILED=$((FAILED + 1))
 fi
 
@@ -142,4 +151,4 @@ if (( FAILED )); then
   echo "$FAILED check(s) failed."
   exit 1
 fi
-echo "ok — ${#SEEN[@]} cases match, ${DISTINCT} distinct levels, running≠pinned ≠ ok"
+echo "ok — ${#SEEN[@]} cases match, ${DISTINCT} distinct levels, running≠pinned ≠ ok, unmeasured ≠ ok"
