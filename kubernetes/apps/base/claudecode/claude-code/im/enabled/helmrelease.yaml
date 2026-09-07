@@ -14,7 +14,7 @@
 #     of a bare talosctl auth error.
 #   - The email allowlist is an initContainer, not a rendered ConfigMap:
 #     postBuild substitution collapses newlines in multi-line values, so the
-#     comma-separated ${CLAUDECODE_ALLOWED_EMAILS} is split into one-per-line
+#     comma-separated ${FACTORY_ALLOWED_EMAILS} is split into one-per-line
 #     inside the pod instead of at render time.
 #
 # Extra instances (a renamed terminal, a per-client support shell, a
@@ -73,7 +73,7 @@ spec:
               # admits nobody, and it spent 75 minutes doing exactly that behind
               # three green signals (#70). A pod that refuses to start is the
               # loud version of the same lockout — including on a cluster that
-              # simply has not set CLAUDECODE_ALLOWED_EMAILS yet: the terminal
+              # whose cluster-secrets has no FACTORY_ALLOWED_EMAILS yet: the terminal
               # is unusable either way, and only one of the two states shows up.
               - >-
                 printf '%s' "$${ALLOWED_EMAILS}" | tr ',' '\n' | sed 's/^ *//; s/ *$//' > /etc/oauth2-proxy/allowed-emails

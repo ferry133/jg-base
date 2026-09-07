@@ -56,7 +56,8 @@ release.
 
 From cluster-secrets via `postBuild` (all rendered by jg-cluster-template into
 each user repo's `cluster-secrets.sops.yaml`): `SECRET_DOMAIN`,
-`CLAUDECODE_AUTH0_DOMAIN`, `CLAUDECODE_ALLOWED_EMAILS` (comma-separated — an
+`FACTORY_AUTH0_DOMAIN`, `FACTORY_ALLOWED_EMAILS` (the factory tenant since #75 —
+rendered from each cluster directory's gitignored `auth0.json`; comma-separated — an
 initContainer splits it to one-per-line inside the pod, because postBuild
 substitution collapses newlines in multi-line values),
 `CLAUDECODE_CONFIG_STORAGE_CLASS`, `DEFAULT_STORAGE_CLASS`, plus the

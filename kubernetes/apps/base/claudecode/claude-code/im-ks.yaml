@@ -20,8 +20,8 @@
 #                      `path: .../im/enabled` on every re-render where
 #                      claudecode_auth0 is true (the default). The same render
 #                      drops `im` from the per-user instance list and emits the
-#                      CLAUDECODE_* substitution values — one commit flips a
-#                      cluster atomically.
+#                      FACTORY_* and CLAUDECODE_* substitution values — one
+#                      commit flips a cluster atomically.
 #
 #   off after being    `suspend: false` and `path: .../im/disabled` — an empty
 #   on                 directory, NOT a return to `suspend: true`. Suspend
