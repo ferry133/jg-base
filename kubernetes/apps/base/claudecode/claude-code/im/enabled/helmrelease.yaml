@@ -72,7 +72,7 @@ spec:
               # `[ -s ]` after writing: an empty allowlist means oauth2-proxy
               # admits nobody, and it spent 75 minutes doing exactly that behind
               # three green signals (#70). A pod that refuses to start is the
-              # loud version of the same lockout — including on a cluster that
+              # loud version of the same lockout — including on a cluster
               # whose cluster-secrets has no FACTORY_ALLOWED_EMAILS yet: the terminal
               # is unusable either way, and only one of the two states shows up.
               - >-
@@ -82,8 +82,10 @@ spec:
             env:
               # FACTORY_, since #75: im is factory's support terminal and its
               # allowlist comes from factory's auth0.json (jgct#84 ruling (a)).
-              # Customer extra instances keep CLAUDECODE_ALLOWED_EMAILS. No :-
-              # default — an unset value should fail the [ -s ] guard loudly.
+              # Customer extra instances get theirs at Jinja render time from
+              # cluster.yaml (jgct instances/helmrelease.yaml.j2), not from a
+              # cluster-secrets key. No :- default — an unset value should fail
+              # the [ -s ] guard loudly.
               ALLOWED_EMAILS: "${FACTORY_ALLOWED_EMAILS}"
             securityContext:
               allowPrivilegeEscalation: false
