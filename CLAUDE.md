@@ -70,14 +70,19 @@ shells) are still template-time *structure* rendered into the per-user repo from
 opt-in.
 
 **Auth0 OIDC is the only gate on `im`** (and the default for extra instances:
-`claudecode_auth0`, default true, in `jg-cluster-template`). Each cluster's own Auth0
-tenant supplies domain/client_id/client_secret (in `cluster.yaml`; sharing a tenant
-requires the explicit `claudecode_auth0_shared` flag — jgct#64); the oauth2-proxy
-cookie secret is derived from `age.key` + `cluster_name`. Two things this costs, both
-real: the instance is unreachable until that cluster's
-`https://<instance>.<domain>/oauth2/callback` is registered in the Auth0 application
-(OIDC mode binds ttyd to loopback — there is no fallback), and the rescue path now
-depends on Auth0 being up. A cluster that cannot accept that sets
+`claudecode_auth0`, default true, in `jg-cluster-template`). Since 2026-09-07 (#75,
+jgct#84) the base `im` authenticates against the **factory** tenant: four `FACTORY_*`
+values that `jg-cluster-template` renders into cluster-secrets from each cluster
+directory's gitignored `auth0.json`, identical fleet-wide. Extra instances named in
+`claude_instances` use the **customer** tenant from `cluster.yaml`'s
+`claudecode_auth0_*`, required only when an instance is named; the older
+`claudecode_auth0_shared` flag (jgct#64) is now refused by `check-claudecode-auth.py`.
+The oauth2-proxy cookie secret is derived from `age.key` + `cluster_name`. Two things
+this costs, both real: the instance is unreachable until its
+`https://<instance>.<domain>/oauth2/callback` is registered in the matching Auth0
+application (the factory app for `im`, the customer app for extras; OIDC mode binds
+ttyd to loopback — there is no fallback), and the rescue path now depends on Auth0
+being up. A cluster that cannot accept that sets
 `claudecode_auth0: false` — which swaps `claude-code-im` to the empty `im/disabled`
 path (PVCs survive: `retain: true`) — and supplies `ttyd_credential` for a basic-auth
 instance of its own via `claude_instances`.
