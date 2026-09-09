@@ -177,6 +177,77 @@ run never-succeeded "$(cj claudecode postgres-backup false '')" \
 "[fail] Backup claudecode/postgres-backup — has never completed successfully (status.lastSuccessfulTime is unset)
 [ok] Backup CronJobs measured: 1"
 
+# ── the thresholds, with the REAL epoch_of and REAL timestamps ──────────────
+# FO-handler [f92b04] verified this row against three live clusters and said
+# plainly what it had NOT covered: `epoch_of` never executed, because it stubbed
+# BSD `date` in its place. So the >26h and >48h branches had been asserted only
+# against a stub returning whatever each case asked for — which proves the
+# branch order and nothing about parsing.
+#
+# These cases run the real `epoch_of` out of run-check.sh against real RFC3339
+# strings. That is the same first branch production takes: cronjob.yaml's
+# `apk add bash bind-tools` is only the bootstrap that gets bash, and
+# run-check.sh's own install line then adds coreutils, so `date -u -d` there is
+# GNU. Checked rather than taken from the comment above epoch_of — a stale
+# comment would have sent this file testing the wrong branch.
+EPOCH_OF_SRC="$(sed -n '/^epoch_of() {/,/^}/p' "$WORK/run-check.sh")"
+[[ -n "$EPOCH_OF_SRC" ]] || { echo "could not extract epoch_of from run-check.sh"; exit 1; }
+eval "$EPOCH_OF_SRC"
+
+rfc3339_ago() {  # $1 = hours before NOW
+  python3 -c "import datetime,sys;print(datetime.datetime.fromtimestamp($NOW-int(sys.argv[1])*3600,datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'))" "$1"
+}
+TS_FRESH="$(rfc3339_ago 6)"
+TS_LATE="$(rfc3339_ago 30)"
+TS_STALE="$(rfc3339_ago 70)"
+
+# Same as run(), but epoch_of is the real one rather than a stub.
+run_real() {
+  local label="$1" items="$2" want="$3"
+  ROWS=()
+  record() { ROWS+=("[$1] $2${3:+ — $3}"); }
+  date() { if [[ "$*" == "-u +%s" ]]; then echo "$NOW"; else command date "$@"; fi; }
+  kubectl() { printf '{"items":[%s]}\n' "$items"; }
+  # shellcheck disable=SC1091
+  source "$WORK/block.sh"
+  unset -f kubectl date record 2>/dev/null || true
+  local got; got="$(printf '%s\n' "${ROWS[@]:-<no row>}")"
+  SEEN["$label"]="$got"
+  if [[ "$got" == "$want" ]]; then
+    printf 'PASS  %-22s -> %s\n' "$label" "$(echo "$got" | head -1 | cut -c1-78)"
+  else
+    printf 'FAIL  %-22s\n  got:\n%s\n  want:\n%s\n' "$label" "$got" "$want"
+    FAILED=$((FAILED + 1))
+  fi
+}
+
+# GNU `date -u -d` is what production takes. BSD date (a macOS checkout) has
+# neither that nor busybox's -D, so epoch_of returns empty there and these cases
+# would quietly assert the "cannot parse" branch instead — passing while
+# measuring nothing. Not run, said out loud, and an error in CI so the silence
+# cannot become permanent.
+if command date -u -d @0 +%s >/dev/null 2>&1; then
+  run_real real-fresh "$(cj db postgres-backup false "$TS_FRESH")" \
+"[ok] Backup db/postgres-backup (last success 6h ago)
+[ok] Backup CronJobs measured: 1"
+
+  run_real real-late "$(cj db postgres-backup false "$TS_LATE")" \
+"[warn] Backup db/postgres-backup late — last success 30h ago
+[ok] Backup CronJobs measured: 1"
+
+  run_real real-stale "$(cj db postgres-backup false "$TS_STALE")" \
+"[fail] Backup db/postgres-backup stale — last success 70h ago ($TS_STALE)
+[ok] Backup CronJobs measured: 1"
+elif [[ -n "${CI:-}" ]]; then
+  echo "FAIL  GNU date is absent on a CI runner, so the threshold cases did not"
+  echo "      run. They are the only ones exercising the real epoch_of, and a"
+  echo "      silent skip here is how this row stops being tested."
+  FAILED=$((FAILED + 1))
+else
+  echo "NOT RUN  real-fresh/real-late/real-stale — no GNU date on this machine;"
+  echo "         they exercise the real epoch_of and they run in CI."
+fi
+
 echo
 
 # ── cross-case assertions ───────────────────────────────────────────────────
