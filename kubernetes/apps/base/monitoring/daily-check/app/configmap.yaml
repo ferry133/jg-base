@@ -220,18 +220,29 @@ data:
 
     # 6. Backup CronJobs — every namespace, enumerated from the cluster.
     #
-    # This row read `kubectl -n db get cronjob postgres-backup` until #83. The
-    # namespace was pinned, and #73 moved the claudecode postgres into base,
-    # where its backup CronJob lives in namespace `claudecode`; freepbx's
-    # `mariadb-backup` has been in `freepbx` all along. So two of the three
-    # backup CronJobs this repo ships were invisible here, and on a cluster
-    # with no extras/default/postgres the row rendered `skip` — an honest
-    # sentence nobody reads to the end, next to a green off-site row.
-    # jg-jiahd's claudecode backup had never completed once, for two months,
-    # and no report ever said so.
+    # This row read `kubectl -n db get cronjob postgres-backup` until #83 — both
+    # the namespace and the name were pinned. #73 moved the claudecode postgres
+    # into base, where its backup CronJob is in namespace `claudecode`, and
+    # freepbx's `mariadb-backup` has been in `freepbx` all along.
     #
-    # The check never broke. It stopped pointing at the thing, and "pointing
-    # elsewhere" renders exactly like "pointing here and it is fine".
+    # What that cost was measured on the three live clusters, and it is worse
+    # than a gap in coverage. jg-jiahd runs TWO CronJobs called
+    # `postgres-backup`: `db/` (healthy) and `claudecode/` (never completed
+    # once, for over two months). The pinned lookup found `db/` and printed
+    # "Postgres backup ✅" every morning — a true sentence about `db` and a
+    # false impression of the cluster. jcom and jg-janncotcc, having no `db`
+    # copy, got the honest `skip`. So the one cluster that was broken is the
+    # one that got a green tick, because two objects shared a name and the
+    # lookup picked the good one.
+    #
+    # A guard that raises a flag on correct input is worse than no guard; this
+    # is its mirror — a green flag on the wrong object. The check never broke.
+    # It stopped pointing at the thing, and "pointing elsewhere" renders exactly
+    # like "pointing here and it is fine".
+    #
+    # So the row reports `namespace/name` per CronJob and not one verdict:
+    # "something failed" and "which one failed" are different questions at
+    # 08:00, and pinning a different namespace would only move the mine.
     #
     # Enumerated, not listed: a fixture of names written here would miss
     # precisely the backup nobody remembered to add to it — so the subject is
