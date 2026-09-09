@@ -187,6 +187,18 @@ jobs:
       - name: daily-check backup coverage row
         run: bash scripts/check-backup-coverage-row.sh
 
+      # #83: the row was `kubectl -n db get cronjob postgres-backup`. #73 moved
+      # the claudecode postgres into base, where its CronJob is in namespace
+      # `claudecode`, so the row stopped seeing it — and on a cluster with no
+      # extras postgres it rendered `skip`, next to a green off-site row, while
+      # jg-jiahd's backup had never completed once in two months. The two cases
+      # that must keep holding are "never succeeded -> fail" and "a CronJob
+      # outside `db` is reported at all"; the guard asserts both again as
+      # cross-case checks, because per-case expectations can all be edited to
+      # match a broken row in one pass.
+      - name: daily-check backup CronJob row
+        run: bash scripts/check-backup-cronjob-row.sh
+
   diff:
     name: Flux Local Diff
     needs: pre-job

@@ -218,30 +218,97 @@ data:
       record fail "PVCs" "$(echo "$BAD_PVC" | tr '\n' '; ')"
     fi
 
-    # 6. Postgres backup CronJob
-    if kubectl -n db get cronjob postgres-backup >/dev/null 2>&1; then
-      LAST_BACKUP_JOB=$(kubectl -n db get jobs --sort-by=.metadata.creationTimestamp -o json 2>/dev/null | \
-        jq -r '[.items[] | select(.metadata.name | startswith("postgres-backup-"))] | last')
-      # k8s 1.33+ adds a "SuccessCriteriaMet" condition before "Complete", so
-      # conditions[0] is no longer reliable — match the condition by type instead.
-      LAST_STATUS=$(echo "$LAST_BACKUP_JOB" | jq -r '
-        if   ((.status.conditions // []) | any(.type=="Complete" and .status=="True")) then "Complete"
-        elif ((.status.conditions // []) | any(.type=="Failed"   and .status=="True")) then "Failed"
-        else "Unknown" end')
-      LAST_TIME=$(echo "$LAST_BACKUP_JOB" | jq -r '.metadata.creationTimestamp // "never"')
-      if [[ "$LAST_STATUS" == "Complete" ]]; then
-        record ok "Postgres backup (last: ${LAST_TIME})"
-      else
-        record fail "Postgres backup" "Last job status: ${LAST_STATUS}, time: ${LAST_TIME}"
-      fi
+    # 6. Backup CronJobs — every namespace, enumerated from the cluster.
+    #
+    # This row read `kubectl -n db get cronjob postgres-backup` until #83 — both
+    # the namespace and the name were pinned. #73 moved the claudecode postgres
+    # into base, where its backup CronJob is in namespace `claudecode`, and
+    # freepbx's `mariadb-backup` has been in `freepbx` all along.
+    #
+    # What that cost was measured on the three live clusters, and it is worse
+    # than a gap in coverage. jg-jiahd runs TWO CronJobs called
+    # `postgres-backup`: `db/` (healthy) and `claudecode/` (never completed
+    # once, for over two months). The pinned lookup found `db/` and printed
+    # "Postgres backup ✅" every morning — a true sentence about `db` and a
+    # false impression of the cluster. jcom and jg-janncotcc, having no `db`
+    # copy, got the honest `skip`. So the one cluster that was broken is the
+    # one that got a green tick, because two objects shared a name and the
+    # lookup picked the good one.
+    #
+    # A guard that raises a flag on correct input is worse than no guard; this
+    # is its mirror — a green flag on the wrong object. The check never broke.
+    # It stopped pointing at the thing, and "pointing elsewhere" renders exactly
+    # like "pointing here and it is fine".
+    #
+    # So the row reports `namespace/name` per CronJob and not one verdict:
+    # "something failed" and "which one failed" are different questions at
+    # 08:00, and pinning a different namespace would only move the mine.
+    #
+    # Enumerated, not listed: a fixture of names written here would miss
+    # precisely the backup nobody remembered to add to it — so the subject is
+    # whatever the cluster actually runs. offsite-backup is excluded because
+    # check 19 measures it with logic this row has not got, and two rows for
+    # one job would make the report look wider than it is.
+    #
+    # `.status.lastSuccessfulTime` and not the last Job's conditions: it is
+    # directly the question being asked, and it sidesteps the k8s 1.33
+    # SuccessCriteriaMet ordering that the old spelling had to work around.
+    BACKUP_CJ_JSON=$(kubectl get cronjob -A -o json 2>/dev/null || true)
+    if [[ -z "$BACKUP_CJ_JSON" ]]; then
+      # Could not measure — distinct from "there are none". RBAC loss or an API
+      # error would otherwise produce an empty list, i.e. the skip branch, i.e.
+      # a calm-looking report about a cluster nobody looked at.
+      record warn "Backup CronJobs" "could not list CronJobs cluster-wide (RBAC or API error) — this row measured nothing"
     else
-      # skip, not ok (#43). "There is no CronJob here" is an absence of
-      # measurement, and a ✅ against a line reading "backup" is read as
-      # "backups are fine". The data may well be covered by offsite-backup —
-      # another row says so — but this row cannot see that, and a check that
-      # renders identically whether or not it looked is the thing this report
-      # exists not to do.
-      record skip "Postgres backup" "no backup CronJob is deployed here, so this row measured nothing — it is not a statement that the data is unprotected, nor that it is protected"
+      BACKUP_CJ=$(echo "$BACKUP_CJ_JSON" | jq -r '
+        [.items[]
+         | select(.metadata.name | endswith("-backup"))
+         | select(.metadata.name | startswith("offsite-backup") | not)]
+        | sort_by(.metadata.namespace + "/" + .metadata.name)
+        | .[]
+        | "\(.metadata.namespace)\t\(.metadata.name)\t\(.spec.suspend // false)\t\(.status.lastSuccessfulTime // "")"')
+      if [[ -z "$BACKUP_CJ" ]]; then
+        record skip "Backup CronJobs" "no backup CronJob is deployed on this cluster, so this row measured nothing — it is not a statement that the data is unprotected, nor that it is protected (off-site backup is a separate row)"
+      else
+        BACKUP_CJ_N=$(echo "$BACKUP_CJ" | wc -l | tr -d " ")
+        while IFS=$'\t' read -r B_NS B_NAME B_SUSP B_LAST; do
+          [[ -z "$B_NAME" ]] && continue
+          B_ID="Backup ${B_NS}/${B_NAME}"
+          if [[ "$B_SUSP" == "true" ]]; then
+            # Measured, so not skip: the CronJob is here and is deliberately not
+            # running. warn, because from the data's point of view "suspended"
+            # and "backing up nightly" are the same picture.
+            record warn "$B_ID" "CronJob is suspended — no new backups are being taken"
+          elif [[ -z "$B_LAST" ]]; then
+            # jg-jiahd's exact state (#82): the CronJob exists, the schedule
+            # fires, and nothing has ever completed. concurrencyPolicy: Forbid
+            # means one stuck pod also silently skips every later run.
+            record fail "$B_ID" "has never completed successfully (status.lastSuccessfulTime is unset)"
+          else
+            B_EPOCH="$(epoch_of "$B_LAST")"
+            if [[ -z "$B_EPOCH" ]]; then
+              record warn "$B_ID" "cannot parse last success time (${B_LAST})"
+            else
+              B_AGE_H=$(( ( $(date -u +%s) - B_EPOCH ) / 3600 ))
+              # Same thresholds as check 19: every backup this repo ships is
+              # daily, so >26h is late and >48h has missed two.
+              if (( B_AGE_H > 48 )); then
+                record fail "${B_ID} stale" "last success ${B_AGE_H}h ago (${B_LAST})"
+              elif (( B_AGE_H > 26 )); then
+                record warn "${B_ID} late" "last success ${B_AGE_H}h ago"
+              else
+                record ok "${B_ID} (last success ${B_AGE_H}h ago)"
+              fi
+            fi
+          fi
+        done <<< "$BACKUP_CJ"
+        # Coverage, stated as a number. This row is green whenever the list is
+        # non-empty, which is only acceptable because the number is the signal:
+        # when an app moves namespace or an app is dropped, the count changes
+        # and the change is visible. A report that lists rows without saying how
+        # many it looked for cannot show a coverage drop — which is #83.
+        record ok "Backup CronJobs measured: ${BACKUP_CJ_N}"
+      fi
     fi
 
     # 7. Postgres pod
