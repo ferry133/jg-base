@@ -36,6 +36,15 @@ kind: CronJob
 metadata:
   name: mariadb-backup
   namespace: freepbx
+  labels:
+    # Declared subject for daily-check's backup row (#85). The row also
+    # matches on a `*-backup` name, because Longhorn generates its own
+    # CronJob and RecurringJob.spec.labels labels the snapshots, not that
+    # CronJob (measured against Longhorn's docs) -- so a label-only subject
+    # would silently drop it. This label is what a NEW backup shipped from
+    # this repo is found by; scripts/check-backup-label.sh fails the build if
+    # a `*-backup` CronJob here is missing it.
+    app.kubernetes.io/component: backup
 spec:
   schedule: "0 19 * * *"
   concurrencyPolicy: Forbid

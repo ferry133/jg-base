@@ -199,6 +199,16 @@ jobs:
       - name: daily-check backup CronJob row
         run: bash scripts/check-backup-cronjob-row.sh
 
+      # #85: the row's subject used to be a `*-backup` NAME, which is a
+      # convention and not a contract -- a backup called `pg-dump-nightly` was
+      # invisible and the count line would simply have been one smaller. The
+      # subject is now a union (declared label OR that name), and this guard
+      # holds up the half that is ours: every `*-backup` CronJob shipped from
+      # this repo must declare the label. Miss it and the union silently
+      # degrades to name-matching, which renders exactly like a working one.
+      - name: backup CronJobs declare the label
+        run: bash scripts/check-backup-label.sh
+
   diff:
     name: Flux Local Diff
     needs: pre-job

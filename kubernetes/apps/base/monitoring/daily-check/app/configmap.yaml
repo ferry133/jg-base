@@ -262,17 +262,26 @@ data:
     else
       BACKUP_CJ=$(echo "$BACKUP_CJ_JSON" | jq -r '
         [.items[]
-         | select(.metadata.name | endswith("-backup"))
+         | select((.metadata.labels["app.kubernetes.io/component"] == "backup")
+                  or (.metadata.name | endswith("-backup")))
          | select(.metadata.name | startswith("offsite-backup") | not)]
         | sort_by(.metadata.namespace + "/" + .metadata.name)
         | .[]
-        | "\(.metadata.namespace)\t\(.metadata.name)\t\(.spec.suspend // false)\t\(.status.lastSuccessfulTime // "")"')
+        | "\(.metadata.namespace)\t\(.metadata.name)\t\(.spec.suspend // false)\t\(if .metadata.labels["app.kubernetes.io/component"] == "backup" then "label" else "name" end)\t\(.status.lastSuccessfulTime // "")"')
       if [[ -z "$BACKUP_CJ" ]]; then
         record skip "Backup CronJobs" "no backup CronJob is deployed on this cluster, so this row measured nothing — it is not a statement that the data is unprotected, nor that it is protected (off-site backup is a separate row)"
       else
         BACKUP_CJ_N=$(echo "$BACKUP_CJ" | wc -l | tr -d " ")
-        while IFS=$'\t' read -r B_NS B_NAME B_SUSP B_LAST; do
+        BACKUP_BY_NAME=""
+        # lastSuccessfulTime is LAST on purpose: tab is an IFS whitespace
+        # character, so `read` collapses runs of it. An empty field anywhere
+        # but the end silently shifts every field after it -- putting `how`
+        # after it made B_LAST read "name" and the row reported "cannot parse
+        # last success time (name)" instead of "has never completed". Caught by
+        # check-backup-cronjob-row.sh on the first run, which is what it is for.
+        while IFS=$'\t' read -r B_NS B_NAME B_SUSP B_HOW B_LAST; do
           [[ -z "$B_NAME" ]] && continue
+          [[ "$B_HOW" == "name" ]] && BACKUP_BY_NAME+=" ${B_NS}/${B_NAME}"
           B_ID="Backup ${B_NS}/${B_NAME}"
           if [[ "$B_SUSP" == "true" ]]; then
             # Measured, so not skip: the CronJob is here and is deliberately not
@@ -302,12 +311,29 @@ data:
             fi
           fi
         done <<< "$BACKUP_CJ"
-        # Coverage, stated as a number. This row is green whenever the list is
-        # non-empty, which is only acceptable because the number is the signal:
-        # when an app moves namespace or an app is dropped, the count changes
-        # and the change is visible. A report that lists rows without saying how
-        # many it looked for cannot show a coverage drop — which is #83.
-        record ok "Backup CronJobs measured: ${BACKUP_CJ_N}"
+        # Coverage, stated as a number, and the number is the signal: when an
+        # app moves namespace or is dropped, the count changes and the change is
+        # visible. A report that lists rows without saying how many it looked
+        # for cannot show a coverage drop — which is #83.
+        #
+        # The ones matched only by NAME are named, not just counted (#85). The
+        # subject is a union: the declared label, or a `*-backup` name. The
+        # label is the contract for anything this repo ships; the name is what
+        # catches a CronJob a controller generated for us — Longhorn's
+        # `daily-backup` is the live case, and it cannot be labelled from here
+        # because RecurringJob.spec.labels labels the snapshots, not the
+        # CronJob it creates.
+        #
+        # So a name in this list is normal for the controller-generated ones,
+        # and is a to-do for anything else: it means a backup this repo ships
+        # reached a cluster without the label. Naming them is what makes that
+        # difference visible; a count alone cannot, because the
+        # controller-generated one keeps it permanently non-zero.
+        if [[ -n "$BACKUP_BY_NAME" ]]; then
+          record ok "Backup CronJobs measured: ${BACKUP_CJ_N} (by name only:${BACKUP_BY_NAME})"
+        else
+          record ok "Backup CronJobs measured: ${BACKUP_CJ_N} (all labelled)"
+        fi
       fi
     fi
 

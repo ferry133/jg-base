@@ -80,11 +80,16 @@ declare -A SEEN=()
 
 # Build one CronJob item. $1=ns $2=name $3=suspend $4=lastSuccessfulTime
 # ("" = never succeeded, "BAD" = present but unparseable, "AGE:<h>" = h hours old)
+# $5=labelled ("y" adds app.kubernetes.io/component: backup; anything else omits
+# it). The label is the declared subject added in #85; omitting it is how a
+# controller-generated CronJob looks, and also how one of ours looks if someone
+# forgets — the row has to find both and tell them apart.
 cj() {
-  local last_json='null'
+  local last_json='null' labels='{}'
   [[ -n "$4" ]] && last_json="\"$4\""
-  printf '{"metadata":{"namespace":"%s","name":"%s"},"spec":{"suspend":%s},"status":{"lastSuccessfulTime":%s}}' \
-    "$1" "$2" "$3" "$last_json"
+  [[ "${5:-}" == "y" ]] && labels='{"app.kubernetes.io/component":"backup"}'
+  printf '{"metadata":{"namespace":"%s","name":"%s","labels":%s},"spec":{"suspend":%s},"status":{"lastSuccessfulTime":%s}}' \
+    "$1" "$2" "$labels" "$3" "$last_json"
 }
 
 # $1=label  $2=items JSON array body (or "ERR")  $3=expected rows, one per line
@@ -124,26 +129,26 @@ run() {
 # ── the ordinary night ──────────────────────────────────────────────────────
 run healthy "$(cj db postgres-backup false AGE:6)" \
 "[ok] Backup db/postgres-backup (last success 6h ago)
-[ok] Backup CronJobs measured: 1"
+[ok] Backup CronJobs measured: 1 (by name only: db/postgres-backup)"
 
 # ── freshness, three outcomes not two ───────────────────────────────────────
 run late "$(cj db postgres-backup false AGE:30)" \
 "[warn] Backup db/postgres-backup late — last success 30h ago
-[ok] Backup CronJobs measured: 1"
+[ok] Backup CronJobs measured: 1 (by name only: db/postgres-backup)"
 
 run stale "$(cj db postgres-backup false AGE:70)" \
 "[fail] Backup db/postgres-backup stale — last success 70h ago (AGE:70)
-[ok] Backup CronJobs measured: 1"
+[ok] Backup CronJobs measured: 1 (by name only: db/postgres-backup)"
 
 run unparseable "$(cj db postgres-backup false 2026-13-45T99:00:00Z)" \
 "[warn] Backup db/postgres-backup — cannot parse last success time (2026-13-45T99:00:00Z)
-[ok] Backup CronJobs measured: 1"
+[ok] Backup CronJobs measured: 1 (by name only: db/postgres-backup)"
 
 # Suspended is a measured state, so it is not skip; and from the data's point
 # of view it is not ok either.
 run suspended "$(cj claudecode postgres-backup true AGE:6)" \
 "[warn] Backup claudecode/postgres-backup — CronJob is suspended — no new backups are being taken
-[ok] Backup CronJobs measured: 1"
+[ok] Backup CronJobs measured: 1 (by name only: claudecode/postgres-backup)"
 
 # ── absence vs. inability to look: they must not render the same ────────────
 run none "" \
@@ -167,7 +172,37 @@ run three-namespaces \
 "[fail] Backup claudecode/postgres-backup — has never completed successfully (status.lastSuccessfulTime is unset)
 [ok] Backup db/postgres-backup (last success 6h ago)
 [ok] Backup freepbx/mariadb-backup (last success 6h ago)
-[ok] Backup CronJobs measured: 3"
+[ok] Backup CronJobs measured: 3 (by name only: claudecode/postgres-backup db/postgres-backup freepbx/mariadb-backup)"
+
+# ── #85: the subject is a union, and each half catches what the other misses ─
+
+# THE case for #85. A backup whose name does not end in `-backup` is invisible
+# to a name-only subject -- that was the whole complaint. With the label it is
+# found, and the count line says every one was found by the declared subject.
+run labelled-odd-name "$(cj db pg-dump-nightly false AGE:6 y)" \
+"[ok] Backup db/pg-dump-nightly (last success 6h ago)
+[ok] Backup CronJobs measured: 1 (all labelled)"
+
+# The other half. Longhorn generates its own CronJob and RecurringJob.spec
+# labels the snapshots, not it -- so this one can only ever be found by name,
+# and dropping the name half would silently lose a real backup.
+run controller-generated "$(cj longhorn-system daily-backup false AGE:6)" \
+"[ok] Backup longhorn-system/daily-backup (last success 6h ago)
+[ok] Backup CronJobs measured: 1 (by name only: longhorn-system/daily-backup)"
+
+# Both halves at once, which is every real cluster. The by-name list names ONLY
+# the unlabelled one: a count alone could not show the difference, because the
+# controller-generated one keeps it permanently non-zero.
+run union-mixed "$(cj db postgres-backup false AGE:6 y),$(cj longhorn-system daily-backup false AGE:6)" \
+"[ok] Backup db/postgres-backup (last success 6h ago)
+[ok] Backup longhorn-system/daily-backup (last success 6h ago)
+[ok] Backup CronJobs measured: 2 (by name only: longhorn-system/daily-backup)"
+
+# offsite-backup carries the label too (it IS a backup), and must STILL be
+# excluded here -- checks 19/20/21 measure it with logic this row has not got.
+# Excluding by name while the label pulls it in would be a silent double count.
+run offsite-labelled "$(cj monitoring offsite-backup false AGE:6 y)" \
+"[skip] Backup CronJobs — no backup CronJob is deployed on this cluster, so this row measured nothing — it is not a statement that the data is unprotected, nor that it is protected (off-site backup is a separate row)"
 
 # ── the case this file exists for ───────────────────────────────────────────
 # jg-jiahd exactly: the CronJob is there, the schedule fires, the PVC never
@@ -175,7 +210,7 @@ run three-namespaces \
 # nothing at all for two months.
 run never-succeeded "$(cj claudecode postgres-backup false '')" \
 "[fail] Backup claudecode/postgres-backup — has never completed successfully (status.lastSuccessfulTime is unset)
-[ok] Backup CronJobs measured: 1"
+[ok] Backup CronJobs measured: 1 (by name only: claudecode/postgres-backup)"
 
 # ── the thresholds, with the REAL epoch_of and REAL timestamps ──────────────
 # FO-handler [f92b04] verified this row against three live clusters and said
@@ -229,15 +264,15 @@ run_real() {
 if command date -u -d @0 +%s >/dev/null 2>&1; then
   run_real real-fresh "$(cj db postgres-backup false "$TS_FRESH")" \
 "[ok] Backup db/postgres-backup (last success 6h ago)
-[ok] Backup CronJobs measured: 1"
+[ok] Backup CronJobs measured: 1 (by name only: db/postgres-backup)"
 
   run_real real-late "$(cj db postgres-backup false "$TS_LATE")" \
 "[warn] Backup db/postgres-backup late — last success 30h ago
-[ok] Backup CronJobs measured: 1"
+[ok] Backup CronJobs measured: 1 (by name only: db/postgres-backup)"
 
   run_real real-stale "$(cj db postgres-backup false "$TS_STALE")" \
 "[fail] Backup db/postgres-backup stale — last success 70h ago ($TS_STALE)
-[ok] Backup CronJobs measured: 1"
+[ok] Backup CronJobs measured: 1 (by name only: db/postgres-backup)"
 elif [[ -n "${CI:-}" ]]; then
   echo "FAIL  GNU date is absent on a CI runner, so the threshold cases did not"
   echo "      run. They are the only ones exercising the real epoch_of, and a"
@@ -277,6 +312,34 @@ fi
 if [[ "${SEEN[none]}" == "${SEEN[rbac-lost]}" ]]; then
   echo "FAIL  'no backup CronJob here' and 'could not look' rendered identically."
   echo "      Three outcomes, not two — the second one is not an absence."
+  FAILED=$((FAILED + 1))
+fi
+
+if [[ "${SEEN[labelled-odd-name]}" != *"db/pg-dump-nightly"* ]]; then
+  echo "FAIL  a labelled backup whose name does not end in '-backup' was not"
+  echo "      reported. That is #85 exactly: the name was never a contract, and"
+  echo "      the label is what makes a renamed backup still findable."
+  FAILED=$((FAILED + 1))
+fi
+
+if [[ "${SEEN[controller-generated]}" != *"longhorn-system/daily-backup"* ]]; then
+  echo "FAIL  a controller-generated backup was not reported. It cannot carry"
+  echo "      our label (Longhorn labels the snapshots, not the CronJob), so"
+  echo "      dropping the name half of the union silently loses a real backup."
+  FAILED=$((FAILED + 1))
+fi
+
+if [[ "${SEEN[union-mixed]}" == *"by name only: db/postgres-backup"* ]]; then
+  echo "FAIL  a LABELLED backup appeared in the by-name list. That list exists to"
+  echo "      show which ones reached a cluster without the label; if labelled"
+  echo "      ones are in it too, it says nothing."
+  FAILED=$((FAILED + 1))
+fi
+
+if [[ "${SEEN[offsite-labelled]}" == *"offsite-backup"* ]]; then
+  echo "FAIL  offsite-backup was reported by this row. It carries the label but"
+  echo "      checks 19/20/21 own it; counting it here is a double count that"
+  echo "      makes the report look wider than it is."
   FAILED=$((FAILED + 1))
 fi
 
