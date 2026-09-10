@@ -33,10 +33,28 @@
 #                      rendered with `retain: true` (helm.sh/resource-policy:
 #                      keep).
 #
+#                      ⚠️ RECONCILE THE jg-base SOURCE FIRST. The empty path
+#                      only prunes if the cluster's copy of jg-base already
+#                      carries it. Flux pulls jg-base on a 1h interval, so a
+#                      user-repo push that removes the patch can land while the
+#                      cluster still holds an older jg-base -- the object then
+#                      falls back to THAT commit's default, and if the default
+#                      was `suspend: true` it strands what it created, which is
+#                      the exact state this two-position design exists to avoid.
+#                      Measured on jg-jiahd during #82 (B), 2026-09-10
+#                      (`[f92b04]`): the push landed against jg-base `ea98411`,
+#                      the ks went suspended, and `flux reconcile` answered
+#                      `✗ resource is suspended` -- no prune. Pulling the
+#                      source to `40cb10b` pruned immediately. So:
+#                      `flux reconcile source git jg-base` BEFORE pushing the
+#                      user repo. jcom was done in that order and stayed clean.
+#
 # Why the gate is a jgct patch and not `${...}` in this path: `cluster-apps`
 # walks ./kubernetes/apps/base, flux-local collects every Kustomization under
 # it and substitutes nothing — a `${VAR}` in a path aborts the whole suite at
-# collection. Measured on #28; backup-ks.yaml carries the full writeup.
+# collection. Measured on #28; storage/longhorn/backup-ks.yaml carries the
+# full writeup. (The claudecode postgres copy that also carried a thin version
+# was deleted with the NFS backup it gated -- #82 (B), 2026-09-10.)
 apiVersion: kustomize.toolkit.fluxcd.io/v1
 kind: Kustomization
 metadata:
@@ -49,8 +67,8 @@ spec:
   # shared claude-code Kustomization has the OCIRepository up — heals in
   # minutes. Deliberately no `dependsOn: [claude-code]`: a Kustomization
   # depending on a suspended one waits forever, and that failure mode is a
-  # permanent not-Ready row (see backup-ks.yaml on why that alarm shape is
-  # worse than a retry).
+  # permanent not-Ready row (see storage/longhorn/backup-ks.yaml on why that
+  # alarm shape is worse than a retry).
   retryInterval: 5m
   path: ./kubernetes/apps/base/claudecode/claude-code/im/enabled
   postBuild:

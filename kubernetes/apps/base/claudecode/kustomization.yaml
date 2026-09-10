@@ -8,4 +8,3 @@ resources:
   - ./claude-code/ks.yaml
   - ./claude-code/im-ks.yaml
   - ./postgres/ks.yaml
-  - ./postgres/backup-ks.yaml
