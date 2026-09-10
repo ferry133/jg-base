@@ -281,6 +281,32 @@ spec:
               # A non-Auth0 issuer for the base im would need these four lines
               # changed, and nothing here would tell you -- the failure would
               # surface as a login that never works.
+              #
+              # ⚠️ WHERE TO LOOK WHEN LOGIN STOPS WORKING. Discovery left the
+              # startup path but JWKS did not: it is fetched when a token is
+              # verified. So an Auth0 outage no longer takes the gate away
+              # before anyone tries -- it now surfaces at the moment someone
+              # logs in, and the user-visible half carries NO information:
+              # `403` plus `No valid authentication in request. Initiating
+              # login.`, which is byte-identical to what a genuinely
+              # signed-out visitor sees, i.e. a login loop in the browser.
+              #
+              # The cause is only in THIS pod's oauth2-proxy log, and there it
+              # is unambiguous -- `jwt_session.go` names the JWKS URL, the
+              # action and the dial error on one line:
+              #
+              #   failed to verify signature: fetching keys oidc: get keys
+              #   failed Get "<jwks url>": dial tcp ...: connection refused
+              #
+              # So: read this container's log FIRST, not Auth0's status page.
+              # Measured by fleet-ops [f92b04] on 2026-09-10 (#91).
+              #
+              # NOT measured, and it matters: that reading was taken through
+              # the bearer-token path, which is the only way to force a JWKS
+              # fetch without a browser. A real login goes cookie/session then
+              # redeem -> verify, and nobody has recorded that path's log lines
+              # or HTTP status. Expect the same cause, do not expect the same
+              # strings.
               - --skip-oidc-discovery=true
               - --login-url=https://${FACTORY_AUTH0_DOMAIN}/authorize
               - --redeem-url=https://${FACTORY_AUTH0_DOMAIN}/oauth/token
