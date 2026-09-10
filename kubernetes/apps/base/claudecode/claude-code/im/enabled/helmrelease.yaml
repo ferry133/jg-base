@@ -248,6 +248,44 @@ spec:
               - --upstream=http://127.0.0.1:7681
               - --provider=oidc
               - --oidc-issuer-url=https://${FACTORY_AUTH0_DOMAIN}/
+              # OIDC discovery is OFF and the four endpoints are supplied
+              # directly (#91). Discovery is a network call on the STARTUP
+              # path and oauth2-proxy v7.15.3 has no retry for it: one failed
+              # call aborts startup, the container exits, and CrashLoopBackOff
+              # turns a seconds-long blip into minutes with no login gate at
+              # all. That is not hypothetical -- jg-janncotcc lost im for four
+              # minutes on 2026-09-10 (2/3, restarts=3) when the call resolved
+              # to an AAAA address and these clusters have no IPv6 route.
+              # Upstream agrees with the framing and is fixing it the other way
+              # (PR#3489, `--oidc-lazy-discovery`), but that is not merged and
+              # not in v7.15.3.
+              #
+              # Measured, not derived: the four values below are exactly what
+              # the factory tenant's own /.well-known/openid-configuration
+              # advertises (authorization_endpoint, token_endpoint, jwks_uri,
+              # userinfo_endpoint), read on 2026-09-10. And a v7.15.3 probe pod
+              # with these flags and a deliberately unreachable issuer reached
+              # Running with restarts=0 and no discovery line in its log
+              # (`[f92b04]`, #91) -- the same image without them exits 1.
+              #
+              # --profile-url is not required by --skip-oidc-discovery, and it
+              # is set anyway: without it oauth2-proxy has no userinfo endpoint
+              # to fall back to if an ID token ever arrives without the email
+              # claim, and "no email" means the allowlist matches nobody --
+              # which is #70's lockout with a different trigger. One flag
+              # against locking every operator out of the rescue terminal.
+              #
+              # ⚠️ COST: this file now encodes Auth0's endpoint LAYOUT, not
+              # just its domain. Before, `${FACTORY_AUTH0_DOMAIN}` only had to
+              # speak OIDC discovery; now the paths themselves are assumed.
+              # A non-Auth0 issuer for the base im would need these four lines
+              # changed, and nothing here would tell you -- the failure would
+              # surface as a login that never works.
+              - --skip-oidc-discovery=true
+              - --login-url=https://${FACTORY_AUTH0_DOMAIN}/authorize
+              - --redeem-url=https://${FACTORY_AUTH0_DOMAIN}/oauth/token
+              - --oidc-jwks-url=https://${FACTORY_AUTH0_DOMAIN}/.well-known/jwks.json
+              - --profile-url=https://${FACTORY_AUTH0_DOMAIN}/userinfo
               - --scope=openid profile email
               - --redirect-url=https://im.${SECRET_DOMAIN}/oauth2/callback
               - --authenticated-emails-file=/etc/oauth2-proxy/allowed-emails
