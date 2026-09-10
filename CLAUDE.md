@@ -61,10 +61,13 @@ cluster that does not depend on Omni/SideroLink. Since 2026-09-06 the **default 
 HelmRelease itself lives here** (`claude-code/im/enabled/`, gated by the
 `claude-code-im` Kustomization — three states, documented in `im-ks.yaml`): all
 per-cluster differences reach it as Flux `${VAR}`s from cluster-secrets, so a default
-cluster needs ZERO `claude.*` settings in `cluster.yaml`. `im` runs the **`latest`**
-image tag, deliberately against this repo's pinning convention — a k8scc push updates
-the fleet's support terminals with no per-repo bump; costs and rationale in
-`claude-code/README.md`. Extra instances (jg-jiahd's `cc.jiahd.cc`, per-client support
+cluster needs ZERO `claude.*` settings in `cluster.yaml`. `im` is **pinned by
+`tag@digest`** like everything else here: ferry133's same-day `latest` directive was
+superseded on 2026-09-06 by #66, because spegel resolves a mutable tag from whichever
+node cached it first and froze `im` on a months-old image behind three green signals.
+So a k8scc push does NOT reach the fleet on its own — its CI opens a pin-bump PR
+against this repo (e.g. #79, #89), and merging that is what deploys. Costs and the
+measurement are in `claude-code/README.md`. Extra instances (jg-jiahd's `cc.jiahd.cc`, per-client support
 shells) are still template-time *structure* rendered into the per-user repo from
 `claude_instances` — which no longer emits `im`. `extras/claudecode/postgres` stays
 opt-in.
