@@ -599,12 +599,28 @@ credentials never in the image, inventory recorded, rotatable". The first of
 those does not hold as stated, and this is the honest place to say so.
 
 `claudecode/claude-code/app/rbac.yaml` binds the shared `claude-code`
-ServiceAccount to `ClusterRole/cluster-admin`. Measured on jcom, not inferred:
+ServiceAccount to `ClusterRole/cluster-admin`. That is readable straight out of
+the manifest -- a `ClusterRoleBinding` naming `cluster-admin` with that SA as
+its only subject -- and the binding, not the probe below, is what carries this
+section. Measured on jcom as confirmation:
 
 ```
 kubectl auth can-i '*' '*' --as=system:serviceaccount:claudecode:claude-code --all-namespaces
 yes
 ```
+
+> ⚠️ **Do not re-run that command on jg-jiahd or jg-janncotcc to confirm this.**
+> `kubectl auth can-i --as=` does not impersonate through Omni's Kubernetes
+> proxy: the proxy answers as the *caller*, so an admin kubeconfig returns `yes`
+> whatever `--as=` names. Measured 2026-09-10 by `FO-handler [f92b04]` with the
+> only control that separates the two cases -- asking about a ServiceAccount
+> that **does not exist**: jg-jiahd `yes`, jg-janncotcc `yes`, jcom `no`. jcom
+> reaches its API server directly, which is why the reading above is sound and
+> the same reading on the other two would not be.
+>
+> A permission probe that always answers `yes` is indistinguishable from one
+> that passed. To check what a ServiceAccount may do on an Omni-managed
+> cluster, read its `ClusterRoleBinding`/`RoleBinding` objects instead.
 
 Both `cc` and `im` run under that account. Kubernetes RBAC is additive and has
 no deny, so **a separate namespace and a least-privilege SA constrain what
