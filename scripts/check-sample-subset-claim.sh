@@ -46,7 +46,7 @@ VOCAB_N=$(grep -vcE '^\s*(#|$)' "$VOCAB")
 # and the first version of this guard stayed green, since it only ever compared
 # in one direction.
 declare -A SAMPLE_ONLY_OK=(
-  [CLUSTER_API_ADDR]="rendered by jg-cluster-template (talos config); no jg-base manifest substitutes it"
+  [CLUSTER_API_ADDR]="rendered by jg-cluster-template and declared in its cluster.schema.cue; no jg-base manifest substitutes it"
   [NAS_CODING_PATH]="rendered by jg-cluster-template; declared in its cluster.schema.cue"
 )
 UNKNOWN=()
