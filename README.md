@@ -307,8 +307,36 @@ Use [`ferry133/jg-cluster-template`](https://github.com/ferry133/jg-cluster-temp
 
 ### cluster-secrets keys
 
-All required `${VARIABLE}` keys are documented in:
-`kubernetes/components/sops/cluster-secrets.sample.yaml`
+`kubernetes/components/sops/cluster-secrets.sample.yaml` is a **worked example
+of the base keys, not an inventory** — most of the names this repo substitutes
+are not in it. It used to be described here as documenting all required keys,
+which sent readers looking for `FACTORY_*`, `BACKUP_R2_*` and `DAILY_CHECK_*`
+and finding nothing.
+
+How far short it falls is deliberately not written here as a number: a count in
+a comment is invalidated by any PR that adds a variable, and the stale number
+reads exactly like a current one. `scripts/check-sample-subset-claim.sh` prints
+both counts on every CI run instead, and enforces the claim the sample makes
+about which families are absent.
+
+Building a cluster by hand from that example will not fail in this repo's CI
+over a key it omits — jg-base's CI cannot see anyone's `cluster.yaml`. The net
+is on the template side: `cue vet` in `jg-cluster-template`, and the
+render-time pairing checks.
+
+The two lists that are kept complete, each by something that fails when it is
+wrong, are:
+
+- `scripts/substitution-vocabulary.txt` — every `${X}` under `kubernetes/`,
+  enforced both ways in CI: an undeclared use fails, and so does a declared
+  name nobody uses.
+- `jg-cluster-template`'s `cluster-secrets.sops.yaml.j2` — what actually gets
+  rendered into a cluster's own `cluster-secrets.sops.yaml`, from
+  `cluster.yaml`. That is the file a new cluster gets; the sample here is for
+  reading and for a hand-built cluster.
+
+A third copy listing every name by hand is deliberately not kept: it would
+drift from both, and the drifted copy is the one someone follows.
 
 ## Post-Installation
 
