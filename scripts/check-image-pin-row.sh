@@ -36,7 +36,9 @@ work = Path(sys.argv[1])
 s = (work / "run-check.sh").read_text()
 try:
     start = s.index("# 23. base im image pin")
-    end = s.index('echo "==> Compiling report"')
+    # Check 24 follows 23 (fleet-ops#11). Ending at "Compiling report" would
+    # source 24 too, and its record() would overwrite this row's result.
+    end = s.index("# 24. Omni service-account key expiry")
 except ValueError:
     sys.exit("could not locate the im-pin block in run-check.sh — markers moved")
 blk = s[start:end]

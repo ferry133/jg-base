@@ -366,17 +366,18 @@ material is in this repo. The variables are:
 
 | Variable | Carries |
 |---|---|
-| `FACTORY_OMNI_SA_KEY` | Omni service account key, `--role Operator`, short TTL |
+| `FACTORY_OMNI_SA_KEY` | Omni service account key, `--role Operator`. Deployed as a **one-year** key, issued 2026-09-11 on ferry133's ruling (fleet-ops `docs/operations/handover-inventory.md`) — this cell used to say "short TTL", the design before that ruling |
+| `FACTORY_OMNI_SA_KEY_EXPIRES` | that key's expiry, YYYY-MM-DD. Not a credential and not in the pod: an annotation on the controller, read by daily-check row 24 (ferry133/fleet-ops#11) |
 | `FACTORY_OMNI_ENDPOINT` | override only; defaults to the in-cluster path |
 | `FACTORY_GITHUB_TOKEN` | fine-grained PAT for creating customer repos |
 | `FACTORY_FLEET_OPS_DEPLOY_KEY_B64` | base64 of the read-only deploy key |
 
-⚠️ **None of these is declared in `jg-cluster-template` yet** — no
-`cluster.schema.cue` field, no line in `cluster-secrets.sops.yaml.j2` — so every
-one renders empty on every cluster, today, including jcom. That is sequencing,
-not oversight: the consuming half is reviewable here, the declaring half is
-`jg-cluster-template`'s, and the values are ferry133's to issue. **This file
-landing deploys nothing**; the pod gains five env names and one zero-byte file.
+All of these are declared in `jg-cluster-template` (`cluster.schema.cue` and
+`cluster-secrets.sops.yaml.j2`, since 2026-08-27). **Which cluster has issued
+which is deliberately not recorded here**: that changes with operations, and a
+copy here goes stale — this paragraph did, saying every value rendered empty on
+every cluster "including jcom" after jcom's Omni key had been issued. The record
+is fleet-ops `docs/operations/handover-inventory.md`.
 
 Empty is legible **at the point of use**, which is the only reason it is an
 acceptable interim state. `omnictl` treats an empty `OMNI_SERVICE_ACCOUNT_KEY`
