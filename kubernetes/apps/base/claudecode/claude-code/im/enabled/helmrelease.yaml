@@ -42,6 +42,13 @@ spec:
   values:
     controllers:
       im:
+        # When the Omni SA key in `talos-mcp-secret` expires, as recorded at
+        # issuance (jg-cluster-template `talos_mcp_sa_key_expires`). daily-check
+        # row 24 reads it; empty until a date is recorded. On the controller's
+        # own metadata, not the pod's, so recording a new date does not restart
+        # the terminal. ferry133/fleet-ops#11.
+        annotations:
+          jg-base.jiahd.cc/omni-sa-key-expires: "${TALOS_MCP_SA_KEY_EXPIRES:-}"
         strategy: Recreate
         # 1, not 0: im is the standing remote-support path into the cluster —
         # the reason it is a base app at all (it must not depend on someone
