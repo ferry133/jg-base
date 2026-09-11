@@ -7,9 +7,12 @@
 # agent calls a tool. The expiry is known at issuance, so check 24 reads the
 # date recorded then — an annotation on each workload holding a key.
 #
-# The acceptance its opener agreed to (FO-handler [f92b04], fleet-ops#11):
+# The acceptance its opener agreed to (FO-handler [f92b04], fleet-ops#11,
+# revised by the opener on jg-base PR #98):
 #   * valid keys go green AND print their dates;
-#   * a date already past is red; a date inside seven days is fail;
+#   * a date already past, or inside seven days, LEAVES ok — as warn, never
+#     fail: FAIL_COUNT gates the dead-man ping, and an expired key is not a
+#     dead cluster — and the text tells expired / under 7 / under 30 apart;
 #   * the uncovered cases (revoked key, malformed key with a future date) are
 #     named in the ROW'S OWN OUTPUT, not only in the issue.
 # Those three are asserted again below as cross-case checks, because
@@ -175,18 +178,18 @@ run healthy "$(wl claudecode im 2027-07-30)" \
 # ── the two negative controls the opener wrote ─────────────────────────────
 DATES[expired]="2025-12-31"
 run expired "$(wl claudecode im 2025-12-31)" \
-"[fail] Omni SA key claudecode/im expired 2025-12-31 — the recorded expiry has passed — if that date is right, every Omni call from this workload now fails
+"[warn] Omni SA key claudecode/im expired 2025-12-31 — the recorded expiry has passed — if that date is right, every Omni call from this workload now fails
 [ok] $M: 1 — $CAVEAT"
 
 DATES[inside-7d]="2026-01-04"
 run inside-7d "$(wl factory factory 2026-01-04)" \
-"[fail] Omni SA key factory/factory expires 2026-01-04 — 3d left — reissue now (fleet-ops handover-inventory.md)
+"[warn] Omni SA key factory/factory expires 2026-01-04 — 3d left — reissue now (fleet-ops handover-inventory.md)
 [ok] $M: 1 — $CAVEAT"
 
 # ── boundaries, so "within seven days" means one thing ──────────────────────
 DATES[expires-today]="2026-01-01"
 run expires-today "$(wl claudecode im 2026-01-01)" \
-"[fail] Omni SA key claudecode/im expired 2026-01-01 — the recorded expiry has passed — if that date is right, every Omni call from this workload now fails
+"[warn] Omni SA key claudecode/im expired 2026-01-01 — the recorded expiry has passed — if that date is right, every Omni call from this workload now fails
 [ok] $M: 1 — $CAVEAT"
 
 DATES[exactly-7d]="2026-01-08"
@@ -226,15 +229,30 @@ run bad-day "$(wl claudecode im 2027-02-30)" \
 DATES[mixed]="2027-07-30|2026-01-04"
 run mixed "$(wl claudecode im 2027-07-30),$(wl factory factory 2026-01-04),$(wl default echo -)" \
 "[ok] Omni SA key claudecode/im expires 2027-07-30 (575d left)
-[fail] Omni SA key factory/factory expires 2026-01-04 — 3d left — reissue now (fleet-ops handover-inventory.md)
+[warn] Omni SA key factory/factory expires 2026-01-04 — 3d left — reissue now (fleet-ops handover-inventory.md)
 [ok] $M: 2 — $CAVEAT"
 
 echo
 
 # ── cross-case: the acceptance, restated against outputs ────────────────────
 for l in expired inside-7d expires-today; do
-  if [[ "${SEEN[$l]}" != *fail* ]]; then
-    echo "FAIL  '$l' did not fail — the opener's negative control (past / inside 7 days -> red) is gone"
+  if [[ "$(echo "${OUTS[$l]}" | head -1)" == "[ok]"* ]]; then
+    echo "FAIL  '$l' read ok — the opener's negative control (past / inside 7 days must leave ok) is gone"
+    FAILED=$((FAILED + 1))
+  fi
+done
+# Nothing fails any more, so the grading lives in the words — and the words
+# are asserted: each window says something the others do not.
+[[ "${OUTS[expired]}" == *"expired 2025-12-31"* ]] \
+  || { echo "FAIL  an expired key's row does not say 'expired'"; FAILED=$((FAILED + 1)); }
+[[ "${OUTS[inside-7d]}" == *"reissue now"* && "${OUTS[inside-7d]}" != *"schedule the reissue"* ]] \
+  || { echo "FAIL  inside 7 days does not read 'reissue now', distinct from the 30-day window"; FAILED=$((FAILED + 1)); }
+[[ "${OUTS[inside-30d]}" == *"schedule the reissue"* && "${OUTS[inside-30d]}" != *"reissue now"* ]] \
+  || { echo "FAIL  inside 30 days does not read 'schedule the reissue', distinct from the 7-day window"; FAILED=$((FAILED + 1)); }
+# Rows 22/23's rule, now this row's: never fail.
+for l in "${!OUTS[@]}"; do
+  if [[ "${OUTS[$l]}" == *"[fail]"* ]]; then
+    echo "FAIL  '$l' recorded fail — row 24 must never fail: FAIL_COUNT marks the whole cluster Down on healthchecks.io"
     FAILED=$((FAILED + 1))
   fi
 done
@@ -317,4 +335,4 @@ if (( FAILED )); then
   echo "$FAILED check(s) failed."
   exit 1
 fi
-echo "ok — ${#OUTS[@]} cases match; past and inside-7d fail; unmeasured != ok; caveat and dates on every measured row"
+echo "ok — ${#OUTS[@]} cases match; past and inside-7d leave ok as warn, never fail; windows read apart; unmeasured != ok; caveat and dates on every measured row"

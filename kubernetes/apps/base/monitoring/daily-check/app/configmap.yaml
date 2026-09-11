@@ -1317,11 +1317,14 @@ data:
     # copy of fleet-ops' handover-inventory.md and nothing in a cluster can
     # compare the two; a printed date at least lets the reader see a mismatch.
     #
-    # fail under 7 days left, warn under 30. ⚠️ `fail` here also sends the
-    # healthchecks.io /fail ping, which checks 22 and 23 decline to do for
-    # things that are not outages. Chosen in fleet-ops#11 because the break
-    # date is exact rather than an invented threshold; if the ping proves too
-    # loud, the change is the one `fail` in the under-7-days branch.
+    # warn under 30 days left, and this row NEVER records `fail`. FAIL_COUNT
+    # is the only gate on the healthchecks.io dead-man ping, so a fail here
+    # would mark the whole cluster Down over a support tool's credential — and
+    # an expired Omni key breaks talos-mcp and factory, not the cluster. That
+    # is the rule checks 22 and 23 already state. The first version of this
+    # row did fail inside seven days; the opener revised the acceptance on
+    # PR #98 ("leaves ok, and the text separates expired / under 7 days /
+    # under 30"), and ferry133 may overrule. The urgency lives in the words.
     OMNI_ANN="jg-base.jiahd.cc/omni-sa-key-expires"
     OMNI_CAVEAT="expiry read from the recorded date, not from the key — a revoked or malformed key with a future date still reads green here"
     if ! OMNI_JSON=$(kubectl get deployments,statefulsets -A -o json 2>/dev/null); then
@@ -1360,9 +1363,9 @@ data:
         O_LEFT=$(( O_EPOCH - OMNI_NOW ))
         O_DAYS=$(( O_LEFT / 86400 ))
         if (( O_LEFT <= 0 )); then
-          record fail "Omni SA key ${O_ID} expired ${O_DATE}" "the recorded expiry has passed — if that date is right, every Omni call from this workload now fails"
+          record warn "Omni SA key ${O_ID} expired ${O_DATE}" "the recorded expiry has passed — if that date is right, every Omni call from this workload now fails"
         elif (( O_LEFT < 7 * 86400 )); then
-          record fail "Omni SA key ${O_ID} expires ${O_DATE}" "${O_DAYS}d left — reissue now (fleet-ops handover-inventory.md)"
+          record warn "Omni SA key ${O_ID} expires ${O_DATE}" "${O_DAYS}d left — reissue now (fleet-ops handover-inventory.md)"
         elif (( O_LEFT < 30 * 86400 )); then
           record warn "Omni SA key ${O_ID} expires ${O_DATE}" "${O_DAYS}d left — schedule the reissue"
         else

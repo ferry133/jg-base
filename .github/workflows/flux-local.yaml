@@ -174,9 +174,10 @@ jobs:
       # fleet-ops#11: an expired Omni SA key passes every other row — the pod
       # stays Running and the break is a talosctl auth error at call time.
       # Check 24 reads the expiry recorded at issuance. The cases that must
-      # keep failing are the opener's negative controls (a past date, a date
-      # inside seven days); the guard also derives every workload that holds
-      # a key from the Secrets and asserts each carries the annotation.
+      # keep leaving ok are the opener's negative controls (a past date, a
+      # date inside seven days) — as warn, never fail, since FAIL_COUNT gates
+      # the dead-man ping. The guard also derives every workload that holds a
+      # key from the Secrets and asserts each carries the annotation.
       - name: daily-check Omni SA key expiry row
         run: bash scripts/check-omni-key-expiry-row.sh
 
