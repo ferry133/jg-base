@@ -4,10 +4,14 @@
 #
 # Found 2026-09-12 by FO-handler [f92b04], via one missing line
 # (FACTORY_OMNI_SA_KEY_EXPIRES). Measuring it showed the gap was not one line:
-# the file carried 20 of the 80 declared names, with every FACTORY_*,
-# BACKUP_R2_* and DAILY_CHECK_* key absent. Adding the one line would have left
-# a subset that still reads like an inventory — README.md said it documented
+# most declared names were absent, whole families at a time — every FACTORY_*,
+# BACKUP_R2_* and DAILY_CHECK_* key. Adding the one line would have left a
+# subset that still reads like an inventory — README.md said it documented
 # "all required keys" — and absence would still have read as "not needed".
+#
+# No counts are written in this comment either. The first version of this file
+# said "20 of 80" here while asserting the same numbers below, which is the
+# pinning the fix deliberately avoids in the files it guards (f92b04, again).
 #
 # Hand-copying the rest is refused on FO-openspec [8e8ef1]'s criterion: do not
 # hand-copy what is generated. The two complete lists are generated or enforced
@@ -28,8 +32,31 @@ VOCAB="$ROOT/scripts/substitution-vocabulary.txt"
 README="$ROOT/README.md"
 FAILED=0
 
-SAMPLE_N=$(grep -cE '^  [A-Z][A-Z0-9_]*:' "$SAMPLE")
+SAMPLE_KEYS=$(grep -oE '^  [A-Z][A-Z0-9_]*:' "$SAMPLE" | tr -d ' :' | sort -u)
+SAMPLE_N=$(grep -c . <<< "$SAMPLE_KEYS" || true)
 VOCAB_N=$(grep -vcE '^\s*(#|$)' "$VOCAB")
+
+# Keys the sample carries that this repo never substitutes. They are real:
+# cluster-secrets is consumed by jg-cluster-template's templates too, and a key
+# only those render appears in no substitution under kubernetes/. Measured 2026-09-12 —
+# each is in jgct's cluster-secrets.sops.yaml.j2 and in no jg-base manifest.
+#
+# An allowlist rather than silence, because the same "in the sample, nowhere
+# else" shape is also what a typo looks like: f92b04 added FO_HANDLER_FAKE_KEY
+# and the first version of this guard stayed green, since it only ever compared
+# in one direction.
+declare -A SAMPLE_ONLY_OK=(
+  [CLUSTER_API_ADDR]="rendered by jg-cluster-template (talos config); no jg-base manifest substitutes it"
+  [NAS_CODING_PATH]="rendered by jg-cluster-template; declared in its cluster.schema.cue"
+)
+UNKNOWN=()
+while IFS= read -r k; do
+  [[ -n "$k" ]] || continue
+  grep -qxF "$k" "$VOCAB" && continue
+  [[ -n "${SAMPLE_ONLY_OK[$k]:-}" ]] && continue
+  UNKNOWN+=("$k")
+done <<< "$SAMPLE_KEYS"
+DECLARED_HERE=$(( SAMPLE_N - ${#SAMPLE_ONLY_OK[@]} - ${#UNKNOWN[@]} ))
 
 # Anti-vacuous: if either count is zero the comparison below would "pass" while
 # measuring nothing.
@@ -51,10 +78,24 @@ done
 
 # 2. The claim must remain true: a strict subset, not a full list wearing a
 #    warning. If someone completes it, the honest move is to delete the warning
-#    and this guard, deliberately.
-if (( SAMPLE_N >= VOCAB_N )); then
-  echo "FAIL  the sample carries ${SAMPLE_N} keys against ${VOCAB_N} declared names —"
+#    and this guard, deliberately. Compared on the intersection, not on the raw
+#    key count — two of the sample's keys are not declared here at all.
+if (( DECLARED_HERE >= VOCAB_N )); then
+  echo "FAIL  the sample covers ${DECLARED_HERE} of ${VOCAB_N} declared names —"
   echo "      it is no longer the subset it calls itself."
+  FAILED=$((FAILED + 1))
+fi
+
+# 2b. A key here that this repo never substitutes, and that is not one of the
+#     known jgct-rendered ones, is either a typo or a key nothing reads. Both
+#     mislead exactly the reader this file is for.
+if (( ${#UNKNOWN[@]} > 0 )); then
+  echo "FAIL  the sample carries ${#UNKNOWN[@]} key(s) that no substitution under kubernetes/ uses"
+  echo "      and that are not known jg-cluster-template keys:"
+  for k in "${UNKNOWN[@]}"; do echo "        ${k}"; done
+  echo "      Add it to substitution-vocabulary.txt if a manifest reads it, list"
+  echo "      it in SAMPLE_ONLY_OK here with the reason if jgct renders it, or"
+  echo "      remove it: an example key nothing reads is worse than a missing one."
   FAILED=$((FAILED + 1))
 fi
 
@@ -112,4 +153,4 @@ if (( FAILED )); then
   echo "$FAILED check(s) failed."
   exit 1
 fi
-echo "ok — the sample carries ${SAMPLE_N} of ${VOCAB_N} declared names, says so, and the families it calls absent are absent"
+echo "ok — the sample carries ${SAMPLE_N} keys: ${DECLARED_HERE} of the ${VOCAB_N} declared here, plus ${#SAMPLE_ONLY_OK[@]} that jg-cluster-template renders. It says it is an example, and the families it calls absent are absent"
