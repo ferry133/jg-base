@@ -181,6 +181,13 @@ jobs:
       - name: daily-check Omni SA key expiry row
         run: bash scripts/check-omni-key-expiry-row.sh
 
+      # #99: the same shape for factory's fine-grained PAT, which breaks
+      # provisioning halfway rather than a diagnostic tool. The case that must
+      # keep holding is that the row states its own weakness — no key id — in
+      # its output, not only in a comment.
+      - name: daily-check GitHub token expiry row
+        run: bash scripts/check-github-token-expiry-row.sh
+
       # #70: a container-runtime ${VAR} that postBuild rewrote to "" locked
       # every terminal out behind green signals. Every ${X} under kubernetes/
       # must be declared in the vocabulary or written $${X}; the guard proved

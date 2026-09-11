@@ -85,7 +85,10 @@ work = Path(sys.argv[1])
 s = (work / "run-check.sh").read_text()
 try:
     start = s.index("# 24. Omni service-account key expiry")
-    end = s.index('echo "==> Compiling report"')
+    # Row 25 follows 24 (#99). Ending at "Compiling report" would source it
+    # too, and its rows would be appended to this row's — the same collision
+    # row 24 caused for the im-pin guard when it was added.
+    end = s.index("# 25. GitHub token expiry")
 except ValueError:
     sys.exit("could not locate check 24 in run-check.sh — markers moved")
 blk = s[start:end]
