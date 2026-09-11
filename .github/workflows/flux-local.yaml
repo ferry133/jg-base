@@ -181,6 +181,15 @@ jobs:
       - name: daily-check Omni SA key expiry row
         run: bash scripts/check-omni-key-expiry-row.sh
 
+      # Found 2026-09-12 while the key was being issued: three places said
+      # factory holds an Omni ADMIN account while credentials-secret.yaml had
+      # said "Operator, not Admin" since 2026-08-23, and Operator is what was
+      # issued. An inventory that overstates the role invites the next reissue
+      # to match it. This asserts the claims rather than the absence of a
+      # phrase — the correction note quotes the old wording.
+      - name: factory Omni role consistency
+        run: bash scripts/check-factory-omni-role.sh
+
       # #70: a container-runtime ${VAR} that postBuild rewrote to "" locked
       # every terminal out behind green signals. Every ${X} under kubernetes/
       # must be declared in the vocabulary or written $${X}; the guard proved
