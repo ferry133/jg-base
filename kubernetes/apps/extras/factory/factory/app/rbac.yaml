@@ -5,7 +5,8 @@
 # is not, and the distinction matters more than the name: that one is a single
 # ServiceAccount bound to cluster-admin and shared by every claude-code
 # instance, so putting factory there would let any prompt injection in `cc`
-# reach Omni Admin, the GitHub PAT and the Cloudflare parent account (D2).
+# reach factory's Omni service account, the GitHub PAT and the Cloudflare
+# parent account (D2).
 #
 # No Role, no RoleBinding, no ClusterRole. Least privilege here is not "a small
 # set of verbs", it is none, because factory needs no Kubernetes API on jcom at
