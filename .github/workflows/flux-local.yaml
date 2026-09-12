@@ -204,6 +204,15 @@ jobs:
       - name: substitution vocabulary
         run: bash scripts/check-substitution-vocabulary.sh
 
+      # README.md claimed the sample documented all required keys; it carries a
+      # fraction of them, so FACTORY_*, BACKUP_R2_* and DAILY_CHECK_* readers
+      # found nothing and had no way to tell absence from "not needed". The
+      # counts are deliberately not written into either file — any PR adding a
+      # variable would invalidate them — so this prints them instead and fails
+      # if the file stops calling itself an example.
+      - name: cluster-secrets sample subset claim
+        run: bash scripts/check-sample-subset-claim.sh
+
       # #54: on an appliance the mandatory backup ran nightly, succeeded and
       # staged nothing, because it only ever captured databases and an appliance
       # has none. The case that must not regress is `staged_bytes: 0` reporting
