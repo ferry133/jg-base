@@ -1401,6 +1401,66 @@ data:
       record ok "Omni SA key expiry measured: ${OMNI_N} — ${OMNI_CAVEAT}"
     fi
 
+    # 25. GitHub token expiry (ferry133/jg-base#99).
+    #
+    # Same shape as row 24 and a separate row on purpose: each credential's
+    # weakness is different, and a row that says "credential" instead of
+    # naming one cannot state its own. This one's weakness is that a
+    # fine-grained PAT HAS NO KEY ID — the three Omni keys can be named and
+    # revoked by id, this one can only be matched by name and expiry in the
+    # GitHub UI. That sentence belongs in the report, not only here: the
+    # report is what gets read (the acceptance FO-openspec [8e8ef1] wrote on
+    # #99, condition 1).
+    #
+    # When it breaks matters more than row 24's: an expired Omni key breaks a
+    # diagnostic tool, while this token breaks provisioning halfway through
+    # creating a customer's repo, with the ticket already open and the machine
+    # possibly already at the customer.
+    #
+    # warn, never fail, for row 24's reason: FAIL_COUNT gates the dead-man
+    # ping, and an expired token is not a dead cluster.
+    GHT_ANN="jg-base.jiahd.cc/github-token-expires"
+    GHT_CAVEAT="expiry read from the recorded date, not from the token — and a fine-grained PAT has no key id, so it can only be matched by name and expiry in the GitHub UI, and a replaced or revoked token with a future date still reads green here"
+    if ! GHT_JSON=$(kubectl get deployments,statefulsets -A -o json 2>/dev/null); then
+      record warn "GitHub token expiry" "could not list Deployments/StatefulSets cluster-wide (RBAC or API error) — this row measured nothing"
+    elif ! GHT_HELD=$(echo "$GHT_JSON" | jq -r --arg a "$GHT_ANN" '
+        .items[]
+        | select((.metadata.annotations[$a] // "") != "")
+        | "\(.metadata.namespace)/\(.metadata.name)\t\(.metadata.annotations[$a])"' 2>/dev/null); then
+      record warn "GitHub token expiry" "could not parse the workload list — this row measured nothing"
+    elif [[ -z "$GHT_HELD" ]]; then
+      record skip "GitHub token expiry" "no workload on this cluster records a GitHub token expiry, so this row measured nothing — a token held without a recorded date is invisible here"
+    else
+      GHT_NOW=$(date -u +%s)
+      GHT_N=0
+      while IFS=$'\t' read -r G_ID G_DATE; do
+        [[ -z "$G_ID" ]] && continue
+        GHT_N=$((GHT_N + 1))
+        G_EPOCH=""
+        # Anchored for row 24's measured reason: GNU date reads `2027-07-3` as
+        # July 3rd and `27-07-30` as 2027, silently.
+        if [[ "$G_DATE" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
+          G_EPOCH="$(epoch_of "${G_DATE}T00:00:00Z")"
+        fi
+        if [[ -z "$G_EPOCH" ]]; then
+          record warn "GitHub token ${G_ID}" "cannot parse recorded expiry '${G_DATE}' (want YYYY-MM-DD) — this token's expiry is unknown, not fine"
+          continue
+        fi
+        G_LEFT=$(( G_EPOCH - GHT_NOW ))
+        G_DAYS=$(( G_LEFT / 86400 ))
+        if (( G_LEFT <= 0 )); then
+          record warn "GitHub token ${G_ID} expired ${G_DATE}" "the recorded expiry has passed — if that date is right, the next repo this workload tries to create fails"
+        elif (( G_LEFT < 7 * 86400 )); then
+          record warn "GitHub token ${G_ID} expires ${G_DATE}" "${G_DAYS}d left — reissue now (fine-grained PAT, no key id: match it by name and expiry)"
+        elif (( G_LEFT < 30 * 86400 )); then
+          record warn "GitHub token ${G_ID} expires ${G_DATE}" "${G_DAYS}d left — schedule the reissue"
+        else
+          record ok "GitHub token ${G_ID} expires ${G_DATE} (${G_DAYS}d left)"
+        fi
+      done <<< "$GHT_HELD"
+      record ok "GitHub token expiry measured: ${GHT_N} — ${GHT_CAVEAT}"
+    fi
+
     echo "==> Compiling report"
     if [[ $FAIL_COUNT -gt 0 ]]; then
       STATUS_TAG="❌ ${FAIL_COUNT} FAIL"

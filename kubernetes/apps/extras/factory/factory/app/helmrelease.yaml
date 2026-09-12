@@ -33,6 +33,11 @@ spec:
         # factory. ferry133/fleet-ops#11.
         annotations:
           jg-base.jiahd.cc/omni-sa-key-expires: "${FACTORY_OMNI_SA_KEY_EXPIRES:-}"
+          # And when the fine-grained PAT in the same Secret expires. A second
+          # annotation rather than one generic name (ferry133/jg-base#99,
+          # chosen by its acceptor): each credential's weakness differs, and
+          # this one has no key id to revoke by. daily-check row 25.
+          jg-base.jiahd.cc/github-token-expires: "${FACTORY_GITHUB_TOKEN_EXPIRES:-}"
         strategy: Recreate
         replicas: 1
         serviceAccount:
