@@ -33,10 +33,24 @@ None of these is in this repo; this is the inventory, not the store.
 
 | Credential | What it is for | Scope | Blast radius if read | Rotation |
 |---|---|---|---|---|
-| **Omni Admin service account** | Create clusters, join machines, issue per-cluster kubeconfig | Every cluster Omni manages, present and future | Full control of the entire managed fleet, including clusters not yet built. The worst single item here | `omnictl serviceaccount renew` / recreate; update the Secret and restart factory |
+| **Omni service account** — deployed as Role **Operator** | Create clusters, join machines, issue per-cluster kubeconfig | Every cluster Omni manages, present and future | Stated as the worst case, not as a measured bound: full control of the entire managed fleet, including clusters not yet built. The worst single item here. What Role `Operator` narrows that to is not measured | `omnictl serviceaccount renew` / recreate; update the Secret and restart factory |
 | **GitHub PAT** | Create and populate each customer's private cluster repo | Every repo the token's account can reach | Write access to cluster manifests fleet-wide — a repo write is a deploy, on a 1h Flux interval, with no review gate | Revoke and reissue in GitHub; prefer a fine-grained token scoped to the repos it must create |
 | ~~**Cloudflare parent-account token**~~ — **not held, by decision (2026-08-28)** | It was to write DNS records and tunnel credentials for each customer zone | — | — | Nothing to rotate. The row's premise died with D11; see *The Cloudflare credential is gone* below |
 | **Cloudflare origin cert** (`~/.cloudflared/cert.pem`) — **not held, and now structurally cannot be** | Creating a tunnel. Produced by `cloudflared tunnel login`, i.e. a browser session, not an API call | The Cloudflare account whose browser session signed it | The tunnel is created in whichever account the cert belongs to — this has already caused an outage, see below | Re-run `cloudflared tunnel login` **in the customer's account**. That is a person at a browser, in an account the company does not own; it is not a credential factory can be given |
+
+⚠️ **This row said `Omni Admin` until 2026-09-12, and what is deployed is Role
+`Operator`.** The narrower role is what `app/credentials-secret.yaml` has
+specified since 2026-08-23; the issued key is recorded in fleet-ops
+`docs/operations/handover-inventory.md`, in the `factory_omni_sa_key` row —
+cited by row key rather than line number, because that file is edited in
+another repo and a line number here would drift silently. That record is
+fleet-ops' measurement, not this repo's.
+
+⚠️ **Whether `Operator` suffices to CREATE a cluster is NOT measured.** The
+first place that will measure it is factory-agent 8.1, fully automatic
+provisioning from a scratch ticket. If it turns out to be insufficient, the
+answer is a reissue at the next role up, not Admin "to be safe" — too-few
+permissions fails with an explicit error, while too many has no signal at all.
 
 ### The Cloudflare credential is gone, because its premise was
 
