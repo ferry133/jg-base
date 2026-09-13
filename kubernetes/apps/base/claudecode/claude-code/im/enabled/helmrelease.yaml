@@ -48,7 +48,7 @@ spec:
         # own metadata, not the pod's, so recording a new date does not restart
         # the terminal. ferry133/fleet-ops#11.
         annotations:
-          jg-base.jiahd.cc/omni-sa-key-expires: "${TALOS_MCP_SA_KEY_EXPIRES:-}"
+          jg-base.jiahd.cc/omni-sa-key-expires: ${TALOS_MCP_SA_KEY_EXPIRES:-""}
         strategy: Recreate
         # 1, not 0: im is the standing remote-support path into the cluster —
         # the reason it is a base app at all (it must not depend on someone
