@@ -85,7 +85,7 @@ data:
     record() {
       local level="$1" name="$2" msg="${3:-}"
       case "$level" in
-        ok)   SUMMARY+=("✅ ${name}") ;;
+        ok)   SUMMARY+=("✅ ${name}${msg:+ — ${msg}}") ;;
         warn) SUMMARY+=("⚠️ ${name} — ${msg}"); DETAILS+=("[WARN] ${name}: ${msg}"); ((WARN_COUNT++)) ;;
         fail) SUMMARY+=("❌ ${name} — ${msg}"); DETAILS+=("[FAIL] ${name}: ${msg}"); ((FAIL_COUNT++)) ;;
         skip) SUMMARY+=("➖ ${name} — ${msg}"); DETAILS+=("[SKIP] ${name}: ${msg}"); ((SKIP_COUNT++)) ;;
