@@ -255,8 +255,17 @@ for f in files:
         if re.search(rf"name:\s*{re.escape(secret)}\s*\n\s+key:\s*{re.escape(key)}\b", text):
             rel = f.relative_to(root)
             consumers.append(f"{rel} ({secret}/{key})")
-            want = f'{ann}: "${{{var}_EXPIRES:-}}"'
-            if want not in text:
+            # Assert the PROPERTY (this consumer carries the expiry
+            # annotation for the key it mounts), not the spelling. The old
+            # literal match encoded the quoting and the empty default, so
+            # jg-base#103's fix -- changing `:-` to `:-""` -- read as the
+            # annotation having been deleted. A guard that fails when a line
+            # is corrected is worse than no guard: the next person deletes it.
+            want = f'{ann}: ${{{var}_EXPIRES}} (any quoting/default form)'
+            want_re = re.compile(
+                re.escape(f'{ann}:') + r'\s*"?\$\{' + re.escape(f'{var}_EXPIRES')
+                + r'(?::[-=][^}]*)?\}"?')
+            if not want_re.search(text):
                 bad.append(f"{rel}: mounts {secret}/{key} but lacks  {want}")
 print(f"PAT holders derived from Secrets: {', '.join(f'{s}/{k}' for s, k in sorted(held))}")
 for c in consumers:

@@ -252,6 +252,16 @@ jobs:
       - name: daily-check record() keeps an ok row's message
         run: bash scripts/check-record-ok-keeps-msg.sh
 
+      # #103: `im` emitted `omni-sa-key-expires: "${TALOS_MCP_SA_KEY_EXPIRES:-}"`.
+      # On a cluster holding no talos-mcp key that variable is correctly empty,
+      # kustomize had already dropped the quotes, and the rendered line became
+      # `...expires:` -- which YAML reads as null. app-template rejects a
+      # non-string annotation value and the HelmRelease sat UpgradeFailed for
+      # 31 hours. Two more copies were latent in extras/factory. The case that
+      # must keep failing is an annotation value that can render empty.
+      - name: annotation substitutions cannot render empty
+        run: bash scripts/check-annotation-substitution-default.sh
+
   diff:
     name: Flux Local Diff
     needs: pre-job
