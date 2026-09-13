@@ -244,6 +244,14 @@ jobs:
       - name: backup CronJobs declare the label
         run: bash scripts/check-backup-label.sh
 
+      # #104: `record ok` appended only the name, so a message passed to an ok
+      # row vanished — no error, no trace. One caller did it (check 17a) and
+      # its sentence was missing from every report for 25 days. The case that
+      # must keep failing is an ok row whose message disappears; the warn
+      # control exists so a broken harness cannot render as a pass.
+      - name: daily-check record() keeps an ok row's message
+        run: bash scripts/check-record-ok-keeps-msg.sh
+
   diff:
     name: Flux Local Diff
     needs: pre-job
