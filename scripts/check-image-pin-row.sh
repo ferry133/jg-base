@@ -61,9 +61,14 @@ trap 'rm -rf "$WORK"' EXIT
 
 for tool in yq jq; do
   command -v "$tool" >/dev/null || {
-    echo "$tool required. CI installs yq pinned in the 'scripts' job of"
-    echo ".github/workflows/flux-local.yaml; jq ships on the runner image."
-    exit 1
+    echo "cannot measure: $tool required. CI installs yq pinned in the"
+    echo "'scripts' job of .github/workflows/flux-local.yaml; jq ships on the"
+    echo "runner image."
+    # 2, not 1: a missing tool and a caught regression must not be the same
+    # colour. FO-openspec [8e8ef1] ran four mutations against this file and got
+    # rc=1 from all four — every one of them "yq required", none of them a
+    # finding. Only the log told them apart. (#108 follow-up, 2026-09-14.)
+    exit 2
   }
 done
 yq -r '.data."run-check.sh"' "$CM" > "$WORK/run-check.sh"
@@ -88,6 +93,10 @@ if "@sha256:" not in blk:
 if "get helmrelease" not in blk:
     sys.exit("located a block that never asks the HelmRelease who applied it — #108's two-hop "
              "resolution is gone, and the Deployment alone cannot answer it")
+if "kustomize\\.toolkit\\.fluxcd\\.io/name}" not in blk:
+    sys.exit("the HelmRelease is read, but not for its kustomize.toolkit.fluxcd.io/NAME — any "
+             "other key on that object answers the same for every cluster, so the gate would be "
+             "blind again in a new way (#108 follow-up)")
 (work / "block.sh").write_text(blk)
 PY
 
@@ -133,7 +142,21 @@ run() {
   kubectl() {
     case "$*" in
       *"get deploy im"*)   [[ "$deploy" == "ABSENT" ]] && return 1; printf '%s' "$deploy" ;;
-      *"get helmrelease"*) [[ "$hr" == "UNREADABLE" ]] && return 1; printf '%s' "$hr" ;;
+      *"get helmrelease"*)
+        [[ "$hr" == "UNREADABLE" ]] && return 1
+        # Resolve the jsonpath the caller actually asked for, instead of
+        # handing back the fixture regardless. A stub that ignores its
+        # arguments does not model the remote half, and the test then passes
+        # on a block that reads the WRONG KEY. Measured by FO-openspec
+        # [8e8ef1] on this very file: swapping the block's jsonpath to
+        # `…/namespace}` left this suite at exit 0, while three live clusters
+        # would print `im applied by Kustomization 'flux-system'` every day —
+        # a new blind gate the same colour as the old one (#108).
+        case "$*" in
+          *'kustomize\.toolkit\.fluxcd\.io/name}'*)      printf '%s' "$hr" ;;
+          *'kustomize\.toolkit\.fluxcd\.io/namespace}'*) printf '%s' "flux-system" ;;
+          *) echo "UNEXPECTED helmrelease jsonpath: $*" >&2; return 1 ;;
+        esac ;;
       *"get pods"*)        printf '%s' "$pods" ;;
       *) echo "UNEXPECTED kubectl: $*" >&2; return 1 ;;
     esac
@@ -158,17 +181,17 @@ PINNED="$(deploy_json labeled "$REPO:9418571@$D1" "$REPO:9418571@$D1" "$REPO:941
 # ── the three ways of measuring nothing. Each says something DIFFERENT, on
 #    purpose: #108 survived eight days as one skip reason standing in for
 #    several unrelated states, and its wording read as correct.
-run absent        ABSENT  '{}' claude-code-im \
+run absent        ABSENT  "$(pods_json "$REPO@$D1")" claude-code-im \
   "[skip] im image pin — no im deployment"
-run no-helm-label "$(deploy_json unlabeled "$REPO:9418571@$D1")" '{}' claude-code-im \
+run no-helm-label "$(deploy_json unlabeled "$REPO:9418571@$D1")" "$(pods_json "$REPO@$D1")" claude-code-im \
   "[skip] im image pin — deploy/im has no helm.toolkit.fluxcd.io"
-run hr-unreadable "$PINNED" '{}' UNREADABLE \
+run hr-unreadable "$PINNED" "$(pods_json "$REPO@$D1")" UNREADABLE \
   "[skip] im image pin — helmrelease claudecode/im could not be read"
 
 # Pre-handover: the Deployment label is `im`, exactly as on a migrated
 # cluster. Only the HelmRelease's applier tells them apart. CONSTRUCTED, see
 # the header — there is no live instance of this state to read.
-run pre-handover  "$PINNED" '{}' claude-code-instances \
+run pre-handover  "$PINNED" "$(pods_json "$REPO@$D1")" claude-code-instances \
   "[skip] im image pin — im applied by Kustomization 'claude-code-instances'"
 
 # ── the branches #108 made unreachable ─────────────────────────────────────
@@ -230,10 +253,15 @@ awk '
     print "  if [[ \"$IM_OWNER\" != \"claude-code-im\" ]]; then"
     dropping = 1; replaced = 1; next
   }
-  dropping && /^  elif \[\[ "\$IM_KS" != "claude-code-im" \]\]; then$/ { dropping = 0; next }
+  dropping && /^  elif \[\[ "\$IM_KS" /                                 { dropping = 0; next }
   !dropping { print }
 ' "$WORK/block.sh" > "$WORK/block-108.sh"
-if ! grep -q 'IM_OWNER' "$WORK/block-108.sh" || grep -q 'IM_KS=' "$WORK/block-108.sh"; then
+if ! bash -n "$WORK/block-108.sh" 2>/dev/null; then
+  echo "FAIL  the re-created #108 gate does not parse — the control is vacuous,"
+  echo "      so nothing above is evidence. (A control whose reconstruction"
+  echo "      breaks dies the same colour as one that caught something.)"
+  FAILED=$((FAILED + 1))
+elif ! grep -q 'IM_OWNER' "$WORK/block-108.sh" || grep -q 'IM_KS=' "$WORK/block-108.sh"; then
   echo "FAIL  could not re-create the #108 gate from the live block — the fix"
   echo "      moved, so this control is vacuous and the run above proves nothing."
   FAILED=$((FAILED + 1))
@@ -252,7 +280,9 @@ else
     kubectl() {
       case "$*" in
         *"get deploy im"*)   printf '%s' "$PINNED" ;;
-        *"get helmrelease"*) printf '%s' "claude-code-im" ;;
+        *'kustomize\.toolkit\.fluxcd\.io/name}'*)      printf '%s' "claude-code-im" ;;
+        *'kustomize\.toolkit\.fluxcd\.io/namespace}'*) printf '%s' "flux-system" ;;
+        *"get helmrelease"*) return 1 ;;
         *"get pods"*)        pods_json "$REPO@$D1" ;;
         *) return 1 ;;
       esac
