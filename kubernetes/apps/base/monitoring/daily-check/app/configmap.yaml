@@ -1289,13 +1289,41 @@ data:
       # rendering as a green row is #66's own shape (review catch on PR #68).
       record skip "im image pin" "no im deployment — this row measured nothing"
     else
-      IM_OWNER=$(echo "$IM_JSON" | jq -r '.metadata.labels["helm.toolkit.fluxcd.io/name"] // ""')
-      if [[ "$IM_OWNER" != "claude-code-im" ]]; then
-        # Pre-handover per-user instance. Pinning is the base HR's contract;
-        # warning here would flag every not-yet-migrated cluster daily, and a
-        # guard that rings on correct input gets switched off — but skip, not
-        # ok: nothing was measured, and the row says so.
-        record skip "im image pin" "im owned by '${IM_OWNER:-?}', pre-handover — pin not applicable yet"
+      # Which Flux Kustomization applied this instance? Two hops, and the
+      # first hop is the whole point (#108). kustomize-controller stamps
+      # kustomize.toolkit.fluxcd.io/* on the objects IT applies — for `im`
+      # that is the HelmRelease, never the Deployment helm-controller renders
+      # from it. Measured on all three clusters 2026-09-14, with a positive
+      # control that shares the property: claudecode's deploy/postgres DOES
+      # carry kustomize.toolkit.fluxcd.io/name=claudecode-db, because
+      # kustomize-controller applies that Deployment directly. The label
+      # follows who applied the object, not who owns the chain.
+      #
+      # This row previously compared the Deployment's
+      # helm.toolkit.fluxcd.io/name — which carries the HELMRELEASE name,
+      # always `im` — against `claude-code-im`, which is a KUSTOMIZATION
+      # name and has never been any HelmRelease's name. The test could not
+      # come out false, so everything below was unreachable from the day it
+      # was written (2026-09-06) until #108. Both handover states also
+      # render the HR as `im`, so the HR name never encoded handover state
+      # at all: the constant was not the only thing wrong with it.
+      #
+      # Each way of not-measuring below says something DIFFERENT, on
+      # purpose. The bug that hid this row for eight days was a skip line
+      # whose stated reason read as correct.
+      IM_HR=$(echo "$IM_JSON" | jq -r '.metadata.labels["helm.toolkit.fluxcd.io/name"] // ""')
+      IM_HR_NS=$(echo "$IM_JSON" | jq -r '.metadata.labels["helm.toolkit.fluxcd.io/namespace"] // ""')
+      if [[ -z "$IM_HR" || -z "$IM_HR_NS" ]]; then
+        record skip "im image pin" "deploy/im has no helm.toolkit.fluxcd.io/{name,namespace} — not rendered by helm-controller, so there is no HelmRelease to ask who applied it"
+      elif ! IM_KS=$(kubectl -n "$IM_HR_NS" get helmrelease "$IM_HR" -o jsonpath='{.metadata.labels.kustomize\.toolkit\.fluxcd\.io/name}' 2>/dev/null); then
+        record skip "im image pin" "helmrelease ${IM_HR_NS}/${IM_HR} could not be read (RBAC, CRD, or it is gone) — owner undetermined, NOT assumed pre-handover"
+      elif [[ "$IM_KS" != "claude-code-im" ]]; then
+        # A real pre-handover (or foreign) instance. Pinning is the base HR's
+        # contract; warning here would flag every not-yet-migrated cluster
+        # daily, and a guard that rings on correct input gets switched off —
+        # but skip, not ok: nothing was measured, and the row says so. The
+        # applier is printed, so "which one" is answerable from the report.
+        record skip "im image pin" "im applied by Kustomization '${IM_KS:-<none>}', not claude-code-im — pre-handover or foreign; the pin is the base HR's contract"
       else
         IM_UNPINNED=$(echo "$IM_JSON" | jq -r '((.spec.template.spec.containers // []) + (.spec.template.spec.initContainers // []))[] | .image | select(startswith("ghcr.io/ferry133/claude-code")) | select(contains("@sha256:") | not)')
         IM_PINS=$(echo "$IM_JSON" | jq -r '((.spec.template.spec.containers // []) + (.spec.template.spec.initContainers // []))[] | .image | select(startswith("ghcr.io/ferry133/claude-code")) | select(contains("@sha256:"))' | sed 's/.*@sha256:/sha256:/' | sort -u)
