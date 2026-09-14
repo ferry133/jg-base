@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Assert what daily-check's IM IMAGE PIN row emits, per cluster state.
+# Assert what daily-check's IM IMAGE PIN row (check 23) emits, per cluster
+# state — including whether it can tell those states apart at all.
 #
 # ferry133/jg-base#66: `latest` on a spegel cluster froze silently — the pod
 # restarted, kubelet said Pulled, the Deployment said Running, and it was a
@@ -7,6 +8,44 @@
 # ways the pin can rot (spec back on a mutable tag; running digest != pinned).
 # The case that must not regress is `running-differs`: that is #66's shape,
 # and every other signal on the report reads green through it.
+#
+# ── Why this file was rewritten (ferry133/jg-base#108, 2026-09-14) ──────────
+#
+# From 2026-09-06 to 2026-09-14 check 23 measured NOTHING on any cluster, and
+# this file passed on every one of those days.
+#
+# The row gated on the Deployment's `helm.toolkit.fluxcd.io/name` — which
+# carries the HELMRELEASE name, always `im` — compared against
+# `claude-code-im`, a KUSTOMIZATION name (`im-ks.yaml`) that no HelmRelease
+# has ever had. The comparison could not come out false, so every branch
+# below it was unreachable.
+#
+# This file did not catch it because its own fixture supplied
+# `"helm.toolkit.fluxcd.io/name":"claude-code-im"` — **a label value no
+# cluster can produce**. The fixture invented the state the code needed in
+# order to work, and then confirmed the code worked in it. Worse, its
+# `pre-handover` case used the label value `im`, which is what MIGRATED
+# clusters actually carry: the test had the two states exactly backwards and
+# still reported four distinct levels and a passing run.
+#
+# So the fixtures here are now built from what was measured on live clusters
+# (FO-openspec [8e8ef1], all three, 2026-09-14, jg-base main@356954c):
+#
+#   deploy/im       helm.toolkit.fluxcd.io/name=im, /namespace=claudecode
+#                   and NO kustomize.toolkit.fluxcd.io/* label at all
+#   helmrelease/im  kustomize.toolkit.fluxcd.io/name=claude-code-im
+#
+# with a positive control that shares the property — claudecode's
+# deploy/postgres DOES carry kustomize.toolkit.fluxcd.io/name=claudecode-db,
+# because kustomize-controller applies that Deployment directly. The label
+# follows who applied the object, not who owns the chain.
+#
+# Stated plainly, because it is the one thing here that is not a reading:
+# there is no pre-handover `im` anywhere on the fleet to measure — all three
+# clusters have `claude-code-im` un-suspended and `claude-code-instances`
+# holding zero objects. The `claude-code-instances` case below is CONSTRUCTED
+# from the mechanism above. It is a fixture, not a reading, and this comment
+# is the only thing that says so.
 #
 # Sources the real block out of the ConfigMap rather than restating its logic
 # — a copy here would drift, and the copy that drifts keeps passing.
@@ -46,8 +85,9 @@ if "imageID" not in blk:
     sys.exit("located a block that never reads imageID — the running half of #66's guard is gone")
 if "@sha256:" not in blk:
     sys.exit("located a block that never tests for @sha256: — the pin half is gone")
-if "claude-code-im" not in blk:
-    sys.exit("located a block that never checks the owning HR — it would ring on pre-handover clusters")
+if "get helmrelease" not in blk:
+    sys.exit("located a block that never asks the HelmRelease who applied it — #108's two-hop "
+             "resolution is gone, and the Deployment alone cannot answer it")
 (work / "block.sh").write_text(blk)
 PY
 
@@ -57,14 +97,18 @@ D1="sha256:$(printf 'a%.0s' $(seq 64))"
 D2="sha256:$(printf 'b%.0s' $(seq 64))"
 REPO="ghcr.io/ferry133/claude-code"
 
-deploy_json() { # $1=owner-label  $2..=images
-  local owner="$1"; shift
+# $1 = "labeled" (what every real im Deployment carries) | "unlabeled"
+# $2.. = container images
+deploy_json() {
+  local kind="$1"; shift
+  local labels='"helm.toolkit.fluxcd.io/name":"im","helm.toolkit.fluxcd.io/namespace":"claudecode"'
+  [[ "$kind" == "unlabeled" ]] && labels='"app.kubernetes.io/name":"im"'
   local imgs="" i
   for i in "$@"; do imgs="${imgs}{\"name\":\"c\",\"image\":\"$i\"},"; done
-  printf '{"metadata":{"labels":{"helm.toolkit.fluxcd.io/name":"%s"}},"spec":{"selector":{"matchLabels":{"app":"im"}},"template":{"spec":{"containers":[%s],"initContainers":[]}}}}' \
-    "$owner" "${imgs%,}"
+  printf '{"metadata":{"labels":{%s}},"spec":{"selector":{"matchLabels":{"app":"im"}},"template":{"spec":{"containers":[%s],"initContainers":[]}}}}' \
+    "$labels" "${imgs%,}"
 }
-pods_json() { # $@=imageIDs
+pods_json() {
   local ids="" i
   for i in "$@"; do ids="${ids}{\"imageID\":\"$i\"},"; done
   printf '{"items":[{"status":{"containerStatuses":[%s],"initContainerStatuses":[]}}]}' "${ids%,}"
@@ -72,25 +116,35 @@ pods_json() { # $@=imageIDs
 
 FAILED=0
 declare -A SEEN=()
+declare -A MSG=()
 
-run() { # $1=label $2=deploy json (or ABSENT) $3=pods json $4=expected prefix
-  local label="$1" deploy="$2" pods="$3" want="$4"
+# $1=label $2=deploy json or ABSENT  $3=pods json
+# $4=HR state: a Kustomization name, "" (HR exists, unlabeled), or UNREADABLE
+# $5=expected prefix   [$6=block override, for the positive control]
+run() {
+  local label="$1" deploy="$2" pods="$3" hr="$4" want="$5" blk="${6:-$WORK/block.sh}"
+  # Every case starts from nothing. These are sourced into THIS shell, so a
+  # variable one case sets is still set in the next — and a case that reads a
+  # neighbour's leftover passes for the wrong reason. (Seen while writing
+  # this: the #108 control printed the previous case's IM_KS.)
+  unset IM_JSON IM_HR IM_HR_NS IM_KS IM_OWNER IM_UNPINNED IM_PINS IM_SEL IM_RUN
   OUT=""
   record() { OUT="[$1] $2${3:+ — $3}"; }
   kubectl() {
     case "$*" in
-      *"get deploy im"*) [[ "$deploy" == "ABSENT" ]] && return 1; printf '%s' "$deploy" ;;
-      *"get pods"*)      printf '%s' "$pods" ;;
+      *"get deploy im"*)   [[ "$deploy" == "ABSENT" ]] && return 1; printf '%s' "$deploy" ;;
+      *"get helmrelease"*) [[ "$hr" == "UNREADABLE" ]] && return 1; printf '%s' "$hr" ;;
+      *"get pods"*)        printf '%s' "$pods" ;;
       *) echo "UNEXPECTED kubectl: $*" >&2; return 1 ;;
     esac
   }
   # shellcheck disable=SC1091
-  source "$WORK/block.sh"
+  source "$blk"
   unset -f kubectl record 2>/dev/null || true
 
   local got="${OUT:-<no row>}"
   local level="${got%%]*}"; level="${level#[}"
-  SEEN["$label"]="$level"
+  SEEN["$label"]="$level"; MSG["$label"]="$got"
   if [[ "$got" == "$want"* ]]; then
     printf 'PASS  %-18s -> %s\n' "$label" "${got:0:88}"
   else
@@ -99,28 +153,32 @@ run() { # $1=label $2=deploy json (or ABSENT) $3=pods json $4=expected prefix
   fi
 }
 
-PINNED="$(deploy_json claude-code-im "$REPO:9418571@$D1" "$REPO:9418571@$D1" "$REPO:9418571@$D1")"
+PINNED="$(deploy_json labeled "$REPO:9418571@$D1" "$REPO:9418571@$D1" "$REPO:9418571@$D1")"
 
-# Absent and pre-handover are real states: they must not ring daily, and they
-# must not render as a green row either — skip is the third outcome, and
-# folding "could not measure" into "pass" is #66's own shape.
-run absent        ABSENT   '{}'                     "[skip] im image pin — no im deployment"
-run pre-handover  "$(deploy_json im "$REPO:9418571")" '{}' "[skip] im image pin — im owned by 'im', pre-handover"
+# ── the three ways of measuring nothing. Each says something DIFFERENT, on
+#    purpose: #108 survived eight days as one skip reason standing in for
+#    several unrelated states, and its wording read as correct.
+run absent        ABSENT  '{}' claude-code-im \
+  "[skip] im image pin — no im deployment"
+run no-helm-label "$(deploy_json unlabeled "$REPO:9418571@$D1")" '{}' claude-code-im \
+  "[skip] im image pin — deploy/im has no helm.toolkit.fluxcd.io"
+run hr-unreadable "$PINNED" '{}' UNREADABLE \
+  "[skip] im image pin — helmrelease claudecode/im could not be read"
 
-# The spec quietly back on a mutable tag: the freeze risk returns. warn.
-run unpinned      "$(deploy_json claude-code-im "$REPO:latest" "$REPO:9418571@$D1")" '{}' \
+# Pre-handover: the Deployment label is `im`, exactly as on a migrated
+# cluster. Only the HelmRelease's applier tells them apart. CONSTRUCTED, see
+# the header — there is no live instance of this state to read.
+run pre-handover  "$PINNED" '{}' claude-code-instances \
+  "[skip] im image pin — im applied by Kustomization 'claude-code-instances'"
+
+# ── the branches #108 made unreachable ─────────────────────────────────────
+run unpinned      "$(deploy_json labeled "$REPO:latest" "$REPO:9418571@$D1")" '{}' claude-code-im \
   "[warn] im image pin — not pinned by digest: ${REPO}:latest"
-
-# Healthy: pinned, and the node runs exactly that digest.
-run healthy       "$PINNED" "$(pods_json "$REPO@$D1" "$REPO@$D1")" \
+run healthy       "$PINNED" "$(pods_json "$REPO@$D1" "$REPO@$D1")" claude-code-im \
   "[ok] im image pin (running == ${D1:0:19}"
-
-# ── #66's shape: spec pinned, node runs something else, all else green ──────
-run running-differs "$PINNED" "$(pods_json "$REPO@$D2")" \
+run running-differs "$PINNED" "$(pods_json "$REPO@$D2")" claude-code-im \
   "[warn] im image pin — running ${D2} "
-
-# Pinned but nothing running to compare: said, not silent.
-run no-pods       "$PINNED" '{"items":[]}' \
+run no-pods       "$PINNED" '{"items":[]}' claude-code-im \
   "[warn] im image pin — pinned, but no running container to compare"
 
 echo
@@ -135,10 +193,22 @@ if [[ "${SEEN[healthy]}" != "ok" ]]; then
   echo "      at every input carries no information."
   FAILED=$((FAILED + 1))
 fi
-
-if [[ "${SEEN[absent]}" == "ok" || "${SEEN[pre-handover]}" == "ok" ]]; then
+if [[ "${SEEN[absent]}" == "ok" || "${SEEN[pre-handover]}" == "ok" \
+   || "${SEEN[hr-unreadable]}" == "ok" || "${SEEN[no-helm-label]}" == "ok" ]]; then
   echo "FAIL  a branch that measured nothing reported ok — could-not-measure"
   echo "      folded into pass is the exact conflation this row exists to avoid."
+  FAILED=$((FAILED + 1))
+fi
+
+# #108 itself: four states must not collapse into one sentence. Distinct
+# LEVELS are not enough — the old row emitted skip/warn/ok across its cases
+# too, because its fixture fed it a value no cluster produces.
+DISTINCT_SKIPS=$(printf '%s\n' "${MSG[absent]}" "${MSG[no-helm-label]}" \
+  "${MSG[hr-unreadable]}" "${MSG[pre-handover]}" | sort -u | wc -l | tr -d ' ')
+if (( DISTINCT_SKIPS < 4 )); then
+  echo "FAIL  only ${DISTINCT_SKIPS} distinct not-measured message(s) across 4 states —"
+  echo "      a reader cannot tell which one their cluster hit, which is how"
+  echo "      #108 read as correct for eight days."
   FAILED=$((FAILED + 1))
 fi
 
@@ -149,8 +219,64 @@ if (( DISTINCT < 3 )); then
   FAILED=$((FAILED + 1))
 fi
 
+# ── positive control: this suite must REJECT the #108 gate ─────────────────
+# Re-created from the live block, anchored on the two lines that bound the
+# gate. Without this, "the suite passes" and "the suite cannot fail" are the
+# same output — and that is precisely what the previous version of this file
+# was.
+awk '
+  /^  IM_HR=/ && !replaced {
+    print "  IM_OWNER=$(echo \"$IM_JSON\" | jq -r '"'"'.metadata.labels[\"helm.toolkit.fluxcd.io/name\"] // \"\"'"'"')"
+    print "  if [[ \"$IM_OWNER\" != \"claude-code-im\" ]]; then"
+    dropping = 1; replaced = 1; next
+  }
+  dropping && /^  elif \[\[ "\$IM_KS" != "claude-code-im" \]\]; then$/ { dropping = 0; next }
+  !dropping { print }
+' "$WORK/block.sh" > "$WORK/block-108.sh"
+if ! grep -q 'IM_OWNER' "$WORK/block-108.sh" || grep -q 'IM_KS=' "$WORK/block-108.sh"; then
+  echo "FAIL  could not re-create the #108 gate from the live block — the fix"
+  echo "      moved, so this control is vacuous and the run above proves nothing."
+  FAILED=$((FAILED + 1))
+else
+  # Not via run(): that records into SEEN/FAILED, and here a NON-match is
+  # the pass. Captured directly instead.
+  CTRL_OUT=""
+  ctrl_probe() {
+    # Every case starts from nothing. These are sourced into THIS shell, so a
+    # variable one case sets is still set in the next — and a case that reads a
+    # neighbour's leftover passes for the wrong reason. (Seen while writing
+    # this: the #108 control printed the previous case's IM_KS.)
+    unset IM_JSON IM_HR IM_HR_NS IM_KS IM_OWNER IM_UNPINNED IM_PINS IM_SEL IM_RUN
+    OUT=""
+    record() { OUT="[$1] $2${3:+ — $3}"; }
+    kubectl() {
+      case "$*" in
+        *"get deploy im"*)   printf '%s' "$PINNED" ;;
+        *"get helmrelease"*) printf '%s' "claude-code-im" ;;
+        *"get pods"*)        pods_json "$REPO@$D1" ;;
+        *) return 1 ;;
+      esac
+    }
+    # shellcheck disable=SC1091
+    source "$WORK/block-108.sh"
+    unset -f kubectl record 2>/dev/null || true
+    CTRL_OUT="${OUT:-<no row>}"
+  }
+  ctrl_probe
+  if [[ "$CTRL_OUT" == "[ok]"* ]]; then
+    echo "FAIL  positive control: the #108 gate reached the pin comparison in"
+    echo "      this harness and reported ok. It cannot on a real cluster, so"
+    echo "      these fixtures are still supplying a label value that does not"
+    echo "      occur — which is exactly how this file passed for eight days."
+    FAILED=$((FAILED + 1))
+  else
+    printf 'PASS  %-18s -> rejected: %s\n' "ctrl-108" "${CTRL_OUT:0:72}"
+  fi
+fi
+
 if (( FAILED )); then
   echo "$FAILED check(s) failed."
   exit 1
 fi
-echo "ok — ${#SEEN[@]} cases match, ${DISTINCT} distinct levels, running≠pinned ≠ ok, unmeasured ≠ ok"
+echo "ok — 8 cases match, ${DISTINCT} distinct levels, 4 distinct not-measured reasons,"
+echo "     running≠pinned ≠ ok, unmeasured ≠ ok, and the #108 gate is rejected"
