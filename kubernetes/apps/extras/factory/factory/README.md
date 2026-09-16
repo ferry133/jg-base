@@ -636,6 +636,13 @@ yes
 > A permission probe that always answers `yes` is indistinguishable from one
 > that passed. To check what a ServiceAccount may do on an Omni-managed
 > cluster, read its `ClusterRoleBinding`/`RoleBinding` objects instead.
+>
+> *(2026-09-17: jg-janncotcc has since been retired — jg-base#110. The reading
+> above is left exactly as measured on 2026-09-10; a measurement does not become
+> false when a cluster it was taken on goes away. The instruction it carries
+> still applies to jg-jiahd, which is still Omni-managed, and the control that
+> gives the finding its force — jcom answering `no` because it reaches its API
+> server directly — did not involve the retired cluster at all.)*
 
 Both `cc` and `im` run under that account. Kubernetes RBAC is additive and has
 no deny, so **a separate namespace and a least-privilege SA constrain what
