@@ -104,8 +104,31 @@ Counts:   <N> FAIL, <N> WARN, <N> OK
 
 This is a **base app** (since 2026-08-07): the CronJob is installed on every
 cluster with no `extras:` entry needed. What is still per-cluster is *where the
-report goes* — until the SMTP fields below are set, each run exits 0 immediately
-with a "not configured" log line and sends nothing.
+report goes* — until the SMTP fields below are set, each run stops immediately
+with a "not configured" log line on stderr and sends nothing.
+
+> ⚠️ **An unconfigured run exits 78 and its Job is `Failed`, on purpose**
+> (2026-09-19, ferry133/jg-base#112, routed from fleet-ops#13). Until then the
+> branch exited 0, so the Job read `Complete 1/1` and **the only watcher's
+> absence looked exactly like a healthy cluster** — `jg-jcc1` ran from creation
+> to discovery with zero successful off-site backups behind that green.
+>
+> It has to be the exit status, because on an unconfigured cluster every other
+> channel is gated on the same operator action: the email on the four SMTP
+> fields, the dead-man ping on `daily_check_healthchecks_ping_url`, all five one
+> `default('')` apart in `jg-cluster-template`. Such a cluster was never
+> registered on healthchecks.io, so nothing there could go red. **Two defences
+> sharing a premise are one defence.** The exit status needs no `cluster.yaml`
+> value and no extra RBAC.
+>
+> **A failing ROW still exits 0.** Job status answers only "did this run get its
+> result to somewhere a person can see", never "is this cluster healthy" —
+> otherwise a red would fly every day over clusters that are merely unhappy, and
+> #6's lesson applies: a check that fires on every run gets switched off. What
+> separates this red from that one is that action clears it — fill in the four
+> fields and it goes away. Guard: `scripts/check-unconfigured-exits-nonzero.sh`.
+> 78 is `sysexits.h` `EX_CONFIG`, so "unconfigured" stays distinguishable from a
+> crash without reading the log.
 
 1. **jg-base** — already provides the app (this directory)
 

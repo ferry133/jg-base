@@ -35,13 +35,41 @@ data:
     : "${SMTP_PORT:?required}"
 
     # daily-check is a base app, so it lands on clusters whose cluster.yaml has
-    # no daily_check_* values yet. Skip quietly instead of failing a Job every
-    # day: there is nowhere to send the report until those are filled in.
+    # no daily_check_* values yet. That state has to stay visible from OUTSIDE
+    # the cluster, because on such a cluster no other channel can report it:
+    #
+    #   email     gated on DAILY_CHECK_SMTP_{USERNAME,PASSWORD,FROM} + _NOTIFY_EMAIL_TO
+    #   dead-man  gated on DAILY_CHECK_HEALTHCHECKS_PING_URL
+    #
+    # All five sit under one `default('')` and one operator action in
+    # jg-cluster-template's cluster-secrets template, so an unconfigured cluster
+    # was never registered on healthchecks.io either — there is nothing there
+    # that could go red. Two defences sharing a premise are one defence.
+    #
+    # Until 2026-09-19 this branch printed the line below and `exit 0`, so the
+    # Job read `Complete 1/1` and the only watcher's ABSENCE looked exactly like
+    # a healthy cluster. ferry133/jg-base#112, routed from fleet-ops#13: jg-jcc1
+    # ran from creation to discovery with zero successful off-site backups while
+    # three layers stayed quiet, and this was the outermost of them.
+    #
+    # The Job's exit status is the one channel that needs no cluster.yaml value
+    # and no extra RBAC, so it now carries this and only this: did the run get
+    # its result to somewhere a person can see. Row-level failures still never
+    # touch it — they go in the email, and FAIL_COUNT alone gates the dead-man
+    # (#6: a check that fires on every run gets switched off). What separates
+    # this red from #6's is whether action can clear it: #6's flew over a
+    # CORRECTLY configured cluster and no action could clear it, so it was
+    # silenced; this one is cleared by filling in four fields. The same yardstick
+    # is written out at the ENDPOINTS_TO_PROBE warning further down.
+    #
+    # 78 is sysexits.h EX_CONFIG: it keeps "unconfigured" distinguishable from a
+    # crash under `set -u` without anyone having to read the log.
     if [[ -z "${SMTP_USERNAME:-}" || -z "${SMTP_PASSWORD:-}" || -z "${SMTP_FROM:-}" || -z "${NOTIFY_EMAIL_TO:-}" ]]; then
       echo "daily-check is not configured for cluster ${CLUSTER_NAME}: set" \
            "daily_check_smtp_username / _password / _from / _notify_email_to" \
-           "in cluster.yaml, then re-run task configure. Skipping this run."
-      exit 0
+           "in cluster.yaml, then re-run task configure. This Job fails on" \
+           "purpose: an unconfigured cluster must not read as a healthy one." >&2
+      exit 78
     fi
     NAS_SERVER="${NAS_SERVER:-}"
     HEALTHCHECKS_PING_URL="${HEALTHCHECKS_PING_URL:-}"
@@ -1560,5 +1588,8 @@ data:
     fi
 
     echo "==> Done. Exit FAIL_COUNT=${FAIL_COUNT}"
-    # Always exit 0 — failures are reported via email, not via job status
+    # Exit 0 even when rows failed: a configured cluster reports its verdict
+    # through the email and the dead-man ping, and the Job status is not a
+    # second copy of that. The one path that exits non-zero is the unconfigured
+    # branch at the top of this script, where neither channel exists (#112).
     exit 0
