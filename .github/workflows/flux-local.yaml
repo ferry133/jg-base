@@ -262,6 +262,20 @@ jobs:
       - name: annotation substitutions cannot render empty
         run: bash scripts/check-annotation-substitution-default.sh
 
+      # #112 (routed from fleet-ops#13): the unconfigured branch printed an
+      # honest message and then `exit 0`, so the Job read `Complete 1/1` and
+      # the only watcher's ABSENCE looked exactly like a healthy cluster --
+      # jg-jcc1 went from creation to discovery with zero successful off-site
+      # backups behind that green. On such a cluster the email and the dead-man
+      # are gated on the same five `default('')` fields, so neither could ever
+      # speak; the exit status is the one channel that needs no cluster.yaml
+      # value and no extra RBAC. Two cases must keep failing: an unconfigured
+      # cluster that exits 0, and a CONFIGURED run that stops exiting 0 -- the
+      # second is what would drag row-level failures into Job status and repeat
+      # #6, where a check that fires on every run gets switched off.
+      - name: unconfigured daily-check fails its Job
+        run: bash scripts/check-unconfigured-exits-nonzero.sh
+
   diff:
     name: Flux Local Diff
     needs: pre-job
