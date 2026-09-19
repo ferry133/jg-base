@@ -115,13 +115,27 @@ grep -q 'sentinel-cluster' <<<"$MSG" \
 grep -q 'daily_check_smtp_username' <<<"$MSG" \
   || fail "the message no longer names the fields to fill in"
 
-# 8. The configured path still ends `exit 0`. Row-level failures must not turn
-#    the Job red — see the header.
-grep -q 'Exit FAIL_COUNT=' "$CM" \
-  || { echo "cannot measure: the end-of-run line was not found"; exit 2; }
-TAIL_EXIT="$(grep -A6 'Exit FAIL_COUNT=' "$CM" | grep -E '^\s*exit [0-9]+' | head -1 | tr -dc '0-9')"
-[[ "$TAIL_EXIT" == "0" ]] \
-  || fail "the end of a configured run now exits '${TAIL_EXIT:-<none>}', not 0 — a failing row would turn the Job red and #6 would repeat"
+# 8. A configured run whose report was DELIVERED still exits 0, even with rows
+#    failing. This used to be a grep for `exit 0` near the end-of-run line;
+#    #114 made the tail conditional, and the grep then reported '<none>' — a
+#    structural assertion that stops being able to read the thing it guards.
+#    Running the tail is the same question asked so that it keeps working.
+TAIL="$(awk '
+    /^[[:space:]]*echo "==> Done\./ { grabbing = 1 }
+    grabbing && /^[^[:space:]]/       { exit }
+    grabbing                          { print }
+  ' "$CM" | sed 's/^    //')"
+[[ -n "$TAIL" ]] || { echo "cannot measure: the end-of-run block was not found"; exit 2; }
+bash -n <<<"$TAIL" || { echo "cannot measure: end-of-run block does not parse"; exit 2; }
+
+tail_exit() { ( FAIL_COUNT="$1"; MAIL_DELIVERED="$2"; eval "$TAIL" ) >/dev/null 2>&1; echo $?; }
+
+got="$(tail_exit 3 1)"
+[[ "$got" -eq 0 ]] \
+  || fail "a configured run with 3 failing rows and the report delivered exited $got, not 0 — Job status has become a second copy of cluster health and #6 would repeat"
+got="$(tail_exit 0 1)"
+[[ "$got" -eq 0 ]] \
+  || fail "a clean configured run exited $got, not 0"
 
 # --------------------------------------------------- can this script fail?
 # Rebuild the pre-#112 block (the only change: the constant) and assert that
