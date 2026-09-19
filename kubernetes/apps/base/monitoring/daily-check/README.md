@@ -130,6 +130,30 @@ with a "not configured" log line on stderr and sends nothing.
 > 78 is `sysexits.h` `EX_CONFIG`, so "unconfigured" stays distinguishable from a
 > crash without reading the log.
 
+> ⚠️ **A configured run whose report did not reach anyone exits 75 and pings
+> `/fail`** (2026-09-19, ferry133/jg-base#114). Until then a failed `msmtp` left
+> one line on stderr, and the run went on to send a **success** dead-man ping
+> and exit 0 — so on the day the mail broke, every outside channel said the
+> cluster was fine. That is worse than #112's silence: #112's cluster was never
+> registered on healthchecks.io and could neither go red nor green, while this
+> one actively emits "I am well".
+>
+> **Two mechanisms, deliberately on different premises** — two defences sharing
+> one are a single defence:
+>
+> | | needs | covers |
+> |---|---|---|
+> | `/fail` ping | `daily_check_healthchecks_ping_url` | keeps history, so it outlives the Job's `ttlSecondsAfterFinished: 86400` |
+> | exit 75 | nothing | **SMTP set, ping URL unset** — reachable, because `default('')` does not bind the five `daily_check_*` fields together |
+>
+> **A mailer outage never enters `FAIL_COUNT`.** `FAIL_COUNT` says "this cluster
+> is unhealthy" and gates the dead-man; fold the two together and neither stays
+> answerable — a silent mailer would read as a sick cluster, and a sick cluster
+> whose mail worked would be indistinguishable from it. Exit codes: `0`
+> delivered (**including with failing rows** — the report carries that verdict),
+> `75` `EX_TEMPFAIL` configured but undelivered, `78` `EX_CONFIG` never
+> configured. Guard: `scripts/check-mail-failure-is-visible.sh`.
+
 1. **jg-base** — already provides the app (this directory)
 
 2. **jg-cluster-template** — already declares the fields in `cluster.schema.cue`

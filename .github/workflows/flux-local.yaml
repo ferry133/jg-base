@@ -276,6 +276,19 @@ jobs:
       - name: unconfigured daily-check fails its Job
         run: bash scripts/check-unconfigured-exits-nonzero.sh
 
+      # #114: msmtp failing produced one line on stderr, then the run sent a
+      # SUCCESS dead-man ping and exited 0 -- on the day the mail broke, every
+      # outside channel said the cluster was fine. Worse than #112's silence,
+      # which at least emitted nothing. Two mechanisms carry it and their
+      # premises must stay DIFFERENT: the /fail ping needs a ping URL and
+      # survives the Job's 24h TTL; exit 75 needs nothing and covers "SMTP set,
+      # ping URL unset", which the template permits. The cases that must keep
+      # failing: an undelivered report that pings success, one that exits 0,
+      # and a mailer outage folded into FAIL_COUNT -- the last would make a
+      # broken mailer indistinguishable from a sick cluster.
+      - name: an undelivered daily-check report is visible
+        run: bash scripts/check-mail-failure-is-visible.sh
+
   diff:
     name: Flux Local Diff
     needs: pre-job

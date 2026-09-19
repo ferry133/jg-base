@@ -102,6 +102,12 @@ data:
     FAIL_COUNT=0
     WARN_COUNT=0
     SKIP_COUNT=0
+    # Whether the report reached a human. Deliberately NOT part of FAIL_COUNT:
+    # FAIL_COUNT says "this cluster is unhealthy" and gates the dead-man, while
+    # this says "you did not get told". Folding one into the other leaves
+    # neither answerable — a silent mailer would read as a sick cluster, and a
+    # sick cluster whose mail worked would be indistinguishable from it (#114).
+    MAIL_DELIVERED=0
 
     # Three outcomes, not two. `skip` is "this check could not be evaluated
     # here" — a gate is unset, a tool is missing, the question does not apply to
@@ -1570,26 +1576,74 @@ data:
 
     echo "==> Sending email to ${NOTIFY_EMAIL_TO}"
     IFS=',' read -ra RECIPIENTS <<< "$NOTIFY_EMAIL_TO"
-    if msmtp --file=/tmp/msmtp/msmtprc "${RECIPIENTS[@]/#/ }" < "$BODY_FILE"; then
+    MAIL_ERR_FILE=$(mktemp)
+    if msmtp --file=/tmp/msmtp/msmtprc "${RECIPIENTS[@]/#/ }" < "$BODY_FILE" 2>"$MAIL_ERR_FILE"; then
+      MAIL_DELIVERED=1
       echo "Email sent successfully."
     else
-      echo "WARNING: msmtp returned non-zero. Email may not have been delivered." >&2
+      # Until 2026-09-19 this was the whole handling: one line on stderr, then
+      # the run carried on to send a SUCCESS dead-man ping and exit 0. On the
+      # day the mail broke, every outside channel said the cluster was fine
+      # (#114). The mailer's own words are kept because "msmtp returned
+      # non-zero" alone cannot separate an expired app password from a blocked
+      # egress, and the report that would have explained it is the thing that
+      # did not arrive.
+      # Set here and not only at the top with the counters: the send block is
+      # then self-sufficient, so neither a future reorder nor a deleted
+      # initialiser can leave this unbound under `set -u` — which would abort
+      # the run before the /fail ping, i.e. lose the channel this fix exists to
+      # add, and do it by crashing rather than by saying anything.
+      MAIL_DELIVERED=0
+      MAIL_ERR_MSG=$(tr '\n' ' ' <"$MAIL_ERR_FILE" | cut -c1-300)
+      echo "ERROR: msmtp returned non-zero, the report was NOT delivered: ${MAIL_ERR_MSG:-no stderr}" >&2
     fi
+    rm -f "$MAIL_ERR_FILE"
 
     echo "==> Pinging healthchecks.io"
+    # An undelivered report pings /fail even when every row passed. The ping is
+    # the only channel left once the mail is gone, so it must not say "fine"
+    # about a run whose verdict nobody received (#114). This does NOT touch
+    # FAIL_COUNT: the two reasons stay separable in the log, and a mailer
+    # outage never inflates the cluster's own failure count.
     if [[ -n "$HEALTHCHECKS_PING_URL" ]]; then
-      if [[ $FAIL_COUNT -gt 0 ]]; then
+      if [[ $MAIL_DELIVERED -eq 0 ]]; then
+        curl -fsS -m 10 --retry 3 "${HEALTHCHECKS_PING_URL}/fail" -o /dev/null \
+          && echo "Pinged /fail (report undelivered)" || echo "Ping to /fail failed" >&2
+      elif [[ $FAIL_COUNT -gt 0 ]]; then
         curl -fsS -m 10 --retry 3 "${HEALTHCHECKS_PING_URL}/fail" -o /dev/null && echo "Pinged /fail" || echo "Ping to /fail failed" >&2
       else
         curl -fsS -m 10 --retry 3 "${HEALTHCHECKS_PING_URL}" -o /dev/null && echo "Ping OK" || echo "Ping failed" >&2
       fi
     else
+      # ⚠️ The combination FO-handler [f92b04] named on #114: SMTP configured,
+      # ping URL not. The five daily_check_* fields are set together by
+      # convention, never by the template — `default('')` does not bind them —
+      # so this state is reachable, and in it the dead-man cannot speak. The
+      # exit status below is what covers it, and that is why the two mechanisms
+      # must not share a premise: this one needs a ping URL, that one needs
+      # nothing.
       echo "HEALTHCHECKS_PING_URL not set, skipping ping"
     fi
 
-    echo "==> Done. Exit FAIL_COUNT=${FAIL_COUNT}"
-    # Exit 0 even when rows failed: a configured cluster reports its verdict
-    # through the email and the dead-man ping, and the Job status is not a
-    # second copy of that. The one path that exits non-zero is the unconfigured
-    # branch at the top of this script, where neither channel exists (#112).
+    echo "==> Done. Exit FAIL_COUNT=${FAIL_COUNT} MAIL_DELIVERED=${MAIL_DELIVERED}"
+    # The exit status answers one question and not the cluster's health: did
+    # this run get its result to somewhere a person can see?
+    #
+    #   78  EX_CONFIG    never configured, so no channel exists at all (#112)
+    #   75  EX_TEMPFAIL  configured, ran, but the report was not delivered (#114)
+    #    0               delivered — including when rows FAILED, because the
+    #                    report carries that verdict and the dead-man pings
+    #                    /fail for it. Job status is not a second copy of the
+    #                    cluster's health, or a red would fly every day over
+    #                    clusters that are merely unhappy and get switched off
+    #                    (#6).
+    #
+    # 75 rather than a bare 1 so an undelivered report stays distinguishable
+    # from a crash and from #112 without reading the log; the Job is Failed
+    # either way, but `ttlSecondsAfterFinished: 86400` collects it after a day,
+    # which is why the /fail ping above carries the same fact to somewhere that
+    # keeps history.
+    if [[ $MAIL_DELIVERED -eq 0 ]]; then
+      exit 75
+    fi
     exit 0
