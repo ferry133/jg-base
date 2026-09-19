@@ -227,7 +227,8 @@ data:
         # deployment and its PVC, holding whatever context the instance
         # accumulated, still exist; exec simply has no pod to reach. Folding it
         # into ABSENT would rebuild #54's shape (content that should be
-        # captured, reading as normal) — and check 20 deliberately does not
+        # captured, reading as normal) — and check 20 (`Off-site backup
+        # coverage`) deliberately does not
         # read `absent`, so there it would be invisible by the same rule that
         # protects absent from being read as failed. Own key instead (#61).
         # Only spec.replicas==0 lands here: a deployment that WANTS a pod and
@@ -308,7 +309,7 @@ data:
     # "encrypted: 1626 bytes" every night and **nothing anywhere said that number
     # was too small**. A magic floor here would be a guess (a full cluster is
     # ~1.5 MiB, an appliance legitimately far less), so the number is published
-    # instead and daily-check's check 20 reports it — a size in the daily report
+    # instead and daily-check's check 20 (`Off-site backup coverage`) reports it — a size in the daily report
     # is a number a human compares to yesterday's, which is the comparison no
     # constant in this file could make correctly.
     #
@@ -378,7 +379,7 @@ data:
       fi
       # Nothing to send is not a failed send: without this patch the initial
       # "no" would read as "staged content never left the cluster" and fail
-      # check 20 on every healthy empty night (#63's three values, not two).
+      # check 20 (`Off-site backup coverage`) on every healthy empty night (#63's three values, not two).
       kubectl -n monitoring patch configmap offsite-backup-status \
         --type merge -p '{"data":{"uploaded":"skipped"}}' >/dev/null 2>&1 \
         || log "WARNING: could not mark status uploaded=skipped"

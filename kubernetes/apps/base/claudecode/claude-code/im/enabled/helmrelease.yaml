@@ -44,7 +44,7 @@ spec:
       im:
         # When the Omni SA key in `talos-mcp-secret` expires, as recorded at
         # issuance (jg-cluster-template `talos_mcp_sa_key_expires`). daily-check
-        # row 24 reads it; empty until a date is recorded. On the controller's
+        # row 24 (`Omni SA key expiry`) reads it; empty until a date is recorded. On the controller's
         # own metadata, not the pod's, so recording a new date does not restart
         # the terminal. ferry133/fleet-ops#11.
         annotations:

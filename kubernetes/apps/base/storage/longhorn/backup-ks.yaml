@@ -24,7 +24,8 @@
 # reconciliation already created**, and this repo has measured that on a
 # different app: 2026-08-19, jcom had `lan-address-probe` suspended=true with
 # its Deployment still running 7 days later, plus a stray `pool-discovered` that
-# no Service used (daily-check configmap.yaml, check 17).
+# no Service used (daily-check configmap.yaml, check 17 — the report calls it
+# `Discovered LAN addresses`; the number appears only in the source).
 #
 # Suspending here would leave `daily-backup` in longhorn-system and silence the
 # only Flux object that would have reported it, in the same instant. #28 spent a
