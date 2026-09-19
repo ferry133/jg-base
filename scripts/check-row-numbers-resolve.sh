@@ -45,7 +45,12 @@ def read(rel):
         print(f"cannot measure: {rel} not found"); sys.exit(2)
     return open(p, encoding="utf-8").read()
 
-legend = {int(m) for m in re.findall(r'^\| (\d+) \|', read(README), re.M)}
+# A LIST first, then the set: the set is what resolves citations, but two
+# table rows claiming the same number collapse into one member and the count
+# does not move. A count is not a detector (FO-handler [f92b04], mutation M2 on
+# #120). Same reason `legend` is compared to `coded` in BOTH directions below.
+legend_rows = [int(m) for m in re.findall(r'^\| (\d+) \|', read(README), re.M)]
+legend = set(legend_rows)
 coded  = {int(m) for m in re.findall(r'^    # (\d+)[a-z]?\. ', read(SCRIPT), re.M)}
 
 CITE = re.compile(r'\b(?:checks?|rows?)\s+(\d+)(?:\s+and\s+(\d+))?\b')
@@ -90,6 +95,28 @@ if missing:
          + ", ".join(str(n) for n in missing)
          + f" — a reader holding {README} cannot resolve them")
 
+# --- 1b. and every number in the legend must exist in the script. Without
+#     this the legend can grow a row no check implements, and the PASS line
+#     would print "27 rows" next to "26 numbered rows" with nothing comparing
+#     them — two numbers side by side is not a comparison (M1 on #120).
+phantom = sorted(legend - coded)
+if phantom:
+    fail("the legend defines rows that no check implements: "
+         + ", ".join(str(n) for n in phantom)
+         + " — a reader would look for them in a report that can never print them")
+
+# --- 1c. and it must define each number once. Two rows claiming the same
+#     number both look authoritative, and which one a reader obeys depends on
+#     which they read first; the deduplicating set hides it and the row count
+#     does not move (M2 on #120). "Two copies inevitably diverge, and the one
+#     being followed is usually the wrong one" — fleet-ops/CLAUDE.md, here in
+#     its within-one-file form.
+dupes = sorted({n for n in legend_rows if legend_rows.count(n) > 1})
+if dupes:
+    fail("the legend defines these numbers more than once: "
+         + ", ".join(f"{n}×{legend_rows.count(n)}" for n in dupes)
+         + " — the duplicates disagree eventually, and nothing says which row is meant")
+
 # --- 2. every number cited anywhere must be in the legend.
 unresolvable = sorted(set(sites) - legend)
 for n in unresolvable:
@@ -115,8 +142,11 @@ elif synthetic in legend:
     fail("negative control is broken: the synthetic number is defined in the legend")
 
 if rc == 0:
-    print(f"PASS — legend defines {len(legend)} rows; {len(coded)} numbered rows in the script, "
-          f"all present; {len(sites)} distinct numbers cited across the repo, all resolvable")
+    # States the comparison, not the two operands. Printing "27 rows" beside
+    # "26 numbered rows" and leaving the reader to notice is how M1 passed.
+    print(f"PASS — legend and script define the SAME {len(legend)} rows "
+          f"(both differences empty, {len(legend_rows)} table rows, no number twice); "
+          f"{len(sites)} distinct numbers cited across the repo, all resolvable")
     print("       (negative control: a synthetic citation of an undefined number is seen by the same scanner)")
 sys.exit(rc)
 PY
