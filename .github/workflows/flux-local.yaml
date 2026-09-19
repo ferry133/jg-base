@@ -155,7 +155,7 @@ jobs:
       - name: daily-check external endpoint row
         run: bash scripts/check-external-endpoint-row.sh
 
-      # #49: checks 19 and 20 are both source-side, so a destination that was
+      # #49: checks 19 (`Off-site backup freshness`) and 20 (`Off-site backup coverage`) are both source-side, so a destination that was
       # emptied, repointed or never replicated still rendered as a healthy
       # backup line. The row this guards has to keep `fail` (the archive is not
       # there) apart from `skip` (we could not look) — the script asserts that
@@ -300,6 +300,18 @@ jobs:
       # line that does not sit after the upload line.
       - name: the offsite status patch speaks on success too
         run: bash scripts/check-offsite-status-patch-logs.sh
+      # #118: the report carries no row numbers -- `record()` emits the NAME --
+      # so a number is repo dialect, resolvable only through the legend in
+      # daily-check/README.md. That legend was missing 7 of 26 rows, 6 of them
+      # cited in prose and in operator-facing manifests, and the legend itself
+      # cited two numbers it did not define. The cost was already paid: "check
+      # 20 must appear" went into fleet-ops#12/#13 as an acceptance condition,
+      # naming something the accepter cannot see in the artefact. The case that
+      # must keep failing: any number cited anywhere that the legend does not
+      # define -- including a new row added to the script without a legend
+      # entry, which is how the gap opened in the first place.
+      - name: every cited daily-check row number resolves
+        run: bash scripts/check-row-numbers-resolve.sh
 
   diff:
     name: Flux Local Diff

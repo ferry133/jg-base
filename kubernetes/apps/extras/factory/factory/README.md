@@ -381,7 +381,7 @@ material is in this repo. The variables are:
 | Variable | Carries |
 |---|---|
 | `FACTORY_OMNI_SA_KEY` | Omni service account key, `--role Operator`. Deployed as a **one-year** key, issued 2026-09-11 on ferry133's ruling (fleet-ops `docs/operations/handover-inventory.md`) — this cell used to say "short TTL", the design before that ruling |
-| `FACTORY_OMNI_SA_KEY_EXPIRES` | that key's expiry, YYYY-MM-DD. Not a credential and not in the pod: an annotation on the controller, read by daily-check row 24 (ferry133/fleet-ops#11) |
+| `FACTORY_OMNI_SA_KEY_EXPIRES` | that key's expiry, YYYY-MM-DD. Not a credential and not in the pod: an annotation on the controller, read by daily-check row 24, `Omni SA key expiry` (ferry133/fleet-ops#11) |
 | `FACTORY_OMNI_ENDPOINT` | override only; defaults to the in-cluster path |
 | `FACTORY_GITHUB_TOKEN` | fine-grained PAT for creating customer repos |
 | `FACTORY_FLEET_OPS_DEPLOY_KEY_B64` | base64 of the read-only deploy key |

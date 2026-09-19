@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Assert what daily-check's off-site backup DESTINATION row emits, per input.
 #
-# ferry133/jg-base#49 asked for this row because checks 19 and 20 are both
+# ferry133/jg-base#49 asked for this row because checks 19 (Off-site backup freshness) and 20 (Off-site backup coverage) are both
 # source-side and cannot see the destination. Its acceptance condition is one
 # sentence: **`fail` and `skip` must be distinguishable.** That is the whole
 # point — "the archive is not there" and "we could not look" are different
