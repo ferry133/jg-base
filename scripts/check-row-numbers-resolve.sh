@@ -51,7 +51,16 @@ def read(rel):
 # #120). Same reason `legend` is compared to `coded` in BOTH directions below.
 legend_rows = [int(m) for m in re.findall(r'^\| (\d+) \|', read(README), re.M)]
 legend = set(legend_rows)
-coded  = {int(m) for m in re.findall(r'^    # (\d+)[a-z]?\. ', read(SCRIPT), re.M)}
+
+# The script side keeps its LABEL (`17`, `17a`), not just the number. Two
+# things ride on that: `17` and `17a` are different rows and must not read as a
+# duplicate of each other — a guard that fires on correct code is the one that
+# gets switched off — while set membership below still works on the bare
+# number, which is what a citation says. M3 on #120: the duplicate check was
+# applied only to the legend, so a second `# 5.` in the script was absorbed by
+# the set and passed.
+coded_labels = re.findall(r'^    # (\d+[a-z]?)\. ', read(SCRIPT), re.M)
+coded = {int(re.match(r'\d+', l).group()) for l in coded_labels}
 
 CITE = re.compile(r'\b(?:checks?|rows?)\s+(\d+)(?:\s+and\s+(\d+))?\b')
 
@@ -117,6 +126,14 @@ if dupes:
          + ", ".join(f"{n}×{legend_rows.count(n)}" for n in dupes)
          + " — the duplicates disagree eventually, and nothing says which row is meant")
 
+# --- 1d. the SCRIPT must define each row once too. Symmetric with 1c: the set
+#     above absorbs a repeat on this side just as readily (M3 on #120).
+script_dupes = sorted({l for l in coded_labels if coded_labels.count(l) > 1})
+if script_dupes:
+    fail("the script defines these rows more than once: "
+         + ", ".join(f"{l}×{coded_labels.count(l)}" for l in script_dupes)
+         + " — two sections claiming one number, and the legend can only describe one of them")
+
 # --- 2. every number cited anywhere must be in the legend.
 unresolvable = sorted(set(sites) - legend)
 for n in unresolvable:
@@ -144,8 +161,13 @@ elif synthetic in legend:
 if rc == 0:
     # States the comparison, not the two operands. Printing "27 rows" beside
     # "26 numbered rows" and leaving the reader to notice is how M1 passed.
-    print(f"PASS — legend and script define the SAME {len(legend)} rows "
-          f"(both differences empty, {len(legend_rows)} table rows, no number twice); "
+    # Names what was checked ON EACH SIDE. The previous wording said "no
+    # number twice" unconditionally while only the legend had been checked —
+    # a pass message that claims more than it verified is worse than none,
+    # because it tells the next person that side is already guarded (M3).
+    print(f"PASS — legend and script define the SAME {len(legend)} rows, both differences empty; "
+          f"no number twice in the legend ({len(legend_rows)} table rows) "
+          f"and no row twice in the script ({len(coded_labels)} section headers); "
           f"{len(sites)} distinct numbers cited across the repo, all resolvable")
     print("       (negative control: a synthetic citation of an undefined number is seen by the same scanner)")
 sys.exit(rc)
