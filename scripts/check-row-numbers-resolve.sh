@@ -49,27 +49,40 @@ def read(rel):
 # table rows claiming the same number collapse into one member and the count
 # does not move. A count is not a detector (FO-handler [f92b04], mutation M2 on
 # #120). Same reason `legend` is compared to `coded` in BOTH directions below.
-legend_rows = [int(m) for m in re.findall(r'^\| (\d+) \|', read(README), re.M)]
+# Everything below works on LABELS (`17`, `17a`), never on bare integers.
+#
+# ⚠️ This is the correction that cost the most on #120. The script pattern used
+# to demand EXACTLY four leading spaces. `# 17a.` at configmap.yaml:723 is
+# indented six, so the guard never saw it — and the sentence "there are no
+# lettered sub-rows today" was itself produced by that same pattern. **An
+# instrument certified the absence of the thing it is blind to.** 17a is a real
+# row: it prints on every report, it is cited in four places, and the legend
+# had no entry for it, which is #118's own sentence living inside #118's guard.
+#
+# So: any indent. Verified rather than assumed — the relaxed pattern matches 27
+# lines in configmap.yaml and all 27 are real row headers (FO-handler [f92b04]
+# and jgb-handler [20db54] each listed them, independently, with the indent
+# printed alongside so a mismatch could not hide in the count).
+legend_rows = re.findall(r'^\| (\d+[a-z]?) \|', read(README), re.M)
 legend = set(legend_rows)
+coded_labels = re.findall(r'^[ \t]*# (\d+[a-z]?)\. ', read(SCRIPT), re.M)
+coded = set(coded_labels)
 
-# The script side keeps its LABEL (`17`, `17a`), not just the number. Two
-# things ride on that: `17` and `17a` are different rows and must not read as a
-# duplicate of each other — a guard that fires on correct code is the one that
-# gets switched off — while set membership below still works on the bare
-# number, which is what a citation says. M3 on #120: the duplicate check was
-# applied only to the legend, so a second `# 5.` in the script was absorbed by
-# the set and passed.
-coded_labels = re.findall(r'^    # (\d+[a-z]?)\. ', read(SCRIPT), re.M)
-coded = {int(re.match(r'\d+', l).group()) for l in coded_labels}
+def order(label):
+    m = re.match(r'(\d+)([a-z]?)', label)
+    return (int(m.group(1)), m.group(2))
 
-CITE = re.compile(r'\b(?:checks?|rows?)\s+(\d+)(?:\s+and\s+(\d+))?\b')
+# The suffix is part of the identity: without it `check 17a` resolves to `17`,
+# which IS in the legend, so a citation of an undocumented sub-row reads as
+# resolvable. That is how 17a stayed invisible through three rounds.
+CITE = re.compile(r'\b(?:checks?|rows?)\s+(\d+[a-z]?)(?:\s+and\s+(\d+[a-z]?))?\b')
 
 def cited_in(text):
     out = set()
     for m in CITE.finditer(text):
-        out.add(int(m.group(1)))
+        out.add(m.group(1))
         if m.group(2):
-            out.add(int(m.group(2)))
+            out.add(m.group(2))
     return out
 
 files = subprocess.run(["git", "-C", root, "ls-files"],
@@ -98,7 +111,7 @@ if not sites:
     print("cannot measure: the citation scan found nothing at all, so 'no violations' would be meaningless"); sys.exit(2)
 
 # --- 1. every number that exists in the script must be in the legend.
-missing = sorted(coded - legend)
+missing = sorted(coded - legend, key=order)
 if missing:
     fail("numbered rows exist in the script but not in the legend: "
          + ", ".join(str(n) for n in missing)
@@ -108,7 +121,7 @@ if missing:
 #     this the legend can grow a row no check implements, and the PASS line
 #     would print "27 rows" next to "26 numbered rows" with nothing comparing
 #     them — two numbers side by side is not a comparison (M1 on #120).
-phantom = sorted(legend - coded)
+phantom = sorted(legend - coded, key=order)
 if phantom:
     fail("the legend defines rows that no check implements: "
          + ", ".join(str(n) for n in phantom)
@@ -120,7 +133,7 @@ if phantom:
 #     does not move (M2 on #120). "Two copies inevitably diverge, and the one
 #     being followed is usually the wrong one" — fleet-ops/CLAUDE.md, here in
 #     its within-one-file form.
-dupes = sorted({n for n in legend_rows if legend_rows.count(n) > 1})
+dupes = sorted({n for n in legend_rows if legend_rows.count(n) > 1}, key=order)
 if dupes:
     fail("the legend defines these numbers more than once: "
          + ", ".join(f"{n}×{legend_rows.count(n)}" for n in dupes)
@@ -128,28 +141,28 @@ if dupes:
 
 # --- 1d. the SCRIPT must define each row once too. Symmetric with 1c: the set
 #     above absorbs a repeat on this side just as readily (M3 on #120).
-script_dupes = sorted({l for l in coded_labels if coded_labels.count(l) > 1})
+script_dupes = sorted({l for l in coded_labels if coded_labels.count(l) > 1}, key=order)
 if script_dupes:
     fail("the script defines these rows more than once: "
          + ", ".join(f"{l}×{coded_labels.count(l)}" for l in script_dupes)
          + " — two sections claiming one number, and the legend can only describe one of them")
 
 # --- 2. every number cited anywhere must be in the legend.
-unresolvable = sorted(set(sites) - legend)
+unresolvable = sorted(set(sites) - legend, key=order)
 for n in unresolvable:
     where = ", ".join(sorted(set(sites[n]))[:4])
     fail(f"the number {n} is cited but the legend does not define it (cited in: {where})")
 
 # --- 3. positive control: a number that IS defined must not be reported.
 #     Without this, "legend == everything" would satisfy 1 and 2 vacuously.
-probe = max(legend)
+probe = max(legend, key=order)
 if probe in unresolvable or probe in missing:
     print(f"cannot measure: control failed — {probe} is in the legend yet was reported"); sys.exit(2)
 
 # --- 4. negative control: a synthetic citation of an undefined number must be
 #     caught by the same function that scans the repo. Built in memory, never
 #     written into the tree, so this file cannot pollute its own scan.
-synthetic = 99 if 99 not in legend else max(legend) + 77
+synthetic = '99' if '99' not in legend else '9907'
 probe_text = f"See daily-check's check {synthetic} for the rest."
 found = cited_in(probe_text)
 if synthetic not in found:
@@ -166,9 +179,9 @@ if rc == 0:
     # a pass message that claims more than it verified is worse than none,
     # because it tells the next person that side is already guarded (M3).
     print(f"PASS — legend and script define the SAME {len(legend)} rows, both differences empty; "
-          f"no number twice in the legend ({len(legend_rows)} table rows) "
-          f"and no row twice in the script ({len(coded_labels)} section headers); "
-          f"{len(sites)} distinct numbers cited across the repo, all resolvable")
+          f"no label twice in the legend ({len(legend_rows)} table rows) "
+          f"and no label twice in the script ({len(coded_labels)} section headers, any indent); "
+          f"{len(sites)} distinct labels cited across the repo, all resolvable")
     print("       (negative control: a synthetic citation of an undefined number is seen by the same scanner)")
 sys.exit(rc)
 PY
