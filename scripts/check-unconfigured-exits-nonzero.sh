@@ -26,6 +26,13 @@
 # Sources the real branch out of the ConfigMap rather than restating it: a copy
 # here would drift, and the copy that drifts keeps passing.
 #
+# ⚠️ THIS FILE ALONE DOES NOT SECURE THE THREE EXIT CODES. It pins 78 for an
+# unconfigured cluster; `check-mail-failure-is-visible.sh` pins 75 for a report
+# that was not delivered. Swapping the two constants is caught only by the
+# corresponding file, so the pair is what makes 0/75/78 distinguishable rather
+# than merely "non-zero" (measured by FO-handler [f92b04] as mutations M1/M2 on
+# #115). Whoever deletes one of these should know what they are deleting.
+#
 # Usage: scripts/check-unconfigured-exits-nonzero.sh
 #   exit 0 every case matches, 1 a case failed, 2 cannot measure here
 set -uo pipefail
