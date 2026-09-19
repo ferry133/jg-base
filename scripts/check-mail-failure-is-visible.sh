@@ -27,6 +27,24 @@
 # Sources the three real blocks out of the ConfigMap rather than restating
 # them: a copy here would drift, and the copy that drifts keeps passing.
 #
+# ⚠️ DELIBERATELY NOT ASSERTED, so that the next person does not "fix" it:
+# deleting the top-of-script `MAIL_DELIVERED=0` initialiser leaves this suite
+# green, and that is correct. The send block sets the flag on BOTH paths, so
+# that initialiser carries no behaviour; an assertion on it would be flagging a
+# line that does nothing, and a guard that fires on correct code is the one
+# that gets switched off (#6). Verified as a mutation and left passing on
+# purpose (ferry133/jg-base#115, agreed by the acceptor FO-handler [f92b04]).
+# If you make the initialiser load-bearing again — by removing either in-block
+# assignment — cases 1b and 1c fail, which is the assertion that actually
+# matters here.
+#
+# ⚠️ THIS FILE ALONE DOES NOT SECURE THE THREE EXIT CODES. It pins 75 for an
+# undelivered report; `check-unconfigured-exits-nonzero.sh` pins 78 for an
+# unconfigured cluster. Swapping the two constants is caught only by the
+# corresponding file, so the pair is what makes 0/75/78 distinguishable rather
+# than merely "non-zero" (measured by FO-handler [f92b04] as mutations M1/M2 on
+# #115). Whoever deletes one of these should know what they are deleting.
+#
 # Usage: scripts/check-mail-failure-is-visible.sh
 #   exit 0 every case matches, 1 a case failed, 2 cannot measure here
 set -uo pipefail
