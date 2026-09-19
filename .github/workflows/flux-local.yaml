@@ -289,6 +289,18 @@ jobs:
       - name: an undelivered daily-check report is visible
         run: bash scripts/check-mail-failure-is-visible.sh
 
+      # #117: offsite-backup's post-upload status patch spoke only when it
+      # FAILED, so a successful run logged one status write where the server
+      # recorded two. "The patch ran and succeeded" and "the patch never ran"
+      # were the same log, and the log is what people read -- fleet-ops#13
+      # concluded from `grep -c "published status" = 1` that the table was
+      # still written before the upload and that #63 was closed unfixed. Four
+      # claims, all wrong. The cases that must keep failing: a successful patch
+      # that prints nothing, a failed one that claims success, and a success
+      # line that does not sit after the upload line.
+      - name: the offsite status patch speaks on success too
+        run: bash scripts/check-offsite-status-patch-logs.sh
+
   diff:
     name: Flux Local Diff
     needs: pre-job

@@ -403,9 +403,22 @@ data:
       # Only now does the status say so. If this patch itself fails the error
       # points the safe way: tomorrow reports a failed upload that succeeded,
       # instead of a clean night that never left the cluster.
-      kubectl -n monitoring patch configmap offsite-backup-status \
-        --type merge -p '{"data":{"uploaded":"yes"}}' >/dev/null 2>&1 \
-        || log "WARNING: could not mark status uploaded=yes"
+      # Says so on BOTH paths. Until 2026-09-19 only the failure branch spoke,
+      # so a successful patch left no trace and the log showed ONE write where
+      # the server recorded two (`--show-managed-fields`: kubectl-client-side-
+      # apply at publish, kubectl-patch here). That made "the patch ran and
+      # succeeded" and "the patch never ran" identical to anyone reading the
+      # log — and the log is what people read. It already cost one wrong defect
+      # report: ferry133/fleet-ops#13 concluded from `grep -c "published
+      # status" = 1` that the status table was still written before the upload
+      # and that jg-base#63 had been closed without being fixed. Four claims,
+      # all wrong, all retracted (jg-base#117).
+      if kubectl -n monitoring patch configmap offsite-backup-status \
+           --type merge -p '{"data":{"uploaded":"yes"}}' >/dev/null 2>&1; then
+        log "status patched: uploaded=yes (second write, after the upload above)"
+      else
+        log "WARNING: could not mark status uploaded=yes"
+      fi
     else
       log "FATAL: upload failed"; exit 1
     fi
