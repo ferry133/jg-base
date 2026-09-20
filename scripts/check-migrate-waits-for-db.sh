@@ -53,7 +53,21 @@ if [[ "${N_INIT:-0}" -lt 1 ]]; then
 fi
 
 WAIT="$WORK/wait.sh"
-yq -r "$JOBSPEC | .initContainers[0].command[-1]" "$MF" > "$WAIT"
+# ⚠️ The text in the manifest is NOT the text the cluster runs. This Job is
+# applied by the `claudecode-db` Kustomization with postBuild substituteFrom,
+# so Flux rewrites `$${X}` to a literal `${X}` before the container starts.
+# Running the raw text would exercise something that never runs: `$${PGHOST}`
+# in a shell is the PID followed by `{PGHOST}`, which is how this guard first
+# reported a message that "does not name the host" — the message was fine, the
+# harness was testing the wrong string. Undo the escape here, which is exactly
+# what Flux does, and nothing else.
+#
+# The other half — that the escape is PRESENT, so an unescaped `${PGHOST}` is
+# not silently emptied by substitution on the cluster — belongs to
+# scripts/check-substitution-vocabulary.sh and is already enforced there. Not
+# duplicated: two guards sharing one premise are one guard, but these two have
+# different premises and each catches its own direction.
+yq -r "$JOBSPEC | .initContainers[0].command[-1]" "$MF" | sed 's/[$][$]{/${/g' > "$WAIT"
 yq -r "$JOBSPEC | [.initContainers[0].image, .containers[0].image] | .[]" "$MF" > "$WORK/images"
 sh -n "$WAIT" || { echo "cannot measure: the extracted init script does not parse"; exit 2; }
 # Comments stripped first: the script's own comment explains why pg_isready

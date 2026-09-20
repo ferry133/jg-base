@@ -76,17 +76,25 @@ spec:
             - |
               # pg_isready needs no password: it asks whether the server is
               # accepting connections, which is exactly the question.
+              #
+              # ⚠️ `$${...}`, not `${...}`. This Job is applied by the
+              # `claudecode-db` Kustomization, which runs postBuild
+              # substituteFrom cluster-secrets — an unescaped `${PGHOST}` here
+              # is substituted by Flux before the container ever sees it, and
+              # PGHOST is not a cluster variable, so it would arrive EMPTY and
+              # the log would say `postgres at :5432`. The doubled `$` survives
+              # substitution as a literal `${...}` for the shell.
               deadline=$(( $(date +%s) + 900 ))
               until pg_isready -q -t 3; do
                 if [ "$(date +%s)" -ge "$deadline" ]; then
-                  echo "postgres at ${PGHOST}:${PGPORT:-5432} did not accept connections within 900s;" \
+                  echo "postgres at $${PGHOST}:$${PGPORT:-5432} did not accept connections within 900s;" \
                        "the migration was not attempted, so the database still has no schema" >&2
                   exit 1
                 fi
-                echo "waiting for ${PGHOST}:${PGPORT:-5432} ..."
+                echo "waiting for $${PGHOST}:$${PGPORT:-5432} ..."
                 sleep 5
               done
-              echo "postgres at ${PGHOST}:${PGPORT:-5432} is accepting connections"
+              echo "postgres at $${PGHOST}:$${PGPORT:-5432} is accepting connections"
           env:
             - name: PGHOST
               value: postgres.claudecode.svc
