@@ -142,6 +142,28 @@ jobs:
           sudo install -m 0755 /tmp/yq /usr/local/bin/yq
           yq --version
 
+      # `scripts/check-envsubst-parses.sh` runs Flux's OWN substitution engine.
+      # It refuses to approximate it, and that refusal is the point: the guard
+      # that shipped #123 DID approximate it (sed rewriting `$$` to `$`), was
+      # faithful for the code, blind to the comments, and three clusters went
+      # Ready=False BuildFailed on a comment. Nothing made of regexes catches
+      # that; the binary catches it on the first run.
+      #
+      # Pinned by version AND digest, same reasoning as yq above: a version is
+      # a name, and a name is not an instance.
+      - name: Install flux CLI
+        env:
+          FLUX_VERSION: 2.7.4
+          FLUX_SHA256: cc74636a893994f526f3742adbe5c087f2b4806cf625a0b7666b83bfdb968efe
+        run: |
+          set -euo pipefail
+          curl -fsSL -o /tmp/flux.tar.gz \
+            "https://github.com/fluxcd/flux2/releases/download/v${FLUX_VERSION}/flux_${FLUX_VERSION}_linux_amd64.tar.gz"
+          echo "${FLUX_SHA256}  /tmp/flux.tar.gz" | sha256sum -c -
+          tar -xzf /tmp/flux.tar.gz -C /tmp flux
+          sudo install -m 0755 /tmp/flux /usr/local/bin/flux
+          flux version --client
+
       # The repo's only behavioural regression test for a daily-check row, and
       # until now nothing executed it. The row it guards has shipped broken
       # twice (#16, #18); a test nobody runs and a test that passes are the
@@ -337,6 +359,17 @@ jobs:
       # number turns "slow" into "no backup", which is worse than the stall.
       - name: offsite-backup cannot run forever
         run: bash scripts/check-backup-has-a-deadline.sh
+
+      # #123 (the second time): two comments explaining that you must DOUBLE
+      # the dollar were themselves written with a single one, and envsubst --
+      # which scans comments too -- refused the whole Job with "unable to parse
+      # variable name". claudecode-db went Ready=False BuildFailed on all three
+      # clusters. The case that must keep failing: any manifest Flux will
+      # substitute that envsubst cannot parse. Scope is deliberately narrow --
+      # only paths a Kustomization substitutes, minus `substitute: disabled` --
+      # because seven files in this repo do not parse and are correct.
+      - name: everything Flux substitutes actually parses
+        run: bash scripts/check-envsubst-parses.sh
 
   diff:
     name: Flux Local Diff

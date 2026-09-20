@@ -77,13 +77,24 @@ spec:
               # pg_isready needs no password: it asks whether the server is
               # accepting connections, which is exactly the question.
               #
-              # ⚠️ `$${...}`, not `${...}`. This Job is applied by the
-              # `claudecode-db` Kustomization, which runs postBuild
-              # substituteFrom cluster-secrets — an unescaped `${PGHOST}` here
-              # is substituted by Flux before the container ever sees it, and
-              # PGHOST is not a cluster variable, so it would arrive EMPTY and
-              # the log would say `postgres at :5432`. The doubled `$` survives
-              # substitution as a literal `${...}` for the shell.
+              # ⚠️ The dollars below are DOUBLED on purpose. This Job is
+              # applied by the `claudecode-db` Kustomization, which runs
+              # postBuild substituteFrom cluster-secrets; a single dollar in
+              # front of a braced name is substituted by Flux before the
+              # container ever sees it, and PGHOST is not a cluster variable,
+              # so it would arrive EMPTY and the log would read `postgres at
+              # :5432`. A doubled dollar survives substitution as a single one
+              # for the shell.
+              #
+              # ⚠️ And do NOT write the single-dollar form anywhere in this
+              # file, not even inside a comment like this one. Flux's envsubst
+              # scans the whole rendered text, comments included, and a braced
+              # sequence that is not a valid variable name — an ellipsis, a
+              # full stop — makes it reject the ENTIRE object with "unable to
+              # parse variable name". Three clusters sat at
+              # `Ready=False BuildFailed` because two explanatory comments here
+              # spelled out the very form they were warning about
+              # (ferry133/jg-base#123, 2026-09-20).
               deadline=$(( $(date +%s) + 900 ))
               until pg_isready -q -t 3; do
                 if [ "$(date +%s)" -ge "$deadline" ]; then
