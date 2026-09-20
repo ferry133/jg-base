@@ -327,6 +327,17 @@ jobs:
       - name: the postgres migration waits for its database
         run: bash scripts/check-migrate-waits-for-db.sh
 
+      # #126: the offsite-backup CronJob had no activeDeadlineSeconds while
+      # carrying concurrencyPolicy Forbid, so one stuck run blocks every later
+      # schedule -- and none of the three places you would look says so: the
+      # Job stays Running, startingDeadlineSeconds stops counting missed starts
+      # after an hour, and daily-check rows 19/21 only warn at 26h. A day late.
+      # The cases that must keep failing: no bound at all, and a bound at or
+      # below the slowest run measured to SUCCEED (807s, #124) -- too small a
+      # number turns "slow" into "no backup", which is worse than the stall.
+      - name: offsite-backup cannot run forever
+        run: bash scripts/check-backup-has-a-deadline.sh
+
   diff:
     name: Flux Local Diff
     needs: pre-job
