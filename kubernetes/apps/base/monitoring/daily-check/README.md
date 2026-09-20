@@ -28,7 +28,9 @@ Per cluster:
 
 No cross-cluster checks. Each cluster is self-contained for operability.
 
-## What it checks (15 items)
+## What it checks (27 items)
+
+> **Adding a check? The table below is machine-checked.** `scripts/check-row-numbers-resolve.sh` asserts that this legend and the `# N.` section headers in `app/configmap.yaml` define exactly the same set of labels, that no label is defined twice on either side, that every `check N` / `row N` cited anywhere in the repo resolves here, and that no comment in that file *resembles* a section header without being one. The last part exists because `# 17a.` was indented two spaces deeper than the pattern expected and stayed invisible for months while the guard reported everything resolvable (ferry133/jg-base#118, #121). **The report itself never prints these numbers** — it prints the name — so a number is only ever as useful as this table.
 
 | # | Check | FAIL condition |
 |---|---|---|
