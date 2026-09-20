@@ -45,6 +45,69 @@ spec:
   template:
     spec:
       restartPolicy: OnFailure
+      # Wait for postgres instead of racing it. On a cold cluster this Job used
+      # to fail outright: the pod starts while postgres is still waiting for its
+      # PVC, `psql` gets `connection refused`, and the default backoffLimit of 6
+      # is spent long before the volume binds. Measured on a rebuilt appliance
+      # (ferry133/jg-base#123, 2026-09-20): Job created 15:57:14, Failed
+      # 16:03:16 with BackoffLimitExceeded, postgres Running 16:04:29 — 73
+      # seconds too late. The Failed Job was then GC'd by ttlSecondsAfterFinished
+      # and rebuilt by the next Kustomization interval at 16:56:37, succeeding in
+      # four seconds. So it self-heals, but **the database has no schema for the
+      # length of one Flux interval** — 53 minutes on that cluster, with `im`
+      # free to connect to an empty DB throughout.
+      #
+      # Raising backoffLimit was the other option and is rejected: it sets the
+      # threshold from ONE node's measured speed (~100 KB/s ingress, PVC bound 6
+      # minutes late because local-path's helper was still pulling busybox). A
+      # slower node re-runs the same failure, and the symptom is identical. This
+      # loop does not depend on that number.
+      #
+      # ⚠️ Deliberately the SAME image as the migrate container. On the node that
+      # produced this bug, pulling a second image is itself several minutes — a
+      # fix that waits faster but pulls more would lose on the very cluster it is
+      # for. postgres:16 is already being pulled for the container below.
+      initContainers:
+        - name: wait-for-postgres
+          image: postgres:16
+          command:
+            - sh
+            - -c
+            - |
+              # pg_isready needs no password: it asks whether the server is
+              # accepting connections, which is exactly the question.
+              #
+              # ⚠️ `$${...}`, not `${...}`. This Job is applied by the
+              # `claudecode-db` Kustomization, which runs postBuild
+              # substituteFrom cluster-secrets — an unescaped `${PGHOST}` here
+              # is substituted by Flux before the container ever sees it, and
+              # PGHOST is not a cluster variable, so it would arrive EMPTY and
+              # the log would say `postgres at :5432`. The doubled `$` survives
+              # substitution as a literal `${...}` for the shell.
+              deadline=$(( $(date +%s) + 900 ))
+              until pg_isready -q -t 3; do
+                if [ "$(date +%s)" -ge "$deadline" ]; then
+                  echo "postgres at $${PGHOST}:$${PGPORT:-5432} did not accept connections within 900s;" \
+                       "the migration was not attempted, so the database still has no schema" >&2
+                  exit 1
+                fi
+                echo "waiting for $${PGHOST}:$${PGPORT:-5432} ..."
+                sleep 5
+              done
+              echo "postgres at $${PGHOST}:$${PGPORT:-5432} is accepting connections"
+          env:
+            - name: PGHOST
+              value: postgres.claudecode.svc
+            - name: PGUSER
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-secret
+                  key: POSTGRES_USER
+            - name: PGDATABASE
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-secret
+                  key: POSTGRES_DB
       containers:
         - name: migrate
           image: postgres:16

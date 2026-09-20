@@ -313,6 +313,20 @@ jobs:
       - name: every cited daily-check row number resolves
         run: bash scripts/check-row-numbers-resolve.sh
 
+      # #123: on a cold cluster the postgres migration Job raced the database
+      # and lost -- pod up while postgres still waited for its PVC, the default
+      # backoffLimit of 6 spent on `connection refused`, Failed 73 seconds
+      # before postgres came Ready. It then self-heals: ttl GCs the Failed Job
+      # and the next Kustomization interval rebuilds it, succeeding in four
+      # seconds. That is why it needs a guard and not a bug report -- the
+      # database has NO SCHEMA for one Flux interval (53 minutes as measured)
+      # while `im` is free to connect, and nothing outside looks wrong. The
+      # cases that must keep failing: no initContainer, one that does not call
+      # pg_isready, an unbounded wait, and a give-up message that does not say
+      # the migration was skipped.
+      - name: the postgres migration waits for its database
+        run: bash scripts/check-migrate-waits-for-db.sh
+
   diff:
     name: Flux Local Diff
     needs: pre-job
