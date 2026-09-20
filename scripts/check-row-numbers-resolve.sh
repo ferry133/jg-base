@@ -213,6 +213,31 @@ for lineno, indent, text_line in unrecognised:
 #     A list that could be deleted without changing the outcome is decoration,
 #     and a decorative exemption list is how this check quietly becomes "accept
 #     everything", one well-meant entry at a time.
+# ⚠️ The size of the exemption SURFACE is pinned, not just its usefulness.
+#     Without this the two checks below guard the wrong door: they catch an
+#     exemption that is useless, and they catch a list that is empty, but an
+#     exemption that is too WIDE passes both — it fires, and the list is not
+#     empty, while it quietly swallows a real undocumented row. That is the
+#     exact death this check was written to prevent, named in its own PR and
+#     then left unguarded (FO-handler [f92b04] demonstrated it on #122 with
+#     `re.compile(r'^[ \t]*#[ \t]*1')`, which turned a red `# 17B.` green).
+#
+#     Raising this number is allowed and sometimes correct — prose does drift
+#     into header-like shapes. ⚠️ But raising it ALONE is not enough and must
+#     not be: the new line is still unrecognised by 1e, so a narrow EXEMPT
+#     shape naming it is required too. Measured, not assumed: adding
+#     `# 3rd. …` is red; red with the count raised; green only once a shape
+#     names it as well. Both halves on purpose — the widened surface gets a
+#     name, and the total gets a human. Neither alone lets it through.
+RESEMBLANCES_EXPECTED = 4
+
+if len(bare) != RESEMBLANCES_EXPECTED:
+    fail(f"{len(bare)} comment(s) in {SCRIPT} resemble a row header without being one, "
+         f"but {RESEMBLANCES_EXPECTED} are accounted for. If you added prose that looks "
+         f"like a header, raise RESEMBLANCES_EXPECTED in the same commit and say why; if "
+         f"you added a ROW, it is in a shape nothing here recognises. "
+         f"Lines: " + "; ".join(f"{n}:{l.strip()[:50]}" for n, _, l in bare))
+
 if not bare:
     fail("the exemption list is not load-bearing: with every exemption ignored the wide "
          "scan still flags nothing, so it proves nothing")
@@ -273,7 +298,8 @@ if rc == 0:
           f"{len(sites)} distinct labels cited across the repo, all resolvable; "
           f"scanned that file for `#<token-with-a-digit>. ` at ANY indent and subtracted "
           f"`# <digits><letter?>. `: {len(bare)} resemblances, every one matched by a named "
-          f"EXEMPT shape and every EXEMPT shape used, 0 unrecognised")
+          f"EXEMPT shape, every EXEMPT shape used, and the count pinned at "
+          f"{RESEMBLANCES_EXPECTED}; 0 unrecognised")
     print("       (negative control: a synthetic citation of an undefined number is seen by the same scanner)")
 sys.exit(rc)
 PY
