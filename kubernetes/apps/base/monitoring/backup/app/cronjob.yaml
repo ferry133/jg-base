@@ -40,6 +40,22 @@ spec:
     spec:
       backoffLimit: 1
       ttlSecondsAfterFinished: 172800
+      # An upper bound, because without one a stuck run is not merely slow —
+      # `concurrencyPolicy: Forbid` above means it blocks EVERY later schedule,
+      # and a blocked schedule leaves no trace of its own. The stuck Job stays
+      # `Running`, so nothing goes red; `startingDeadlineSeconds: 3600` stops
+      # even counting missed starts after an hour; and the only signal left is
+      # daily-check rows 19/21, which warn at 26h and fail at 48h — **a day
+      # after the backups stopped** (ferry133/jg-base#126).
+      #
+      # 3600 and not 600. The measured worst case for a HEALTHY run on the slow
+      # appliance is 13m27s = 807 seconds, almost all of it `apk add` pulling
+      # aws-cli over a ~100 KB/s link (ferry133/jg-base#124, measured by
+      # FO-openspec [8e8ef1] 2026-09-20). A 600-second deadline would kill a
+      # backup that was going to succeed — turning "slow" into "no backup",
+      # which is worse than the thing it guards against. Revisit downward once
+      # #124 removes the install from the critical path; not before.
+      activeDeadlineSeconds: 3600
       template:
         spec:
           restartPolicy: Never
