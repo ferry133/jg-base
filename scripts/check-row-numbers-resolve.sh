@@ -147,6 +147,120 @@ if script_dupes:
          + ", ".join(f"{l}×{coded_labels.count(l)}" for l in script_dupes)
          + " — two sections claiming one number, and the legend can only describe one of them")
 
+# --- 1e. anything that LOOKS like a row header but is not in the accepted
+#     shape must be flagged. This is the inversion #121 asked for: 1a-1d
+#     enumerate what is allowed, and an enumeration is blind to whatever it
+#     does not list. `# 17a.` sat six spaces deep for months while the pattern
+#     demanded four; the guard read `all resolvable` every day, and the
+#     sentence "there are no lettered sub-rows" was produced by that same
+#     pattern. An instrument certified the absence of what it cannot see.
+#
+#     So: cast a WIDE net for "this comment declares something numbered", then
+#     subtract the accepted shape. What is left is either a new row in a shape
+#     nobody agreed to, or prose that happens to look like one — and the second
+#     kind must be named, one exemption at a time, with its reason.
+WIDE   = re.compile(r'^([ \t]*)#[ \t]*(\S*\d\S*[.])[ \t]', re.M)
+STRICT = re.compile(r'^[ \t]*# \d+[a-z]?\. ')
+
+# Each exemption is a SHAPE with a reason, never a line number: line numbers
+# drift and an exemption that drifts starts covering something else. Keep this
+# list short. ⚠️ A long exemption list and no guard at all are the same thing —
+# case 1f below empties it on purpose to prove the list is still load-bearing.
+EXEMPT = [
+    # `# 6403b5c. Measured in that image: ...` — a commit SHA quoted in prose.
+    # Seven-plus hex characters is not a row number and never will be.
+    ("commit SHA quoted in prose",
+     re.compile(r'^[ \t]*#[ \t]*[0-9a-f]{7,40}[.][ \t]')),
+    # `#   1. Resolve over DoH.` — a numbered list INSIDE one row's comment
+    # (row 11's two probe steps). Section headers use exactly ONE space after
+    # `#`; a list item is indented further, and that is the whole difference.
+    ("numbered list nested inside a comment",
+     re.compile(r'^[ \t]*#[ \t]{2,}')),
+    # `# (#114). The mailer's own words ...` — a parenthesised issue reference
+    # that happens to open the line.
+    ("parenthesised issue reference",
+     re.compile(r'^[ \t]*#[ \t]*[(]')),
+]
+
+script_text = read(SCRIPT)
+
+def wide_hits(text):
+    """Lines whose comment opens with a dotted token containing a digit, and
+    which are NOT an accepted row header. Returns (lineno, indent, line)."""
+    out = []
+    for m in WIDE.finditer(text):
+        ls = text.rfind('\n', 0, m.start()) + 1
+        le = text.find('\n', m.start())
+        line = text[ls:le if le != -1 else len(text)]
+        if STRICT.match(line):
+            continue
+        out.append((text.count('\n', 0, ls) + 1, len(m.group(1)), line))
+    return out
+
+# `bare` is every resemblance with NO exemption applied — case 1f measures the
+# list against it. `unrecognised` is what survives the list.
+bare = wide_hits(script_text)
+unrecognised = [(n, i, l) for n, i, l in bare
+                if not any(rx.match(l) for _, rx in EXEMPT)]
+
+for lineno, indent, text_line in unrecognised:
+    fail(f"{SCRIPT}:{lineno} looks like a row header but is not in the accepted shape "
+         f"(indent {indent}): {text_line.strip()[:90]} — if it is a row, the legend cannot "
+         f"describe it and no citation can resolve it; if it is prose, add a shape to EXEMPT "
+         f"with the reason")
+
+# --- 1f. the exemption list must be load-bearing, and each entry must be.
+#     A list that could be deleted without changing the outcome is decoration,
+#     and a decorative exemption list is how this check quietly becomes "accept
+#     everything", one well-meant entry at a time.
+# ⚠️ The size of the exemption SURFACE is pinned, not just its usefulness.
+#     Without this the two checks below guard the wrong door: they catch an
+#     exemption that is useless, and they catch a list that is empty, but an
+#     exemption that is too WIDE passes both — it fires, and the list is not
+#     empty, while it quietly swallows a real undocumented row. That is the
+#     exact death this check was written to prevent, named in its own PR and
+#     then left unguarded (FO-handler [f92b04] demonstrated it on #122 with
+#     `re.compile(r'^[ \t]*#[ \t]*1')`, which turned a red `# 17B.` green).
+#
+#     Raising this number is allowed and sometimes correct — prose does drift
+#     into header-like shapes. ⚠️ But raising it ALONE is not enough and must
+#     not be: the new line is still unrecognised by 1e, so a narrow EXEMPT
+#     shape naming it is required too. Measured, not assumed: adding
+#     `# 3rd. …` is red; red with the count raised; green only once a shape
+#     names it as well. Both halves on purpose — the widened surface gets a
+#     name, and the total gets a human. Neither alone lets it through.
+RESEMBLANCES_EXPECTED = 4
+
+if len(bare) != RESEMBLANCES_EXPECTED:
+    fail(f"{len(bare)} comment(s) in {SCRIPT} resemble a row header without being one, "
+         f"but {RESEMBLANCES_EXPECTED} are accounted for. If you added prose that looks "
+         f"like a header, raise RESEMBLANCES_EXPECTED in the same commit and say why; if "
+         f"you added a ROW, it is in a shape nothing here recognises. "
+         f"Lines: " + "; ".join(f"{n}:{l.strip()[:50]}" for n, _, l in bare))
+
+if not bare:
+    fail("the exemption list is not load-bearing: with every exemption ignored the wide "
+         "scan still flags nothing, so it proves nothing")
+else:
+    for reason, rx in EXEMPT:
+        if not any(rx.match(l) for _, _, l in bare):
+            fail(f"the exemption {reason!r} matches nothing in {SCRIPT} — a rule that "
+                 f"cannot fire is indistinguishable from one that was never written, and "
+                 f"it will silently widen the day something drifts into its shape")
+
+# --- 1g. the heading's own count must match the table under it. It said
+#     "15 items" over a 27-row table — a number that had been wrong for long
+#     enough that nobody read it as a claim any more. Same family as everything
+#     above: a figure in prose that no longer measures anything, sitting where
+#     a reader takes it for a fact.
+heading = re.search(r'^##[^\n]*?\((\d+) items\)', read(README), re.M)
+if not heading:
+    print("cannot measure: the README has no '## ... (N items)' heading to compare"); sys.exit(2)
+elif int(heading.group(1)) != len(legend_rows):
+    fail(f"the README heading says {heading.group(1)} items over a table of "
+         f"{len(legend_rows)} rows — the count drifts every time a check is added, and "
+         f"a stale figure in a heading is read as a fact")
+
 # --- 2. every number cited anywhere must be in the legend.
 unresolvable = sorted(set(sites) - legend, key=order)
 for n in unresolvable:
@@ -181,7 +295,11 @@ if rc == 0:
     print(f"PASS — legend and script define the SAME {len(legend)} rows, both differences empty; "
           f"no label twice in the legend ({len(legend_rows)} table rows) "
           f"and no label twice in the script ({len(coded_labels)} section headers, any indent); "
-          f"{len(sites)} distinct labels cited across the repo, all resolvable")
+          f"{len(sites)} distinct labels cited across the repo, all resolvable; "
+          f"scanned that file for `#<token-with-a-digit>. ` at ANY indent and subtracted "
+          f"`# <digits><letter?>. `: {len(bare)} resemblances, every one matched by a named "
+          f"EXEMPT shape, every EXEMPT shape used, and the count pinned at "
+          f"{RESEMBLANCES_EXPECTED}; 0 unrecognised")
     print("       (negative control: a synthetic citation of an undefined number is seen by the same scanner)")
 sys.exit(rc)
 PY
