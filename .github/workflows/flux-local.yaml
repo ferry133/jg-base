@@ -394,6 +394,17 @@ jobs:
       # three not-measured reasons collapsing into one sentence.
       - name: daily-check kubectl skew row
         run: bash scripts/check-kubectl-skew-row.sh
+      # #124: offsite-backup used to `apk add` its whole toolchain on every
+      # schedule -- over 11 minutes of a 13m27s Job on the slow appliance,
+      # against a backup body of seconds. Image layers are cached by
+      # containerd; apk is not. The cases that must keep failing: the image
+      # falling back to a moving tag (ops-latest was measured pointing at the
+      # WRONG image for ~20 minutes when three builds raced it, and a skewed
+      # moving tag reads exactly like a correct one), an install creeping back
+      # into the container command or into backup.sh, and backup.sh growing a
+      # call that was not declared when the image was pinned.
+      - name: offsite-backup runs the pre-baked image
+        run: bash scripts/check-backup-runs-prebaked.sh
 
   diff:
     name: Flux Local Diff
