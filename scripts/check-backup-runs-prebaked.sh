@@ -141,7 +141,15 @@ def extract(t):
     ext = {c for c in seen if c not in BUILTIN and c not in funcs and c not in vars_ and len(c) > 1}
     out = set()
     for c in sorted(ext):
-        if re.search(r'(?:^|[;&|`]|\$\()\s*' + re.escape(c) + r'(?:\s+[-"\'$/\w]|\s*[|<>]|\s*$)', t, re.M):
+        # ⚠️ "followed by ANY argument", not "followed by one of these
+        # characters". The first version demanded `[-"'$/\w]`, so a call whose
+        # first argument starts with `.` or `*` was invisible -- `jq . file`
+        # and `nslookup *.example` both passed, and `jq .` is the commonest
+        # spelling of jq there is (measured by FO-openspec [8e8ef1] on #139,
+        # reproduced here). Narrowing a pattern to exclude prose is safe only
+        # while nothing real looks like prose; the literal-blanking above is
+        # what actually keeps prose out, so this can be loose.
+        if re.search(r'(?:^|[;&|`]|\$\()\s*' + re.escape(c) + r'(?:\s+\S|\s*[|<>&;]|\s*$)', t, re.M):
             out.add(c)
     return out
 # a word only counts as a command if it is followed by an argument, a pipe, a
