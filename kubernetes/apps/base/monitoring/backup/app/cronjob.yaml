@@ -65,13 +65,39 @@ spec:
               type: RuntimeDefault
           containers:
             - name: backup
-              image: alpine:3.20
+              # Pre-baked, not installed at run time. This container used to
+              # `apk add` its whole toolchain on every schedule: measured at
+              # **over 11 minutes** on the slow appliance (~100 KB/s ingress),
+              # against a backup body of seconds — the Job took 13m27s of which
+              # 11 were the install (ferry133/jg-base#124, FO-openspec [8e8ef1],
+              # 2026-09-20). Image layers are cached by containerd; `apk add` is
+              # not, so the old form paid the whole download again every night.
+              #
+              # Pinned by digest, not by `ops-latest`. That moving tag was
+              # measured pointing at the WRONG image for ~20 minutes on
+              # 2026-09-22 when three builds raced it, **and a skewed moving tag
+              # reads exactly like a correct one** (ferry133/k8scc#11).
+              #
+              # ⚠️ `postgresql16-client` is gone and was already dead: backup.sh
+              # never runs a database client locally — it builds `$cmd` as a
+              # string and hands it to `kubectl exec` inside the database pod,
+              # which is where pg_dump and mariadb-dump actually live. Measured
+              # on both sides (ferry133/k8scc#16).
+              #
+              # ⚠️ One thing this swap changes silently, listed because nobody
+              # listed it: the image carries `coreutils`, so `date`/`ls`/`wc`/
+              # `tr` here are now **GNU, not busybox** (`/usr/bin` precedes
+              # `/bin`). Today that changes nothing — every spelling backup.sh
+              # uses is accepted by both, and the one that historically was not
+              # (`date -d '30 days ago'`, which busybox rejects and which once
+              # pruned this system's first two archives the day after they were
+              # written) is already written as `-d @<epoch>`. But a GNU-only
+              # spelling added from now on will work HERE and fail on plain
+              # alpine, with nothing to catch it (ferry133/k8scc#17).
+              image: ghcr.io/ferry133/claude-code:ops-b8fe918@sha256:c1130a0ff0ca5d344c5bc34831e63bf83cb09755365d343d0922404fd5aa69be
               command:
-                - /bin/sh
-                - -c
-                - |
-                  apk add --no-cache --quiet bash age aws-cli kubectl postgresql16-client >/dev/null \
-                    && exec /bin/bash /scripts/backup.sh
+                - /bin/bash
+                - /scripts/backup.sh
               envFrom:
                 - secretRef:
                     name: offsite-backup-config
