@@ -371,6 +371,19 @@ jobs:
       - name: everything Flux substitutes actually parses
         run: bash scripts/check-envsubst-parses.sh
 
+      # #129: the sample told operators CLUSTER_GATEWAY_ADDR was
+      # envoy-external's LoadBalancer IP; envoy.yaml binds it to
+      # envoy-INTERNAL, and the one that really is envoy-external's
+      # (CLOUDFLARE_GATEWAY_ADDR) was missing from the sample altogether. It
+      # survived because on an appliance envoy-internal and k8s-gateway SHARE
+      # one address, so filling it in wrong produces no symptom -- only
+      # full/prosumer can tell. Nothing was ever going to report this and the
+      # operator pays. The cases that must keep failing: a comment naming the
+      # wrong claimant, and an address claimed under network/ that the sample
+      # never mentions.
+      - name: sample addresses name their claimant
+        run: bash scripts/check-sample-addr-comments.sh
+
   diff:
     name: Flux Local Diff
     needs: pre-job
