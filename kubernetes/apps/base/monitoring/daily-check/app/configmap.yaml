@@ -1524,6 +1524,66 @@ data:
     fi
 
     echo "==> Compiling report"
+    # 26. kubectl / API server version skew (ferry133/jg-base#130).
+    #
+    # Nobody was watching this number. Alpine v3.20's `kubectl` package is
+    # 1.30.9 and jg-jiahd's API server was measured at v1.36.0 on 2026-09-22 —
+    # six minors against a supported skew of ONE — and two workloads were
+    # installing it that way with nothing in this repo, this report, or any
+    # guard able to say so (k8scc-36 [1b52cd] found it; the Alpine number was
+    # re-measured here from APKINDEX).
+    #
+    # ⚠️ The fix for those two sites MOVES this number rather than removing it:
+    # the pre-baked image pins `ARG KUBECTL_VERSION` instead, which is correct
+    # today and watched by nobody tomorrow. "Tomorrow" here is the next cluster
+    # minor upgrade — a thing that certainly happens. A pinned version that was
+    # right when it was written is the shape this fleet keeps relearning:
+    # **a measurement expires, and an expired measurement still carries a
+    # citation.**
+    #
+    # ⚠️ Asks the BINARY, not a manifest and not the image's own
+    # ops-toolchain.json. That file is a record written by an execution at
+    # build time, not an execution — replace the binary in a later layer and it
+    # keeps reporting the old number while still reading exactly like a reading
+    # (ferry133/k8scc#14, #17). The question here is "what is this container
+    # about to run", and only `kubectl version` answers it.
+    #
+    # warn, never fail: exceeding the skew is "this will break", not "this is
+    # broken", and FAIL_COUNT gates the dead-man — a red that flies every day
+    # gets switched off (#6).
+    if ! command -v kubectl >/dev/null 2>&1; then
+      record skip "kubectl version skew" "kubectl is not on PATH in this image, so neither version could be read"
+    elif ! SKEW_JSON=$(kubectl version -o json 2>/dev/null); then
+      record skip "kubectl version skew" "kubectl could not reach the API server for its version (RBAC on /version, or the API is down) — the client version alone answers nothing"
+    else
+      SKEW_C=$(echo "$SKEW_JSON" | jq -r '.clientVersion.gitVersion // ""')
+      SKEW_S=$(echo "$SKEW_JSON" | jq -r '.serverVersion.gitVersion // ""')
+      # Both sides must parse. A missing serverVersion is what `kubectl version`
+      # prints when it could not talk to the API but still exited 0.
+      SKEW_CM=$(echo "$SKEW_C" | sed -n 's/^v\{0,1\}\([0-9]\{1,\}\)\.\([0-9]\{1,\}\).*/\1 \2/p')
+      SKEW_SM=$(echo "$SKEW_S" | sed -n 's/^v\{0,1\}\([0-9]\{1,\}\)\.\([0-9]\{1,\}\).*/\1 \2/p')
+      if [[ -z "$SKEW_CM" || -z "$SKEW_SM" ]]; then
+        record skip "kubectl version skew" "could not read a major.minor from both sides (client='${SKEW_C:-<none>}', server='${SKEW_S:-<none>}')"
+      else
+        # `read` rather than ${x%% *} / ${x##* }: this file carries
+        # `substitute: disabled` so Flux leaves it alone, but those forms are
+        # unparseable to envsubst, and a row that only works while an
+        # annotation happens to be present is a trap for whoever removes it.
+        read -r SKEW_C_MAJ SKEW_C_MIN <<< "$SKEW_CM"
+        read -r SKEW_S_MAJ SKEW_S_MIN <<< "$SKEW_SM"
+        SKEW_DIFF=$(( (SKEW_C_MAJ * 100 + SKEW_C_MIN) - (SKEW_S_MAJ * 100 + SKEW_S_MIN) ))
+        [[ $SKEW_DIFF -lt 0 ]] && SKEW_ABS=$(( -SKEW_DIFF )) || SKEW_ABS=$SKEW_DIFF
+        if [[ $SKEW_ABS -le 1 ]]; then
+          # Prints both numbers even when it passes: "compatible" without the
+          # versions cannot be checked by the person reading the report, and
+          # this row exists because a number went unwatched.
+          record ok "kubectl version skew" "client ${SKEW_C}, server ${SKEW_S}"
+        else
+          record warn "kubectl version skew" "client ${SKEW_C} against server ${SKEW_S} — ${SKEW_ABS} minors apart, and Kubernetes supports one. Whatever pins this client (an image tag, an apk package, a Dockerfile ARG) was right when it was written and nothing has re-read it since"
+        fi
+      fi
+    fi
+
     if [[ $FAIL_COUNT -gt 0 ]]; then
       STATUS_TAG="❌ ${FAIL_COUNT} FAIL"
       [[ $WARN_COUNT -gt 0 ]] && STATUS_TAG="${STATUS_TAG}, ${WARN_COUNT} WARN"
