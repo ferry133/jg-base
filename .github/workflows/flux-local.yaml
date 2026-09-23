@@ -371,6 +371,19 @@ jobs:
       - name: everything Flux substitutes actually parses
         run: bash scripts/check-envsubst-parses.sh
 
+      # #136 (from jg-cluster-template#191): claude-workspace read the BULK
+      # tier's ${DEFAULT_STORAGE_CLASS}, so moving that tier moved a bound
+      # PVC's storageClassName -- immutable, and the HelmRelease wedged for
+      # good while Helm rolled back, so nothing stopped serving and the only
+      # symptom was a release that never reconciled again. A third cluster was
+      # already pinning its bulk default back to local-path to avoid it. The
+      # cases that must keep failing: either claim back on the bulk name, the
+      # two claims sharing one variable, a hard-coded class, and `retain`
+      # going away -- that last one turns a blocked upgrade into a deleted
+      # volume, which is strictly worse than what this guard is named for.
+      - name: claudecode claims do not share a storage class
+        run: bash scripts/check-claudecode-pvc-classes.sh
+
       # #129: the sample told operators CLUSTER_GATEWAY_ADDR was
       # envoy-external's LoadBalancer IP; envoy.yaml binds it to
       # envoy-INTERNAL, and the one that really is envoy-external's
