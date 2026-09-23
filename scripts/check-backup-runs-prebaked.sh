@@ -16,6 +16,28 @@
 # premises, and only one of them lives in this repo. The likelier break is the
 # first — a script grows a call — which is why it is worth guarding even alone.
 #
+# The other half was measured ONCE, by hand, and is recorded here so the next
+# person does not have to guess: FO-openspec [8e8ef1] went into ops-b8fe918 on
+# 2026-09-23 and found bash, age, aws, kubectl, tar, gzip, sha256sum, jq, curl,
+# getent and nslookup present, and pg_dump, psql, mc, yq and envsubst absent
+# from the whole filesystem. The absences are CORRECT: the dumps run via
+# `kubectl exec` inside the database pod. ⚠️ That is a reading with a date on
+# it, not a standing guarantee — the image can be rebuilt.
+#
+# ⚠️ DECLARED is derived from what backup.sh CALLS, never from the old `apk
+# add` line. That line installed postgresql16-client, which the script never
+# invokes; a list copied from it would make this guard demand five commands
+# nobody needs — firing on a correct image, which is how a guard gets switched
+# off.
+#
+# ⚠️ And the method has a hole, found the same day: `gzip` is in the list yet
+# appears NOWHERE at command position. backup.sh:366 is `tar -czf`, and the
+# compression is a dependency of that flag. An indirect dependency — reached
+# through a flag, a library, or another binary — is invisible to "extract the
+# command-position tokens". So the list is command-position calls PLUS anything
+# known to be pulled in sideways, and the second part is human. If you add an
+# entry, say which kind it is.
+#
 # Usage: scripts/check-backup-runs-prebaked.sh
 #   exit 0 all three hold, 1 one did not, 2 cannot measure here
 set -uo pipefail
@@ -29,10 +51,12 @@ command -v python3 >/dev/null 2>&1 || { echo "cannot measure: python3 is missing
 
 # Declared when ops-b8fe918 was chosen (ferry133/k8scc#11, 1a re-confirmed
 # 2026-09-22 against that digest). `age`, `aws` and `kubectl` are the three the
-# image adds; the rest come from the base and coreutils. ⚠️ Adding a name here
+# image adds; the rest come from the base and coreutils. `gzip` is the odd
+# one out: it is never called directly — it is what `tar -czf` at
+# backup.sh:366 needs (see the header). ⚠️ Adding a name here
 # is a claim that the IMAGE has it — check ops-toolchain.json before you do,
 # because this file cannot.
-DECLARED="age aws kubectl awk sed grep tar tr wc tail cat ls mkdir mktemp rm date"
+DECLARED="age aws kubectl awk sed grep tar gzip tr wc tail cat ls mkdir mktemp rm date"
 
 rc=0
 fail() { echo "FAIL — $1"; rc=1; }
@@ -117,7 +141,15 @@ def extract(t):
     ext = {c for c in seen if c not in BUILTIN and c not in funcs and c not in vars_ and len(c) > 1}
     out = set()
     for c in sorted(ext):
-        if re.search(r'(?:^|[;&|`]|\$\()\s*' + re.escape(c) + r'(?:\s+[-"\'$/\w]|\s*[|<>]|\s*$)', t, re.M):
+        # ⚠️ "followed by ANY argument", not "followed by one of these
+        # characters". The first version demanded `[-"'$/\w]`, so a call whose
+        # first argument starts with `.` or `*` was invisible -- `jq . file`
+        # and `nslookup *.example` both passed, and `jq .` is the commonest
+        # spelling of jq there is (measured by FO-openspec [8e8ef1] on #139,
+        # reproduced here). Narrowing a pattern to exclude prose is safe only
+        # while nothing real looks like prose; the literal-blanking above is
+        # what actually keeps prose out, so this can be loose.
+        if re.search(r'(?:^|[;&|`]|\$\()\s*' + re.escape(c) + r'(?:\s+\S|\s*[|<>&;]|\s*$)', t, re.M):
             out.add(c)
     return out
 # a word only counts as a command if it is followed by an argument, a pipe, a
