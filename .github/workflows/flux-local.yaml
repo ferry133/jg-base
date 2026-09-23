@@ -383,6 +383,17 @@ jobs:
       # never mentions.
       - name: sample addresses name their claimant
         run: bash scripts/check-sample-addr-comments.sh
+      # #130: nobody watched the kubectl version. Alpine v3.20 ships 1.30.9,
+      # jg-jiahd's API server measured v1.36.0 -- six minors against a
+      # supported skew of one, with nothing in this repo, the report, or any
+      # guard able to say so. And the fix MOVES the number rather than removing
+      # it (a pinned ARG instead of a distro default), so the row watches the
+      # binary itself. The cases that must keep failing: a big skew that does
+      # not warn, a small one that does, an ok row that hides the versions,
+      # this row recording `fail` (FAIL_COUNT gates the dead-man), and the
+      # three not-measured reasons collapsing into one sentence.
+      - name: daily-check kubectl skew row
+        run: bash scripts/check-kubectl-skew-row.sh
 
   diff:
     name: Flux Local Diff
