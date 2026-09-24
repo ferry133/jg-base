@@ -1,0 +1,49 @@
+---
+# Deliberately empty — the "this cluster declares its LAN addresses, so nothing
+# is discovered" position of the switch (ferry133/jg-cluster-template#189).
+#
+# ## Why an empty directory and not a suspend
+#
+# Off used to mean `suspend: true` patched onto the sibling Kustomization by
+# the per-user repo. Turning ON that way is fine; turning OFF is not:
+# **suspend stops reconciliation, it does not remove what reconciliation
+# already created.** The probe's Deployment keeps running and keeps re-creating
+# the two `CiliumLoadBalancerIPPool`s it owns, while the one Flux object that
+# would have reported them goes quiet in the same instant.
+#
+# This app is the measured example the sibling switches cite, and it has now
+# bitten twice:
+#
+#   2026-08-19  jcom: `lan-address-probe` suspended=true with its Deployment
+#               still running 7 days later and a stray `pool-discovered` that
+#               no Service used. (Quoted in storage/longhorn/backup/disabled.)
+#
+#   2026-09-21  A profile migration on a live single-node cluster: the two
+#               pools were deleted per the runbook at 15:25:48 and **were back
+#               at 15:25:53** — five seconds. The cluster ended with the
+#               declared static pool plus two `PoolConflict=True/cidr_overlap`
+#               leftovers. The static pool won that conflict because it was
+#               created 8 minutes earlier, so traffic was unaffected — but
+#               **which side wins is decided by creation order, not by design**.
+#               The losing shape is "the declared address never took effect and
+#               the cluster looks completely healthy".
+#
+# An empty directory keeps the Kustomization reconciling with nothing in it, so
+# Flux's inventory goes empty and it prunes the Deployment, the namespace and
+# the pools together. The alarm stays armed because the object stays alive.
+#
+# ## Why `app/` was not renamed to `enabled/`
+#
+# The siblings use `{enabled,disabled}`; this one is `{app,disabled}`. Renaming
+# `app/` would change `spec.path` for every cluster that already has this
+# Kustomization, for a cosmetic symmetry. The position name is a string the
+# template supplies, so it costs nothing to keep.
+#
+# ## Zero objects is a clean build
+#
+# `kustomize build` here exits 0 with empty output and Flux reports Ready with
+# an empty inventory. Measured on the two sibling copies of this file, and on
+# this one before committing.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources: []
