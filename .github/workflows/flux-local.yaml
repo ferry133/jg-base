@@ -360,6 +360,19 @@ jobs:
       - name: offsite-backup cannot run forever
         run: bash scripts/check-backup-has-a-deadline.sh
 
+      # #143: daily-check and offsite-backup each declared
+      # failedJobsHistoryLimit: 3 alongside a TTL shorter than three of their
+      # own intervals, so the stricter knob won SILENTLY and one survived
+      # where three were promised. That is normally just shorter history --
+      # but on a cluster with no healthchecks ping URL the Failed Job is the
+      # only alerting channel, and there the difference is between a failure
+      # someone can still find and one already collected. The interval is
+      # recomputed from the schedule, because a comment saying "daily"
+      # survives an edit that makes it hourly. The case that must keep
+      # failing: any CronJob whose declared limit its own TTL cannot deliver.
+      - name: CronJob retention is not self-contradictory
+        run: bash scripts/check-cronjob-retention.sh
+
       # #123 (the second time): two comments explaining that you must DOUBLE
       # the dollar were themselves written with a single one, and envsubst --
       # which scans comments too -- refused the whole Job with "unable to parse

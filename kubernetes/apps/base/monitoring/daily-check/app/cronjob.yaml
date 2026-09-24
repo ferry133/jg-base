@@ -15,7 +15,27 @@ spec:
   jobTemplate:
     spec:
       backoffLimit: 1
-      ttlSecondsAfterFinished: 86400
+      # ⚠️ Coupled to failedJobsHistoryLimit above, and the stricter one wins
+      # SILENTLY. This CronJob fires once a day, so a TTL of one day collected
+      # each Job at about the moment the next one finished: the limit said 3
+      # and one was what survived, with nothing anywhere reporting the
+      # contradiction (ferry133/jg-base#143, found by FO-handler [f92b04],
+      # located by FO-runbook [5fe39a]).
+      #
+      # To hold N runs at an interval G you need at least (N-1)*G; 3 days for
+      # 3 daily runs leaves margin rather than sitting on the boundary, where
+      # retention is a race between the TTL and the next run.
+      #
+      # ⚠️ Why raise the TTL rather than lower the limit to 1: on a cluster
+      # with no `daily_check_healthchecks_ping_url` the Failed Job IS the only
+      # alerting channel (jg-jcc1 today), so shortening history there is
+      # shortening the only thing that can be looked at. The #114 comment
+      # further down assumes the ping carries history; where there is no ping,
+      # this does.
+      #
+      # Held together by scripts/check-cronjob-retention.sh, which recomputes
+      # the interval from the schedule rather than trusting this paragraph.
+      ttlSecondsAfterFinished: 259200
       template:
         spec:
           restartPolicy: Never
