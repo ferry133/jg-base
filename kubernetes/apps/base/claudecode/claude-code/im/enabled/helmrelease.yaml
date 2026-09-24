@@ -439,7 +439,32 @@ spec:
       claude-workspace:
         type: persistentVolumeClaim
         retain: true
-        storageClass: ${DEFAULT_STORAGE_CLASS}
+        # ⚠️ Its own name, not the bulk tier's DEFAULT_STORAGE_CLASS
+        # (written without the braces on purpose: this file is applied
+        # with postBuild substituteFrom, and envsubst rewrites the whole
+        # text, comments included -- two comments explaining an escaping
+        # rule while breaking it is what wedged three clusters in
+        # ferry133/jg-base#123). Sharing the bulk
+        # tier's variable means moving that tier moves this claim's
+        # storageClassName -- and a bound PVC's spec is immutable, so the
+        # HelmRelease wedges permanently: `PersistentVolumeClaim
+        # "im-claude-workspace" is invalid: spec: Forbidden: spec is immutable
+        # after creation`. Hit on a bench while enabling Longhorn
+        # (ferry133/jg-cluster-template#191); Helm rolled back, so nothing
+        # stopped serving -- the only symptom was that this HelmRelease never
+        # reconciled again. `retain: true` above means the claim survives, so
+        # it blocks the upgrade rather than losing data.
+        #
+        # ⚠️ The ordering this line depended on, so nobody repeats it: the key
+        # had to exist in every cluster's cluster-secrets FIRST. A name Flux
+        # cannot resolve is substituted with the EMPTY STRING, and
+        # `storageClassName: ""` on a bound claim is the same immutable-field
+        # wedge -- that is how ferry133/jg-base#69/#70 locked every terminal
+        # out. Measured before this landed (ferry133/jg-base#136): all three
+        # clusters carry the key, non-empty, and equal to their existing
+        # claim's storageClassName -- jg-jiahd sc-nas, jcom sc-nas, jg-jcc1
+        # local-path, read from the live Secrets, not from the rendered repo.
+        storageClass: ${CLAUDECODE_WORKSPACE_STORAGE_CLASS}
         accessMode: ReadWriteOnce
         size: 20Gi
         globalMounts:
