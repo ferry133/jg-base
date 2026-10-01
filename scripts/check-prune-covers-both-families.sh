@@ -105,66 +105,132 @@ probe() { echo "$1" | sed -n "$EXPR"; }
 LS_PREFIX="$(render "$LS_PREFIX_T")"
 echo "the loop lists: ${LS_PREFIX} (non-recursive)"
 
-for pair in "system:$SYS_T" "claudecode:$CC_T"; do
-  fam="${pair%%:*}"; tmpl="${pair#*:}"
+# ⚠️ ONE function, called by the real loop AND by its controls below.
+#
+# The first version inlined the comparison in the loop and the control
+# RE-WROTE it inside a subshell, so the control never executed the line it
+# claimed to protect: FO-runbook [5fe39a] replaced the real comparison with
+# `if false` and got rc=0 on a clean tree AND rc=0 on a broken one. The
+# script's own promise ("a future rewrite that drops the placement check is
+# caught here") was false, and placement is the only assertion covering "both
+# families moved together".
+#
+# Third instance of this shape in one day: a control that re-implements its
+# subject tests the re-implementation. The structural answer is that there is
+# only one copy to test.
+PLACED=0            # how many families the loop actually examined
+check_family() {    # <family> <key template>  -> 0 ok, 1 reported a failure
+  local fam="$1" tmpl="$2" key name got
   key="$(render "$tmpl")"
-  name="$(basename_of "$tmpl")"
+  name="${key##*/}"
+  PLACED=$((PLACED + 1))
 
   # PLACEMENT first. A key one level deeper is not a key the loop ever reads:
   # a non-recursive listing collapses it into a single `PRE <name>/` row whose
   # `$4` is empty, so the stamp check below would be asking about a name the
   # loop never sees -- and it would pass.
   if [[ "$key" != "${LS_PREFIX}${name}" ]]; then
-    fail "the ${fam} key renders to '${key}', which is not directly under the prefix the loop lists ('${LS_PREFIX}') — a non-recursive listing turns a deeper key into one 'PRE …/' row with an empty \$4, so that family is never pruned and nothing says so"
-    continue
+    echo "FAIL — the ${fam} key renders to '${key}', which is not directly under the prefix the loop lists ('${LS_PREFIX}') — a non-recursive listing turns a deeper key into one 'PRE <name>/' row with an empty \$4, so that family is never pruned and nothing says so"
+    return 1
   fi
 
   got="$(probe "$name")"
   if [[ "$got" == "20260930" ]]; then
     printf 'ok    %-11s %-46s -> %s\n' "$fam" "$name" "$got"
-  else
-    fail "the retention loop pulls no usable date out of the ${fam} key '${name}' (got '${got:-<nothing>}'), so that family is never pruned — and an archive family that is never pruned is also an archive family nobody is told about"
+    return 0
   fi
+  echo "FAIL — the retention loop pulls no usable date out of the ${fam} key '${name}' (got '${got:-<nothing>}'), so that family is never pruned — and an archive family that is never pruned is also an archive family nobody is told about"
+  return 1
+}
+
+PLACE_FAILS=0
+for pair in "system:$SYS_T" "claudecode:$CC_T"; do
+  check_family "${pair%%:*}" "${pair#*:}" || { rc=1; PLACE_FAILS=$((PLACE_FAILS + 1)); }
 done
 
-# Secondary, and cheap: the two families must share one prefix. Implied by the
-# two placement checks above -- kept because it is the assertion #147 asked for
-# by name, and because it fails with a different sentence if the loop's own
-# listed prefix is ever what moved.
+# The call site is part of what must not vanish: a loop that stops calling
+# check_family leaves the controls below passing and nothing measured.
+if [[ "$PLACED" != "2" ]]; then
+  echo "cannot measure: the loop examined ${PLACED} families, not 2 — the readings above do not cover both"
+  exit 2
+fi
+
+# Secondary: the two families must share one prefix. Kept because #147 asked
+# for it by name, and because it is the assertion that fires when the two keys
+# disagree with EACH OTHER rather than with the listed prefix — measured by
+# FO-runbook [5fe39a] to be the one that catches a single-family move (P3),
+# while placement is what catches both moving together (P3c). Two halves, not
+# one assertion with a spare.
 if [[ "${SYS_T%/*}" != "${CC_T%/*}" ]]; then
   fail "the two uploaders no longer write to the same prefix (system '${SYS_T%/*}', claudecode '${CC_T%/*}') — one retention loop cannot reach two prefixes"
 fi
 
+# ⚠️ Both families failing placement while still AGREEING with each other has
+# TWO causes, and this guard cannot tell them apart from the manifests: the
+# keys moved and the loop did not, or the loop's listed prefix moved and the
+# keys did not. Said as two, because naming one points the reader the wrong way
+# half the time. My earlier claim that this case "fails with a different
+# sentence" was wrong — FO-runbook measured P6 printing the same sentence as
+# P3c. Either cause leaves the family unpruned, so the verdict is the same and
+# only the explanation is ambiguous.
+if [[ "$PLACE_FAILS" == "2" && "${SYS_T%/*}" == "${CC_T%/*}" ]]; then
+  echo "       ↳ both families disagree with the listed prefix while still agreeing with each other. Either the keys moved (and the loop still lists '${LS_PREFIX}'), or the loop's listed prefix moved (and the keys still sit under '$(render "${SYS_T%/*}")/'). Not decidable from the manifests alone; both leave the family unpruned."
+fi
+
+# --- controls ---------------------------------------------------------------
+# ⚠️ A control may only say "cannot measure" while nothing has already FAILED.
+#
+# C3b's premise is that the shipped tree is correct; once a case has failed
+# that premise is gone, so a failing C3b is the expected consequence of the
+# defect rather than a doubt about the instrument. The first version called
+# `exit 2` inline and four genuine failures (P3, P2, P6, P3c) came back as
+# "cannot measure" with their FAIL lines printed above the wrong exit code.
+#
+# ⚠️ FOURTH time today I have written this bug — twice found and fixed in other
+# guards hours earlier, then written fresh here. Knowing the rule is not the
+# same as applying it, so it is now written where the next person edits this
+# block rather than only in a commit message: notes accumulate, a real failure
+# outranks every one of them.
+CTL_NOTE=""
+unmeasurable() { CTL_NOTE="${CTL_NOTE}${CTL_NOTE:+
+}cannot measure: $1"; }
+
 # Negative control: a name with no stamp must yield nothing. Without this, an
 # extractor that matched everything would read as full coverage.
 ctl="$(probe "demo/demo-no-date-here.tar.gz.age")"
-if [[ -n "$ctl" ]]; then
-  echo "cannot measure: the extractor also produced '${ctl}' for a name with no 8-digit stamp, so matching proves nothing about either family"
-  exit 2
-fi
+[[ -z "$ctl" ]] || unmeasurable "the extractor also produced '${ctl}' for a name with no 8-digit stamp, so matching proves nothing about either family"
 
-# Control for the placement assertion: move the claudecode family one level
-# deeper and it must fail. This reconstructs #147's P3 from the lifted
-# template, so a future rewrite that drops the placement check is caught here
-# rather than by the next reviewer.
-if [[ "$(CC_T="${LS_PREFIX_T}sub/\${CLUSTER_NAME}-claudecode-\${STAMP}.tar.gz.age"
-         key="$(render "$CC_T")"; name="${key##*/}"
-         [[ "$key" != "${LS_PREFIX}${name}" ]] && echo caught)" != "caught" ]]; then
-  echo "cannot measure: a claudecode key moved into a sub-prefix did NOT trip the placement check — that check is not doing anything, and #147 would still be open"
-  exit 2
+# C3 / C3b — both polarities, through the SAME check_family the loop uses, so
+# breaking that function or its comparison shows up here. C3 reconstructs
+# #147's P3 from the lifted template rather than from a hand-written copy.
+_p=$PLACED
+if check_family claudecode "${LS_PREFIX_T}sub/\${CLUSTER_NAME}-claudecode-\${STAMP}.tar.gz.age" >/dev/null 2>&1; then
+  unmeasurable "a claudecode key moved into a sub-prefix did NOT trip the placement check — that check is doing nothing, and #147 would still be open"
 fi
+if ! check_family claudecode "$CC_T" >/dev/null 2>&1; then
+  # Only meaningful on an otherwise-clean tree; see the note at the top.
+  [[ $rc -eq 0 ]] && unmeasurable "the real claudecode key did NOT satisfy the placement check either, so C3 above rejects everything and proves nothing"
+fi
+PLACED=$_p   # the controls must not inflate the loop's own count
+[[ -n "$CTL_NOTE" ]] || echo "control: the placement check accepts the shipped key and rejects the same key one level deeper — both through the loop's own function, not a copy of it"
 
 # Instrument control: break the extractor and both families must stop matching.
 # A reader that cannot fail cannot certify.
 broken="${EXPR//\[0-9\]/[A-Z]}"
-[[ "$broken" != "$EXPR" ]] || { echo "cannot measure: could not mutate the extractor, so the readings above are unverified"; exit 2; }
-if [[ -n "$(echo "$(basename_of "$SYS_T")" | sed -n "$broken")" ]]; then
-  echo "cannot measure: the mutated extractor still matched the system key — this guard is not reading the expression it thinks it is"
-  exit 2
+if [[ "$broken" == "$EXPR" ]]; then
+  unmeasurable "could not mutate the extractor, so the stamp readings above are unverified"
+elif [[ -n "$(probe_with() { echo "$1" | sed -n "$broken"; }; probe_with "$(render "${SYS_T##*/}")")" ]]; then
+  unmeasurable "the mutated extractor still matched the system key — this guard is not reading the expression it thinks it is"
 fi
 
-if [[ $rc -eq 0 ]]; then
-  echo "PASS — both families sit directly under the prefix the shipped loop lists, and both yield a date to its extractor (so the 30-day default applies to the claudecode archive too; see the notes in both ConfigMaps)"
-  echo "       ⚠️ measured with this machine's sed, not the image's busybox; no claudecode object has ever been through the loop; and the 'PRE <name>/' shape a sub-prefix produces is read from the AWS CLI's documented non-recursive output, not observed in-cluster"
+if [[ $rc -ne 0 ]]; then
+  [[ -n "$CTL_NOTE" ]] && echo "note: a control could not run either (expected when a case has failed) — ${CTL_NOTE//cannot measure: /}"
+  exit 1
 fi
-exit $rc
+if [[ -n "$CTL_NOTE" ]]; then
+  echo "$CTL_NOTE"
+  exit 2
+fi
+echo "PASS — both families sit directly under the prefix the shipped loop lists, and both yield a date to its extractor (so the 30-day default applies to the claudecode archive too; see the notes in both ConfigMaps)"
+echo "       ⚠️ measured with this machine's sed, not the image's busybox; no claudecode object has ever been through the loop; and the 'PRE <name>/' shape a sub-prefix produces is read from the AWS CLI's documented non-recursive output, not observed in-cluster"
+exit 0
