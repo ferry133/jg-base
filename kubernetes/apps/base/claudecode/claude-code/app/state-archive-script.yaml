@@ -1,0 +1,166 @@
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: claudecode-archive-script
+  namespace: claudecode
+  annotations:
+    # Contains literal ${...} for the shell. Same reason as daily-check's and
+    # offsite-backup's script ConfigMaps: Flux's envsubst rewrites the whole
+    # rendered text, comments included, and a name it cannot resolve becomes
+    # the empty string (ferry133/jg-base#69/#70, #123).
+    kustomize.toolkit.fluxcd.io/substitute: disabled
+data:
+  # ⚠️ The exclusion list lives HERE, not in the image (#145 condition 4): an
+  # image rebuild is a cross-repo round trip, and an exclusion that needs one
+  # will be skipped the day it is needed. One pattern per line, `#` comments
+  # ignored, matched by `tar --exclude` semantics against paths relative to
+  # each mounted root.
+  #
+  # ⚠️ What is deliberately NOT excluded: `memory/` and session transcripts.
+  # The whole point of archiving agent state is the accumulated context -- a
+  # login can be redone, a year of context cannot. Size is managed by the
+  # session cap below, never by dropping memory.
+  exclude.txt: |
+    # Version control checkouts: recoverable from their remote, and the single
+    # largest thing in a workspace.
+    .git
+    # Dependency trees: recoverable from a lockfile.
+    node_modules
+    .venv
+    venv
+    __pycache__
+    .mypy_cache
+    .pytest_cache
+    .ruff_cache
+    # Build output.
+    dist
+    build
+    target
+    .next
+    # Caches that regenerate.
+    .cache
+    .npm
+    .cargo/registry
+    *.pyc
+    # Editor/OS noise.
+    .DS_Store
+
+  archive.sh: |
+    #!/bin/bash
+    # Archive the claudecode agent state straight off its PVCs.
+    #
+    # Why this exists at all (ferry133/jg-base#145): monitoring/backup captures
+    # instances with `kubectl exec ... tar`, and exec needs a RUNNING pod. An
+    # instance scaled to 0 -- jg-jiahd's `cc` is one -- cannot be reached that
+    # way, so its PVC content never reached off-site storage. #61 made that
+    # state visible (present-but-uncapturable) instead of a daily FAIL, but
+    # visible is not backed up. Mounting the claim needs no pod at all.
+    set -uo pipefail
+
+    log() { echo "[$(date -u '+%Y-%m-%dT%H:%M:%SZ')] $*"; }
+
+    : "${CLUSTER_NAME:?required}"
+    if [[ -z "${BACKUP_AGE_RECIPIENT:-}" ]]; then
+      log "FATAL: BACKUP_AGE_RECIPIENT is empty; refusing to write an archive nobody can decrypt and refusing to write one unencrypted"
+      exit 1
+    fi
+    for v in BACKUP_R2_BUCKET BACKUP_R2_ENDPOINT BACKUP_R2_ACCESS_KEY_ID BACKUP_R2_SECRET_ACCESS_KEY; do
+      if [[ -z "${!v:-}" ]]; then
+        log "FATAL: ${v} is empty; this cluster has no off-site destination configured, and an archive written nowhere is not a backup"
+        exit 78
+      fi
+    done
+
+    STAMP="$(date -u '+%Y%m%dT%H%M%SZ')"
+    WORK="$(mktemp -d)"
+    STAGE="$WORK/${CLUSTER_NAME}-claudecode-${STAMP}"
+    mkdir -p "$STAGE"
+    trap 'rm -rf "$WORK"' EXIT
+
+    # ⚠️ Members are named, and the names are asserted elsewhere. The old
+    # discriminator was the MOUNT PATH inside a running pod
+    # (monitoring/backup/app/configmap.yaml:194) and it cannot survive this
+    # change -- there is no pod. The replacement is the declared claim set:
+    # scripts/check-archive-covers-claims.sh fails the build if the base `im`
+    # HelmRelease declares a persistence key this Job does not mount. A name
+    # listed here and nowhere checked would be the same silent-omission shape
+    # the old comment warned about.
+    MEMBERS="config workspace"
+
+    EXCLUDES=()
+    while IFS= read -r line; do
+      line="${line%%#*}"; line="${line// /}"
+      [[ -n "$line" ]] && EXCLUDES+=(--exclude="$line")
+    done < /scripts/exclude.txt
+    log "exclusions: ${#EXCLUDES[@]} pattern(s) from the ConfigMap"
+
+    # --- session history cap ------------------------------------------------
+    # ⚠️ A cap, not a filter: the newest SESSION_KEEP transcripts per project
+    # are archived and older ones are skipped. Implemented here rather than as
+    # an exclusion pattern because "the oldest ones" is not a glob.
+    #
+    # ⚠️ `memory/` is never considered by this loop. Session transcripts are
+    # replayable detail; memory is the distilled result, and trimming the
+    # second to save space would be throwing away the thing worth keeping.
+    #
+    # ⚠️ NOT VERIFIED against a live pod: the glob below encodes Claude Code's
+    # on-disk layout (`projects/<slug>/<uuid>.jsonl`) from its documented
+    # shape, not from a reading of a real claude-config PVC. If that layout
+    # differs, this cap silently matches nothing -- which is why the guard
+    # asserts it trims a synthetic tree, and why the acceptance run should
+    # print what it skipped rather than only its size.
+    SESSION_KEEP="${CLAUDECODE_SESSION_KEEP:-20}"
+    SKIPPED=0
+    SESSION_EXCLUDES=()
+    if [[ -d /state/config/projects ]]; then
+      while IFS= read -r proj; do
+        [[ -d "$proj" ]] || continue
+        n=0
+        while IFS= read -r f; do
+          n=$((n + 1))
+          if [[ $n -gt $SESSION_KEEP ]]; then
+            SESSION_EXCLUDES+=(--exclude="${f#/state/config/}")
+            SKIPPED=$((SKIPPED + 1))
+          fi
+        done < <(ls -1t "$proj"/*.jsonl 2>/dev/null)
+      done < <(find /state/config/projects -mindepth 1 -maxdepth 1 -type d 2>/dev/null)
+    fi
+    log "session cap: keeping ${SESSION_KEEP} newest transcript(s) per project, skipping ${SKIPPED}"
+
+    # --- the members --------------------------------------------------------
+    # ⚠️ The keyring IS included, and that reverses what this fleet shipped.
+    # See monitoring/backup/app/configmap.yaml, where the old decision and the
+    # new one are both recorded.
+    for m in $MEMBERS; do
+      src="/state/${m}"
+      if [[ ! -d "$src" ]]; then
+        log "FATAL: /state/${m} is not mounted; a member missing from the archive must not look like a member with nothing in it"
+        exit 1
+      fi
+      tar -czf "${STAGE}/${m}.tar.gz" -C "$src" "${EXCLUDES[@]}" "${SESSION_EXCLUDES[@]}" . \
+        || { log "FATAL: tar failed for ${m}"; exit 1; }
+      log "staged ${m}: $(wc -c <"${STAGE}/${m}.tar.gz") bytes"
+    done
+
+    ARCHIVE="$WORK/${CLUSTER_NAME}-claudecode-${STAMP}.tar.gz"
+    tar -czf "$ARCHIVE" -C "$WORK" "${CLUSTER_NAME}-claudecode-${STAMP}" \
+      || { log "FATAL: outer archive failed"; exit 1; }
+
+    age -r "$BACKUP_AGE_RECIPIENT" -o "${ARCHIVE}.age" "$ARCHIVE" \
+      || { log "FATAL: age encryption failed"; exit 1; }
+    rm -f "$ARCHIVE"
+    log "encrypted: $(wc -c <"${ARCHIVE}.age") bytes"
+
+    export AWS_ACCESS_KEY_ID="$BACKUP_R2_ACCESS_KEY_ID"
+    export AWS_SECRET_ACCESS_KEY="$BACKUP_R2_SECRET_ACCESS_KEY"
+    export AWS_DEFAULT_REGION=auto
+    KEY="${CLUSTER_NAME}/${CLUSTER_NAME}-claudecode-${STAMP}.tar.gz.age"
+    if aws s3 cp --endpoint-url "$BACKUP_R2_ENDPOINT" --only-show-errors \
+         "${ARCHIVE}.age" "s3://${BACKUP_R2_BUCKET}/${KEY}"; then
+      log "uploaded s3://${BACKUP_R2_BUCKET}/${KEY}"
+    else
+      log "FATAL: upload failed"
+      exit 1
+    fi
+    log "==> Done. members=${MEMBERS// /,} skipped_transcripts=${SKIPPED}"

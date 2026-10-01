@@ -194,12 +194,33 @@ data:
     # already documents. The discriminator is the mount path rather than the
     # name, because that is the thing being backed up.
     #
-    # NOT the keyring, which is the same PVC mounted at a different path
-    # (/home/claude/.local/share/keyrings, subPath keyrings). Excluded by
-    # construction rather than by a filter: tarring ~/.claude simply does not
-    # reach it. D8's test is the right one and the keyring passes it — a login
-    # can be redone, a year of accumulated context cannot — and it keeps the
-    # cluster's live OAuth credential out of an archive that travels off-site.
+    # NOT the keyring HERE, and the reason has changed — both decisions are
+    # kept because a ruling quietly edited away and a ruling never made read
+    # identically six months later.
+    #
+    # WAS (shipped until 2026-10-01): excluded BY CONSTRUCTION. The keyring is
+    # the same PVC at a different path (/home/claude/.local/share/keyrings,
+    # subPath keyrings), so tarring ~/.claude simply does not reach it. The
+    # argument was D8's test — a login can be redone, a year of accumulated
+    # context cannot — plus keeping the cluster's live OAuth credential out of
+    # an archive that travels off-site.
+    #
+    # NOW: **ferry133 ruled on 2026-09-11 that credentials are included.** That
+    # does not change this function, which still cannot reach the keyring and
+    # still should not try: exec into a running pod is the wrong instrument for
+    # it. The inclusion happens in the claudecode state archive, which mounts
+    # the whole claude-config PVC and therefore reaches the keyring by the same
+    # construction that used to exclude it
+    # (kubernetes/apps/base/claudecode/claude-code/app/state-archive.yaml,
+    # ferry133/jg-base#145).
+    #
+    # ⚠️ The cost of that ruling, written down because it has NOT been measured
+    # away: the pod's OAuth lives in gnome-keyring, and a restore onto macOS
+    # would face a Claude Code that reads the macOS Keychain. If the restored
+    # gnome-keyring is unusable there, the decision paid for itself in live
+    # credentials leaving the site and bought nothing. That is an inference,
+    # not a finding; the restore drill is what settles it, and the decision
+    # does not change before it does.
     dump_claude_config() {
       local ns=claudecode
       local instances

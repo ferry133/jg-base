@@ -6,3 +6,5 @@ resources:
   - ./rbac.yaml
   - ./secret.yaml
   - ./talos-mcp-secret.yaml
+  - ./state-archive.yaml
+  - ./state-archive-script.yaml
