@@ -52,10 +52,29 @@ data:
     #
     # Why this exists at all (ferry133/jg-base#145): monitoring/backup captures
     # instances with `kubectl exec ... tar`, and exec needs a RUNNING pod. An
-    # instance scaled to 0 -- jg-jiahd's `cc` is one -- cannot be reached that
-    # way, so its PVC content never reached off-site storage. #61 made that
-    # state visible (present-but-uncapturable) instead of a daily FAIL, but
-    # visible is not backed up. Mounting the claim needs no pod at all.
+    # instance at 0 replicas cannot be reached that way, so its PVC content
+    # never reached off-site storage. #61 made that state visible
+    # (present-but-uncapturable) instead of a daily FAIL, but visible is not
+    # backed up. Mounting the claim needs no pod at all.
+    #
+    # ⚠️ #145 names jg-jiahd's `cc` as the live example of that. It is not one
+    # any more and was not when this was written: `cc` was removed from both
+    # jg-jiahd and jcom on 2026-09-05 (ferry133's ruling, recorded in each
+    # cluster.yaml beside `claude_instances: []`, and both PVCs deleted). The
+    # issue's example was repeated here without being re-measured. Measured
+    # 2026-10-01, the cases that are actually uncapturable by exec today are:
+    #   - a cluster on `im/disabled` (claudecode_auth0: false) -- no im pod
+    #     ever, and `retain: true` means any im-* claims from an earlier
+    #     enabled life survive with nothing to capture them. This file does
+    #     NOT cover that: it ships from im/enabled, which that cluster does
+    #     not apply. Orphaned claims after a disable need a one-off, not a
+    #     CronJob -- a recurring Job cannot be gated on "the claim exists".
+    #   - EXTRA instances at 0 replicas. There are none today, and their
+    #     claims are named after the instance, so a manifest in this repo
+    #     cannot name them. That half is jg-cluster-template's.
+    # So what this file covers is the enabled-`im` case -- which `kubectl
+    # exec` could already reach. The value it adds there is not reach, it is
+    # removing the running pod from the path and taking the keyring with it.
     set -uo pipefail
 
     log() { echo "[$(date -u '+%Y-%m-%dT%H:%M:%SZ')] $*"; }
