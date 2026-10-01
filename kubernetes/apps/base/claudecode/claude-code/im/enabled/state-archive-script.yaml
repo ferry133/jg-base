@@ -1,0 +1,226 @@
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: claudecode-archive-script
+  namespace: claudecode
+  annotations:
+    # Contains literal ${...} for the shell. Same reason as daily-check's and
+    # offsite-backup's script ConfigMaps: Flux's envsubst rewrites the whole
+    # rendered text, comments included, and a name it cannot resolve becomes
+    # the empty string (ferry133/jg-base#69/#70, #123).
+    kustomize.toolkit.fluxcd.io/substitute: disabled
+data:
+  # ⚠️ The exclusion list lives HERE, not in the image (#145 condition 4): an
+  # image rebuild is a cross-repo round trip, and an exclusion that needs one
+  # will be skipped the day it is needed. One pattern per line, `#` comments
+  # ignored, matched by `tar --exclude` semantics against paths relative to
+  # each mounted root.
+  #
+  # ⚠️ What is deliberately NOT excluded: `memory/` and session transcripts.
+  # The whole point of archiving agent state is the accumulated context -- a
+  # login can be redone, a year of context cannot. Size is managed by the
+  # session cap below, never by dropping memory.
+  exclude.txt: |
+    # Version control checkouts: recoverable from their remote, and the single
+    # largest thing in a workspace.
+    .git
+    # Dependency trees: recoverable from a lockfile.
+    node_modules
+    .venv
+    venv
+    __pycache__
+    .mypy_cache
+    .pytest_cache
+    .ruff_cache
+    # Build output.
+    dist
+    build
+    target
+    .next
+    # Caches that regenerate.
+    .cache
+    .npm
+    .cargo/registry
+    *.pyc
+    # Editor/OS noise.
+    .DS_Store
+
+  archive.sh: |
+    #!/bin/bash
+    # Archive the claudecode agent state straight off its PVCs.
+    #
+    # Why this exists at all (ferry133/jg-base#145): monitoring/backup captures
+    # instances with `kubectl exec ... tar`, and exec needs a RUNNING pod. An
+    # instance at 0 replicas cannot be reached that way, so its PVC content
+    # never reached off-site storage. #61 made that state visible
+    # (present-but-uncapturable) instead of a daily FAIL, but visible is not
+    # backed up. Mounting the claim needs no pod at all.
+    #
+    # ⚠️ #145 names jg-jiahd's `cc` as the live example of that. It is not one
+    # any more and was not when this was written: `cc` was removed from both
+    # jg-jiahd and jcom on 2026-09-05 (ferry133's ruling, recorded in each
+    # cluster.yaml beside `claude_instances: []`, and both PVCs deleted). The
+    # issue's example was repeated here without being re-measured. Measured
+    # 2026-10-01, the cases that are actually uncapturable by exec today are:
+    #   - a cluster on `im/disabled` (claudecode_auth0: false) -- no im pod
+    #     ever, and `retain: true` means any im-* claims from an earlier
+    #     enabled life survive with nothing to capture them. This file does
+    #     NOT cover that: it ships from im/enabled, which that cluster does
+    #     not apply. Orphaned claims after a disable need a one-off, not a
+    #     CronJob -- a recurring Job cannot be gated on "the claim exists".
+    #   - EXTRA instances at 0 replicas. There are none today, and their
+    #     claims are named after the instance, so a manifest in this repo
+    #     cannot name them. That half is jg-cluster-template's.
+    # So what this file covers is the enabled-`im` case -- which `kubectl
+    # exec` could already reach. The value it adds there is not reach, it is
+    # removing the running pod from the path and taking the keyring with it.
+    set -uo pipefail
+
+    log() { echo "[$(date -u '+%Y-%m-%dT%H:%M:%SZ')] $*"; }
+
+    : "${CLUSTER_NAME:?required}"
+
+    # ⚠️ The ONLY reason this is a variable: it lets a guard run the real
+    # session-cap code against a synthetic tree instead of a hand-copied
+    # paraphrase of it. In the Job it is always /state -- the CronJob sets
+    # nothing. A guard that re-types the loop would keep passing after this
+    # file changed, which is the failure the variable buys out.
+    STATE_ROOT="${ARCHIVE_STATE_ROOT:-/state}"
+    if [[ -z "${BACKUP_AGE_RECIPIENT:-}" ]]; then
+      log "FATAL: BACKUP_AGE_RECIPIENT is empty; refusing to write an archive nobody can decrypt and refusing to write one unencrypted"
+      exit 1
+    fi
+    for v in BACKUP_R2_BUCKET BACKUP_R2_ENDPOINT BACKUP_R2_ACCESS_KEY_ID BACKUP_R2_SECRET_ACCESS_KEY; do
+      if [[ -z "${!v:-}" ]]; then
+        log "FATAL: ${v} is empty; this cluster has no off-site destination configured, and an archive written nowhere is not a backup"
+        exit 78
+      fi
+    done
+
+    STAMP="$(date -u '+%Y%m%dT%H%M%SZ')"
+    WORK="$(mktemp -d)"
+    STAGE="$WORK/${CLUSTER_NAME}-claudecode-${STAMP}"
+    mkdir -p "$STAGE"
+    trap 'rm -rf "$WORK"' EXIT
+
+    # ⚠️ Members are named, and the names are asserted elsewhere. The old
+    # discriminator was the MOUNT PATH inside a running pod
+    # (monitoring/backup/app/configmap.yaml:194) and it cannot survive this
+    # change -- there is no pod. The replacement is the declared claim set:
+    # scripts/check-archive-covers-claims.sh fails the build if the base `im`
+    # HelmRelease declares a persistence key this Job does not mount. A name
+    # listed here and nowhere checked would be the same silent-omission shape
+    # the old comment warned about.
+    MEMBERS="config workspace"
+
+    EXCLUDES=()
+    while IFS= read -r line; do
+      line="${line%%#*}"; line="${line// /}"
+      [[ -n "$line" ]] && EXCLUDES+=(--exclude="$line")
+    done < /scripts/exclude.txt
+    log "exclusions: ${#EXCLUDES[@]} pattern(s) from the ConfigMap"
+
+    # --- session history cap ------------------------------------------------
+    # ⚠️ A cap, not a filter: the newest SESSION_KEEP transcripts per project
+    # are archived and older ones are skipped. Implemented here rather than as
+    # an exclusion pattern because "the oldest ones" is not a glob.
+    #
+    # ⚠️ `memory/` is never considered by this loop. Session transcripts are
+    # replayable detail; memory is the distilled result, and trimming the
+    # second to save space would be throwing away the thing worth keeping.
+    #
+    # ⚠️ NOT VERIFIED against a live pod: the glob below encodes Claude Code's
+    # on-disk layout (`projects/<slug>/<uuid>.jsonl`) from its documented
+    # shape, not from a reading of a real claude-config PVC. If that layout
+    # differs, this cap silently matches nothing -- and "matched nothing"
+    # and "there was nothing to trim" print the same line. So the layout is
+    # the one thing the guard CANNOT settle: scripts/check-session-cap-trims.sh
+    # runs this exact block (extracted, not re-typed) against a synthetic
+    # tree built to that assumed layout, which proves the loop keeps the
+    # NEWEST SESSION_KEEP and never touches memory/ -- it proves nothing
+    # about whether a real PVC looks like that. Condition 8's live run is
+    # what settles the layout, and it has to print what it SKIPPED, by name,
+    # rather than only the archive size.
+    SESSION_KEEP="${CLAUDECODE_SESSION_KEEP:-20}"
+    SKIPPED=0
+    SESSION_EXCLUDES=()
+    if [[ -d "$STATE_ROOT/config/projects" ]]; then
+      while IFS= read -r proj; do
+        [[ -d "$proj" ]] || continue
+        n=0
+        while IFS= read -r f; do
+          n=$((n + 1))
+          if [[ $n -gt $SESSION_KEEP ]]; then
+            SESSION_EXCLUDES+=(--exclude="${f#"$STATE_ROOT"/config/}")
+            SKIPPED=$((SKIPPED + 1))
+          fi
+        done < <(ls -1t "$proj"/*.jsonl 2>/dev/null)
+      done < <(find "$STATE_ROOT/config/projects" -mindepth 1 -maxdepth 1 -type d 2>/dev/null)
+    fi
+    log "session cap: keeping ${SESSION_KEEP} newest transcript(s) per project, skipping ${SKIPPED}"
+
+    # --- the members --------------------------------------------------------
+    # ⚠️ The keyring IS included, and that reverses what this fleet shipped.
+    # See monitoring/backup/app/configmap.yaml, where the old decision and the
+    # new one are both recorded.
+    for m in $MEMBERS; do
+      src="$STATE_ROOT/${m}"
+      if [[ ! -d "$src" ]]; then
+        log "FATAL: ${src} is not mounted; a member missing from the archive must not look like a member with nothing in it"
+        exit 1
+      fi
+      tar -czf "${STAGE}/${m}.tar.gz" -C "$src" "${EXCLUDES[@]}" "${SESSION_EXCLUDES[@]}" . \
+        || { log "FATAL: tar failed for ${m}"; exit 1; }
+      log "staged ${m}: $(wc -c <"${STAGE}/${m}.tar.gz") bytes"
+    done
+
+    ARCHIVE="$WORK/${CLUSTER_NAME}-claudecode-${STAMP}.tar.gz"
+    tar -czf "$ARCHIVE" -C "$WORK" "${CLUSTER_NAME}-claudecode-${STAMP}" \
+      || { log "FATAL: outer archive failed"; exit 1; }
+
+    age -r "$BACKUP_AGE_RECIPIENT" -o "${ARCHIVE}.age" "$ARCHIVE" \
+      || { log "FATAL: age encryption failed"; exit 1; }
+    rm -f "$ARCHIVE"
+    log "encrypted: $(wc -c <"${ARCHIVE}.age") bytes"
+
+    export AWS_ACCESS_KEY_ID="$BACKUP_R2_ACCESS_KEY_ID"
+    export AWS_SECRET_ACCESS_KEY="$BACKUP_R2_SECRET_ACCESS_KEY"
+    export AWS_DEFAULT_REGION=auto
+    KEY="${CLUSTER_NAME}/${CLUSTER_NAME}-claudecode-${STAMP}.tar.gz.age"
+    if aws s3 cp --endpoint-url "$BACKUP_R2_ENDPOINT" --only-show-errors \
+         "${ARCHIVE}.age" "s3://${BACKUP_R2_BUCKET}/${KEY}"; then
+      log "uploaded s3://${BACKUP_R2_BUCKET}/${KEY}"
+    else
+      log "FATAL: upload failed"
+      exit 1
+    fi
+    log "==> Done. members=${MEMBERS// /,} skipped_transcripts=${SKIPPED}"
+
+    # ⚠️ RETENTION IS 30 DAYS, AND THIS FILE DOES NOT DECIDE IT.
+    #
+    # There is no prune step here, and that absence used to read as "these
+    # archives are kept forever". They are not: monitoring/backup's own
+    # retention loop lists the WHOLE ${CLUSTER_NAME}/ prefix, pulls an 8-digit
+    # date out of each object name and deletes anything older than
+    # BACKUP_RETAIN_DAYS (default 30). The key written above matches that
+    # extractor, so these objects are swept by another app's Job on another
+    # app's knob. Nobody chose that -- it is what the two key shapes happen to
+    # produce, and until 2026-10-01 no file said it (found by FO-runbook
+    # [5fe39a] during acceptance of #146).
+    #
+    # Two consequences that belong to whoever reads this file:
+    #   - the off-site lifetime of an archive CONTAINING LIVE CREDENTIALS is
+    #     30 days, set by a variable named after database backups. The
+    #     retention window is the exposure window, so changing one changes
+    #     both -- which is a decision for ferry133, not a tidy-up.
+    #   - if `offsite-backup` is removed or disabled on a cluster, nothing
+    #     prunes this family at all. Small, but unbounded.
+    #
+    # ⛔ Do NOT add a second prune loop here to "fix" the coupling. Two
+    # deleters walking one prefix is strictly worse than one in the wrong
+    # place: they drift, and the direction they drift in is deletion.
+    # scripts/check-prune-covers-both-families.sh asserts the key above still
+    # matches that extractor -- if it stops, this family silently stops being
+    # pruned, and unbounded growth of a credential-bearing archive looks
+    # exactly like nothing happening.

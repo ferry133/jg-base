@@ -384,6 +384,54 @@ jobs:
       - name: claudecode claims do not share a storage class
         run: bash scripts/check-claudecode-pvc-classes.sh
 
+      # #145: the claudecode state archive mounts PVCs directly, because
+      # `kubectl exec` needs a RUNNING pod and a scaled-to-0 instance has
+      # none -- its content never reached off-site storage. Mounting removes
+      # the pod, and with it the old discriminator: instances used to be
+      # DISCOVERED by mount path precisely so a hardcoded list could not
+      # silently miss one, and a pod spec has to name the claims it mounts.
+      # This guard is what makes the list safe: the subject is the declared
+      # claim set, read from the HelmRelease that declares it. The case that
+      # must keep failing: a persistence key declared on the base `im`
+      # release that the archive does not mount -- an archive short one
+      # member is produced, uploaded and reported like a complete one.
+      - name: the state archive covers every declared claim
+        run: bash scripts/check-archive-covers-claims.sh
+
+      # #145 condition 5: the session cap is the one part of archive.sh that
+      # can be wrong without anything downstream noticing -- a cap matching
+      # nothing still produces an archive, uploads it and logs a size, and
+      # "skipped 0" is also what "nothing to skip" prints. This guard runs the
+      # shipped block (extracted from the ConfigMap, never re-typed) against a
+      # synthetic tree. The case that must keep failing: a cap that keeps the
+      # OLDEST transcripts, which drops the same NUMBER of files and yields an
+      # archive of the same shape. ⚠️ It assumes the on-disk layout rather
+      # than testing it; that is the live run's job.
+      - name: the session cap keeps the newest and spares memory/
+        run: bash scripts/check-session-cap-trims.sh
+
+      # #145 + #146: the claudecode archive shares a bucket prefix with the DB
+      # off-site archive, and row 21 used to take the newest object in that
+      # prefix regardless of family. The two upload from separate Jobs on
+      # separate schedules, so a dead `offsite-backup` under a healthy nightly
+      # claudecode upload read GREEN. The case that must keep failing: a
+      # system archive 72h old with a 1h-old claudecode object beside it.
+      # The guard also asserts the claudecode family is still NAMED in every
+      # outcome — scoping the row could drop it, and "we stopped looking" is
+      # the same green as "it is fine".
+      - name: row 21 answers for the system backup family
+        run: bash scripts/check-offsite-family-split.sh
+
+      # #145 + #146 (R3): the claudecode archive has no retention logic of its
+      # own — monitoring/backup's prune loop sweeps the whole prefix and
+      # therefore decides it, at BACKUP_RETAIN_DAYS. Nobody chose that; it is
+      # what the two key shapes produce. The case that must keep failing:
+      # either key stops yielding an 8-digit stamp, because the loop then skips
+      # that family forever and unbounded growth of a credential-bearing
+      # archive looks exactly like nothing happening.
+      - name: the retention loop still recognises both archive families
+        run: bash scripts/check-prune-covers-both-families.sh
+
       # #129: the sample told operators CLUSTER_GATEWAY_ADDR was
       # envoy-external's LoadBalancer IP; envoy.yaml binds it to
       # envoy-INTERNAL, and the one that really is envoy-external's

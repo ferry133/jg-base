@@ -194,12 +194,35 @@ data:
     # already documents. The discriminator is the mount path rather than the
     # name, because that is the thing being backed up.
     #
-    # NOT the keyring, which is the same PVC mounted at a different path
-    # (/home/claude/.local/share/keyrings, subPath keyrings). Excluded by
-    # construction rather than by a filter: tarring ~/.claude simply does not
-    # reach it. D8's test is the right one and the keyring passes it — a login
-    # can be redone, a year of accumulated context cannot — and it keeps the
-    # cluster's live OAuth credential out of an archive that travels off-site.
+    # NOT the keyring HERE, and the reason has changed — both decisions are
+    # kept because a ruling quietly edited away and a ruling never made read
+    # identically six months later.
+    #
+    # WAS (shipped until 2026-10-01): excluded BY CONSTRUCTION. The keyring is
+    # the same PVC at a different path (/home/claude/.local/share/keyrings,
+    # subPath keyrings), so tarring ~/.claude simply does not reach it. The
+    # argument was D8's test — a login can be redone, a year of accumulated
+    # context cannot — plus keeping the cluster's live OAuth credential out of
+    # an archive that travels off-site.
+    #
+    # NOW: **ferry133 ruled on 2026-09-11 that credentials are included.** That
+    # does not change this function, which still cannot reach the keyring and
+    # still should not try: exec into a running pod is the wrong instrument for
+    # it. The inclusion happens in the claudecode state archive, which mounts
+    # the whole claude-config PVC and therefore reaches the keyring by the same
+    # construction that used to exclude it
+    # (kubernetes/apps/base/claudecode/claude-code/im/enabled/state-archive.yaml
+    # — under the `im` gate, not `app/`: `app/` is applied on every cluster and
+    # the archive must not exist where the claims do not,
+    # ferry133/jg-base#145).
+    #
+    # ⚠️ The cost of that ruling, written down because it has NOT been measured
+    # away: the pod's OAuth lives in gnome-keyring, and a restore onto macOS
+    # would face a Claude Code that reads the macOS Keychain. If the restored
+    # gnome-keyring is unusable there, the decision paid for itself in live
+    # credentials leaving the site and bought nothing. That is an inference,
+    # not a finding; the restore drill is what settles it, and the decision
+    # does not change before it does.
     dump_claude_config() {
       local ns=claudecode
       local instances
@@ -462,6 +485,24 @@ data:
       [0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]) ;;
       *) log "WARNING: no usable retention cutoff; keeping every archive"; CUTOFF="" ;;
     esac
+    # ⚠️ THIS LOOP NOW PRUNES TWO ARCHIVE FAMILIES, not just this app's.
+    #
+    # It lists the whole ${CLUSTER_NAME}/ prefix, and since ferry133/jg-base#145
+    # that prefix also holds the claudecode state archive
+    # (`<cluster>-claudecode-<stamp>.tar.gz.age`, written by a different Job in
+    # a different namespace). The stamp extractor below matches that name too,
+    # so BACKUP_RETAIN_DAYS silently governs the lifetime of an archive this app
+    # does not produce -- including the agent keyring inside it. Nobody chose
+    # that; it is what the two key shapes happen to produce, and until
+    # 2026-10-01 no file said it (FO-runbook [5fe39a], acceptance of #146).
+    #
+    # Left as the single pruner on purpose: one loop in a slightly wrong place
+    # beats two loops over one prefix, which drift in the deletion direction.
+    # But it is no longer a statement about this app alone -- renaming or
+    # retiring this Job takes the other family's retention with it.
+    # scripts/check-prune-covers-both-families.sh holds both key shapes against
+    # this extractor; the matching claudecode-side note is in
+    # claudecode/claude-code/im/enabled/state-archive-script.yaml.
     if [[ -n "$CUTOFF" ]]; then
       log "pruning archives older than ${CUTOFF} (${KEEP} days)"
       aws s3 ls --endpoint-url "$BACKUP_R2_ENDPOINT" "s3://${BACKUP_R2_BUCKET}/${CLUSTER_NAME}/" 2>/dev/null \

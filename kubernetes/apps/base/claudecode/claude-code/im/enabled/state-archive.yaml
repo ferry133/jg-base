@@ -1,0 +1,163 @@
+---
+# Credentials for the claudecode state archive.
+#
+# ⚠️ A SECOND copy of the same names, and that is deliberate, not leftover.
+# `monitoring/backup` has its own `offsite-backup-config` with these same
+# `BACKUP_*` values. A Secret cannot be read across namespaces and this Job
+# must live in `claudecode` (a PVC can only be mounted by a pod in its own
+# namespace), so the values cannot be borrowed -- they are substituted a second
+# time from the same `cluster-secrets` by this directory's Kustomization.
+#
+# That means scripts/check-substitution-vocabulary.sh now sees these names used
+# in two places. That is correct. If you are reading this because you found two
+# Secrets with the same keys and assumed one was dead: neither is.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: claudecode-archive-config
+  namespace: claudecode
+type: Opaque
+stringData:
+  CLUSTER_NAME: "${CLUSTER_NAME}"
+  BACKUP_AGE_RECIPIENT: "${BACKUP_AGE_RECIPIENT:=}"
+  BACKUP_R2_BUCKET: "${BACKUP_R2_BUCKET:=}"
+  BACKUP_R2_ENDPOINT: "${BACKUP_R2_ENDPOINT:=}"
+  BACKUP_R2_ACCESS_KEY_ID: "${BACKUP_R2_ACCESS_KEY_ID:=}"
+  BACKUP_R2_SECRET_ACCESS_KEY: "${BACKUP_R2_SECRET_ACCESS_KEY:=}"
+---
+# Its own ServiceAccount, with NO RoleBinding and no mounted token.
+#
+# The Job reads PVCs it declares and writes to object storage. It calls no
+# Kubernetes API at all, so the right amount of access is none -- stated as a
+# manifest rather than left to the default ServiceAccount, which would carry a
+# token this Job has no use for (ferry133/jg-base#145 condition 2).
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: claudecode-archive
+  namespace: claudecode
+automountServiceAccountToken: false
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: claudecode-state-backup
+  namespace: claudecode
+  labels:
+    # Required of anything this repo ships whose name ends in `-backup`
+    # (scripts/check-backup-label.sh, #85): the daily-check row's subject is a
+    # union of this label OR the name, and a union working on one side only
+    # renders exactly like one working on both.
+    app.kubernetes.io/component: backup
+spec:
+  # An hour after offsite-backup (0 18), so the two never contend for the same
+  # upload window on a slow link.
+  schedule: "0 19 * * *"
+  timeZone: "Etc/UTC"
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 3600
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      # ⚠️ Coupled to failedJobsHistoryLimit above: to retain N runs at
+      # interval G you need at least N*G, and the stricter knob wins silently
+      # (ferry133/jg-base#143). Daily schedule, limit 3 -> 3 days.
+      ttlSecondsAfterFinished: 259200
+      activeDeadlineSeconds: 3600
+      template:
+        spec:
+          restartPolicy: Never
+          serviceAccountName: claudecode-archive
+          securityContext:
+            # The PVCs are written by the `im` pod as uid 0 (the NAS/NFS
+            # convention this repo documents), so read them as uid 0 too --
+            # anything else gets Permission denied on content that is plainly
+            # there.
+            runAsNonRoot: false
+            seccompProfile:
+              type: RuntimeDefault
+          # ⚠️ PREFERRED, not required -- and the first version of this file had
+          # it required, which defeated the entire issue.
+          #
+          # RWO is a NODE-scoped lock: while `im` holds the claim, only pods on
+          # the SAME node can mount it, so co-locating avoids a multi-attach
+          # stall. But `requiredDuringScheduling` matches against EXISTING im
+          # pods, and the case this whole Job exists for is an instance SCALED
+          # TO 0 -- where there is no im pod to match, the archive would sit
+          # Pending forever, and condition 1 of the issue ("a scaled-to-0
+          # instance also produces an archive") would be false by construction.
+          # A scheduling constraint that cannot be satisfied in exactly the
+          # situation the feature is for (FO-runbook [5fe39a] found this during
+          # acceptance of #146).
+          #
+          # With `im` at 0 the volume is attached nowhere, so any node can take
+          # it and the preference costs nothing. With `im` running the
+          # preference does the co-locating. ⚠️ What preferred does NOT give is
+          # a guarantee on a multi-node cluster: the scheduler may place the
+          # archive elsewhere and the pod then waits on the volume instead of
+          # on the scheduler. That failure mode is UNMEASURED -- it needs a
+          # multi-node cluster with `im` running -- and it is listed for the
+          # condition-8 run rather than argued away here.
+          affinity:
+            podAffinity:
+              preferredDuringSchedulingIgnoredDuringExecution:
+                - weight: 100
+                  podAffinityTerm:
+                    labelSelector:
+                      matchLabels:
+                        app.kubernetes.io/name: im
+                    topologyKey: kubernetes.io/hostname
+          containers:
+            - name: archive
+              # The same pre-baked image offsite-backup uses: it already
+              # carries age, aws-cli, tar and gzip, and pulling a second image
+              # on a slow node is minutes (ferry133/jg-base#124).
+              image: ghcr.io/ferry133/claude-code:ops-b8fe918@sha256:c1130a0ff0ca5d344c5bc34831e63bf83cb09755365d343d0922404fd5aa69be
+              command:
+                - /bin/bash
+                - /scripts/archive.sh
+              envFrom:
+                - secretRef:
+                    name: claudecode-archive-config
+              volumeMounts:
+                - name: scripts
+                  mountPath: /scripts
+                # ⚠️ Mounted READ-ONLY. This Job's job is to copy state out;
+                # a bug that writes into the live workspace would be a bug in
+                # the thing meant to protect it.
+                - name: claude-config
+                  mountPath: /state/config
+                  readOnly: true
+                - name: claude-workspace
+                  mountPath: /state/workspace
+                  readOnly: true
+          volumes:
+            - name: scripts
+              configMap:
+                name: claudecode-archive-script
+                defaultMode: 0555
+            # ⚠️ The claim names are `im-<key>`: app-template names a claim
+            # `<release>-<persistence key>`, and the base release is `im`.
+            # EXTRA instances (rendered into the per-user repo from
+            # `claude_instances`) have their own claims under their own release
+            # names and are NOT covered here -- a static pod spec cannot mount
+            # a claim it does not name. That half is template-time structure
+            # and belongs to jg-cluster-template; it is stated here rather than
+            # left to be discovered, because "the archive exists" and "the
+            # archive covers every instance" are different sentences.
+            #
+            # scripts/check-archive-covers-claims.sh holds the half that IS
+            # ours: every persistence key the base `im` HelmRelease declares
+            # must be mounted here. That is the replacement for the old
+            # mount-path discriminator (#145 condition 3) -- the subject is now
+            # the declared claim set, read from the manifest that declares it.
+            - name: claude-config
+              persistentVolumeClaim:
+                claimName: im-claude-config
+                readOnly: true
+            - name: claude-workspace
+              persistentVolumeClaim:
+                claimName: im-claude-workspace
+                readOnly: true

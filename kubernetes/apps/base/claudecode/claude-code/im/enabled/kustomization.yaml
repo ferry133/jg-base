@@ -1,5 +1,15 @@
 ---
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
+# ⚠️ The state archive lives HERE, under the same gate as `im`, and not in
+# `claude-code/app` where it was first written. `app/` is applied to every
+# cluster; this directory is applied only where `im` is enabled. A cluster
+# that runs `im/disabled` has no claude-config/claude-workspace claims, so
+# an archive CronJob shipped from `app/` would mount claims that do not
+# exist and sit Pending forever -- a backup that never runs, on a cluster
+# with nothing to back up, looking exactly like a backup that is fine.
+# (ferry133/jg-base#145, found by FO-runbook [5fe39a] during acceptance.)
 resources:
   - ./helmrelease.yaml
+  - ./state-archive.yaml
+  - ./state-archive-script.yaml
