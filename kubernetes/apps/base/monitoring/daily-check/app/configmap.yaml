@@ -1172,18 +1172,65 @@ data:
           # reason is legible: AccessDenied reads differently from a timeout.
           record skip "Off-site backup destination" "could not list s3://${BACKUP_R2_BUCKET}/${CLUSTER_NAME}/ — ${DEST_MSG}"
         else
-          DEST_LATEST=$(echo "$DEST_JSON" | jq -r '[(.Contents // [])[].LastModified] | sort | last // ""')
+          # ⚠️ SCOPED TO THE SYSTEM FAMILY, and the scope is the whole row.
+          # Until 2026-10-01 this took the newest object in the prefix, full
+          # stop. ferry133/jg-base#145 puts a SECOND family in that same
+          # prefix -- the claudecode state archive, uploading daily on its own
+          # schedule -- and the two do not fail together. A dead
+          # `offsite-backup` with a healthy claudecode archive therefore read
+          # GREEN here, because the newest object was fresh; it just was not
+          # the one this row is about.
+          #
+          # Measured, not derived (2026-10-01, the shipped expression against
+          # fixtures): system archive 72h old alone -> the row's own threshold
+          # says fail; add one 1h-old claudecode object and the SAME input
+          # reads 1h / ok. The masking object is the discriminator, so the
+          # reading is about the selector and not about the fixture.
+          #
+          # ⚠️ The claudecode family is NOT silently dropped -- "we stopped
+          # looking at it" and "it is fine" are the same green. Its age is
+          # read below and carried into the message, so a reader sees both
+          # numbers. A row of its own (ferry133/jg-base#145 condition 7)
+          # is the fuller answer and is not in this PR; this change is only
+          # the half that had to land no later than the first upload.
+          #
+          # `contains`, not a suffix/regex match: the key is
+          # `<cluster>/<cluster>-claudecode-<stamp>.tar.gz.age` while the
+          # system one is `<cluster>/<cluster>-<stamp>.tar.gz.age`, and a
+          # cluster literally named `claudecode` would still not produce
+          # `-claudecode-` in the stamp position.
+          CC_SEL='(.Key // "") | contains("-claudecode-")'
+          DEST_LATEST=$(echo "$DEST_JSON" | jq -r "[(.Contents // [])[] | select(${CC_SEL} | not) | .LastModified] | sort | last // \"\"")
+          DEST_CC_LATEST=$(echo "$DEST_JSON" | jq -r "[(.Contents // [])[] | select(${CC_SEL}) | .LastModified] | sort | last // \"\"")
+          DEST_CC_COUNT=$(echo "$DEST_JSON" | jq -r "[(.Contents // [])[] | select(${CC_SEL})] | length")
           # `+00:00` to `Z` for epoch_of's busybox fallback. GNU date takes
           # either and coreutils is installed above, so this costs nothing
           # today; it stops the sibling image's spelling being a live trap if
           # this block is ever lifted into it.
           DEST_LATEST="${DEST_LATEST/+00:00/Z}"
-          DEST_COUNT=$(echo "$DEST_JSON" | jq -r '(.Contents // []) | length')
+          DEST_COUNT=$(echo "$DEST_JSON" | jq -r "[(.Contents // [])[] | select(${CC_SEL} | not)] | length")
+          # Said in the same breath as the system verdict, so neither family
+          # can go quiet without a reader noticing.
+          if [[ -n "$DEST_CC_LATEST" ]]; then
+            DEST_CC_LATEST="${DEST_CC_LATEST/+00:00/Z}"
+            DEST_CC_EPOCH="$(epoch_of "$DEST_CC_LATEST")"
+            if [[ -n "$DEST_CC_EPOCH" ]]; then
+              DEST_CC_NOTE="; claudecode: $(( ( $(date -u +%s) - DEST_CC_EPOCH ) / 3600 ))h ago, ${DEST_CC_COUNT} objects"
+            else
+              DEST_CC_NOTE="; claudecode: ${DEST_CC_COUNT} objects, timestamp unparseable"
+            fi
+          else
+            DEST_CC_NOTE="; claudecode: none"
+          fi
           if [[ -z "$DEST_LATEST" ]]; then
             # Listed fine, nothing there. On a versioned + object-locked bucket
             # a delete marker produces exactly this, and that is the case this
             # row exists to catch.
-            record fail "Off-site backup destination empty" "listed s3://${BACKUP_R2_BUCKET}/${CLUSTER_NAME}/ and it holds no objects"
+            # The message names the claudecode count deliberately: once a
+            # second family shares the prefix, "it holds no objects" would be
+            # false while the thing this row guards is still absent, and a
+            # reader chasing a wrong sentence loses the hour the row bought.
+            record fail "Off-site backup destination empty" "listed s3://${BACKUP_R2_BUCKET}/${CLUSTER_NAME}/ and it holds no system archive${DEST_CC_NOTE}"
           else
             DEST_EPOCH="$(epoch_of "$DEST_LATEST")"
             if [[ -z "$DEST_EPOCH" ]]; then
@@ -1195,11 +1242,11 @@ data:
               # threshold here produces a report that says the upload is late
               # on one line and the destination is fine on the next.
               if (( DEST_AGE_H > 48 )); then
-                record fail "Off-site backup destination stale" "newest object is ${DEST_AGE_H}h old (${DEST_LATEST})"
+                record fail "Off-site backup destination stale" "newest system archive is ${DEST_AGE_H}h old (${DEST_LATEST})${DEST_CC_NOTE}"
               elif (( DEST_AGE_H > 26 )); then
-                record warn "Off-site backup destination late" "newest object is ${DEST_AGE_H}h old"
+                record warn "Off-site backup destination late" "newest system archive is ${DEST_AGE_H}h old${DEST_CC_NOTE}"
               else
-                record ok "Off-site backup destination fresh (${DEST_AGE_H}h ago, ${DEST_COUNT} objects)"
+                record ok "Off-site backup destination fresh (${DEST_AGE_H}h ago, ${DEST_COUNT} system objects${DEST_CC_NOTE})"
               fi
             fi
           fi

@@ -53,11 +53,25 @@ done
 # with the same extension and must never be considered.
 T="$WORK/state"
 mkdir -p "$T/config/projects/alpha" "$T/config/projects/beta" "$T/config/memory"
-mk() { # mk <dir> <count>  -- s01 oldest .. sNN newest
+# ⚠️ NAME ORDER IS DECOUPLED FROM MTIME ORDER, deliberately.
+#
+# The first version named the i-th oldest `s01..sNN`, so lexical order and
+# mtime order were the same sequence — and a cap sorting by NAME would have
+# produced the identical skipped set as one sorting by mtime. FO-runbook
+# [5fe39a] found it during acceptance of #146 by mutating `ls -1t` into
+# `ls -1t … | sort -r`: this guard could not tell the two apart and exited 2
+# (fail-closed, correctly, but "cannot measure" is not "caught").
+#
+# nm() is a bijection on 1..N (stride 7, N=25 — coprime, so no collisions),
+# which makes name order a fixed shuffle of mtime order. Sorting by either
+# direction of the name now yields a different set from sorting by mtime, so
+# the distinction is measurable instead of merely assumed.
+nm() { printf 's%02d.jsonl' "$(( ( $1 * 7 ) % 25 + 1 ))"; }
+mk() { # mk <dir> <count>  -- i ascending = mtime ascending; names shuffled
   local d="$1" n="$2" i
   for ((i = 1; i <= n; i++)); do
-    : >"$d/$(printf 's%02d.jsonl' "$i")"
-    touch -t "$(printf '2026010101%02d' "$i")" "$d/$(printf 's%02d.jsonl' "$i")"
+    : >"$d/$(nm "$i")"
+    touch -t "$(printf '2026010101%02d' "$i")" "$d/$(nm "$i")"
   done
 }
 mk "$T/config/projects/alpha" 25
@@ -94,7 +108,7 @@ n="$(skipped "$OUT")"
 # This is the assertion that separates a cap from a coin flip: keeping the
 # oldest drops exactly as many files, names them in the same format, and
 # produces an archive of the same shape.
-want="$(printf 'projects/alpha/s%02d.jsonl\n' 1 2 3 4 5 | sort)"
+want="$(for i in 1 2 3 4 5; do echo "projects/alpha/$(nm "$i")"; done | sort)"
 got="$(excl "$OUT")"
 [[ "$got" == "$want" ]] \
   || fail "the skipped set is not the 5 oldest alpha transcripts — got: $(tr '\n' ' ' <<<"$got")"
@@ -140,6 +154,16 @@ elif run "$WORK/m2.sh" >"$WORK/c2" 2>/dev/null && ! excl "$WORK/c2" | grep -q '^
   ctl "pointing the loop straight at memory/ still produced no memory/ exclusion — A3 is a check that cannot fire, and one of those reads exactly like a check that passed"
 fi
 
+# C4 — sort by NAME instead of mtime. Only measurable because nm() decoupled
+# the two orders; with sequential names this control could not fire at all,
+# and that is exactly the hole FO-runbook [5fe39a] found in the first version.
+sed 's/ls -1t \("[^"]*"\/\*\.jsonl\)/ls -1 \1 | sort -r/' "$WORK/block.sh" >"$WORK/m4.sh"
+if cmp -s "$WORK/block.sh" "$WORK/m4.sh"; then
+  ctl "the name-order control did not change the block, so 'it sorts by mtime and not by filename' is unverified"
+elif run "$WORK/m4.sh" >"$WORK/c4" 2>/dev/null && [[ "$(excl "$WORK/c4")" == "$want" ]]; then
+  ctl "sorting by FILENAME produced the same skipped set as sorting by mtime — A2 cannot tell a recency cap from an alphabetical one"
+fi
+
 # C3 — control-flow mutation: delete the line that records an exclusion.
 grep -v 'SESSION_EXCLUDES+=' "$WORK/block.sh" >"$WORK/m3.sh"
 if cmp -s "$WORK/block.sh" "$WORK/m3.sh"; then
@@ -157,6 +181,6 @@ fi
 [[ $ctl_rc -ne 0 ]] && exit 2
 
 echo "PASS — the shipped session-cap block, run against a synthetic tree: skipped 5 of alpha's 25 and they were the 5 oldest, left beta's 3 and memory/'s 30 alone, and tracked SESSION_KEEP=2 to 24"
-echo "       (controls: keeping the oldest, scanning memory/, and deleting the recording line each break an assertion above)"
+echo "       (controls: keeping the oldest, sorting by FILENAME, scanning memory/, and deleting the recording line each break an assertion above)"
 echo "       ⚠️ the on-disk layout itself is assumed, not tested — condition 8's live run must print skipped transcripts by name"
 exit 0

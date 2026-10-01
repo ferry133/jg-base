@@ -410,6 +410,18 @@ jobs:
       - name: the session cap keeps the newest and spares memory/
         run: bash scripts/check-session-cap-trims.sh
 
+      # #145 + #146: the claudecode archive shares a bucket prefix with the DB
+      # off-site archive, and row 21 used to take the newest object in that
+      # prefix regardless of family. The two upload from separate Jobs on
+      # separate schedules, so a dead `offsite-backup` under a healthy nightly
+      # claudecode upload read GREEN. The case that must keep failing: a
+      # system archive 72h old with a 1h-old claudecode object beside it.
+      # The guard also asserts the claudecode family is still NAMED in every
+      # outcome — scoping the row could drop it, and "we stopped looking" is
+      # the same green as "it is fine".
+      - name: row 21 answers for the system backup family
+        run: bash scripts/check-offsite-family-split.sh
+
       # #129: the sample told operators CLUSTER_GATEWAY_ADDR was
       # envoy-external's LoadBalancer IP; envoy.yaml binds it to
       # envoy-INTERNAL, and the one that really is envoy-external's

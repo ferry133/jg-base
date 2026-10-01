@@ -211,7 +211,9 @@ data:
     # it. The inclusion happens in the claudecode state archive, which mounts
     # the whole claude-config PVC and therefore reaches the keyring by the same
     # construction that used to exclude it
-    # (kubernetes/apps/base/claudecode/claude-code/app/state-archive.yaml,
+    # (kubernetes/apps/base/claudecode/claude-code/im/enabled/state-archive.yaml
+    # — under the `im` gate, not `app/`: `app/` is applied on every cluster and
+    # the archive must not exist where the claims do not,
     # ferry133/jg-base#145).
     #
     # ⚠️ The cost of that ruling, written down because it has NOT been measured
