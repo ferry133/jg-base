@@ -78,19 +78,37 @@ spec:
             runAsNonRoot: false
             seccompProfile:
               type: RuntimeDefault
-          # ⚠️ RWO is a NODE-scoped lock, not a pod-scoped one: a second pod on
-          # the SAME node can mount the claim while `im` holds it, and on a
-          # different node it cannot. Single-node appliances are unaffected; on
-          # a multi-node cluster this affinity is what keeps the archive from
-          # sitting Pending forever with no explanation. It follows the claim,
-          # not a node name, so it stays correct when `im` moves.
+          # ⚠️ PREFERRED, not required -- and the first version of this file had
+          # it required, which defeated the entire issue.
+          #
+          # RWO is a NODE-scoped lock: while `im` holds the claim, only pods on
+          # the SAME node can mount it, so co-locating avoids a multi-attach
+          # stall. But `requiredDuringScheduling` matches against EXISTING im
+          # pods, and the case this whole Job exists for is an instance SCALED
+          # TO 0 -- where there is no im pod to match, the archive would sit
+          # Pending forever, and condition 1 of the issue ("a scaled-to-0
+          # instance also produces an archive") would be false by construction.
+          # A scheduling constraint that cannot be satisfied in exactly the
+          # situation the feature is for (FO-runbook [5fe39a] found this during
+          # acceptance of #146).
+          #
+          # With `im` at 0 the volume is attached nowhere, so any node can take
+          # it and the preference costs nothing. With `im` running the
+          # preference does the co-locating. ⚠️ What preferred does NOT give is
+          # a guarantee on a multi-node cluster: the scheduler may place the
+          # archive elsewhere and the pod then waits on the volume instead of
+          # on the scheduler. That failure mode is UNMEASURED -- it needs a
+          # multi-node cluster with `im` running -- and it is listed for the
+          # condition-8 run rather than argued away here.
           affinity:
             podAffinity:
-              requiredDuringSchedulingIgnoredDuringExecution:
-                - labelSelector:
-                    matchLabels:
-                      app.kubernetes.io/name: im
-                  topologyKey: kubernetes.io/hostname
+              preferredDuringSchedulingIgnoredDuringExecution:
+                - weight: 100
+                  podAffinityTerm:
+                    labelSelector:
+                      matchLabels:
+                        app.kubernetes.io/name: im
+                    topologyKey: kubernetes.io/hostname
           containers:
             - name: archive
               # The same pre-baked image offsite-backup uses: it already

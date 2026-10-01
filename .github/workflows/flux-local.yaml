@@ -398,6 +398,18 @@ jobs:
       - name: the state archive covers every declared claim
         run: bash scripts/check-archive-covers-claims.sh
 
+      # #145 condition 5: the session cap is the one part of archive.sh that
+      # can be wrong without anything downstream noticing -- a cap matching
+      # nothing still produces an archive, uploads it and logs a size, and
+      # "skipped 0" is also what "nothing to skip" prints. This guard runs the
+      # shipped block (extracted from the ConfigMap, never re-typed) against a
+      # synthetic tree. The case that must keep failing: a cap that keeps the
+      # OLDEST transcripts, which drops the same NUMBER of files and yields an
+      # archive of the same shape. ⚠️ It assumes the on-disk layout rather
+      # than testing it; that is the live run's job.
+      - name: the session cap keeps the newest and spares memory/
+        run: bash scripts/check-session-cap-trims.sh
+
       # #129: the sample told operators CLUSTER_GATEWAY_ADDR was
       # envoy-external's LoadBalancer IP; envoy.yaml binds it to
       # envoy-INTERNAL, and the one that really is envoy-external's

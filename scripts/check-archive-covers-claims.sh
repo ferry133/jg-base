@@ -29,7 +29,7 @@ set -uo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 HR="$ROOT/kubernetes/apps/base/claudecode/claude-code/im/enabled/helmrelease.yaml"
-AR="$ROOT/kubernetes/apps/base/claudecode/claude-code/app/state-archive.yaml"
+AR="$ROOT/kubernetes/apps/base/claudecode/claude-code/im/enabled/state-archive.yaml"
 for f in "$HR" "$AR"; do [[ -r "$f" ]] || { echo "cannot measure: $f not readable"; exit 2; }; done
 command -v yq >/dev/null 2>&1 || { echo "cannot measure: yq is missing (CI installs it)"; exit 2; }
 

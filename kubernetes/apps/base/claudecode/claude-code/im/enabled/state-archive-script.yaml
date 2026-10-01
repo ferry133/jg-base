@@ -61,6 +61,13 @@ data:
     log() { echo "[$(date -u '+%Y-%m-%dT%H:%M:%SZ')] $*"; }
 
     : "${CLUSTER_NAME:?required}"
+
+    # ⚠️ The ONLY reason this is a variable: it lets a guard run the real
+    # session-cap code against a synthetic tree instead of a hand-copied
+    # paraphrase of it. In the Job it is always /state -- the CronJob sets
+    # nothing. A guard that re-types the loop would keep passing after this
+    # file changed, which is the failure the variable buys out.
+    STATE_ROOT="${ARCHIVE_STATE_ROOT:-/state}"
     if [[ -z "${BACKUP_AGE_RECIPIENT:-}" ]]; then
       log "FATAL: BACKUP_AGE_RECIPIENT is empty; refusing to write an archive nobody can decrypt and refusing to write one unencrypted"
       exit 1
@@ -107,24 +114,30 @@ data:
     # ⚠️ NOT VERIFIED against a live pod: the glob below encodes Claude Code's
     # on-disk layout (`projects/<slug>/<uuid>.jsonl`) from its documented
     # shape, not from a reading of a real claude-config PVC. If that layout
-    # differs, this cap silently matches nothing -- which is why the guard
-    # asserts it trims a synthetic tree, and why the acceptance run should
-    # print what it skipped rather than only its size.
+    # differs, this cap silently matches nothing -- and "matched nothing"
+    # and "there was nothing to trim" print the same line. So the layout is
+    # the one thing the guard CANNOT settle: scripts/check-session-cap-trims.sh
+    # runs this exact block (extracted, not re-typed) against a synthetic
+    # tree built to that assumed layout, which proves the loop keeps the
+    # NEWEST SESSION_KEEP and never touches memory/ -- it proves nothing
+    # about whether a real PVC looks like that. Condition 8's live run is
+    # what settles the layout, and it has to print what it SKIPPED, by name,
+    # rather than only the archive size.
     SESSION_KEEP="${CLAUDECODE_SESSION_KEEP:-20}"
     SKIPPED=0
     SESSION_EXCLUDES=()
-    if [[ -d /state/config/projects ]]; then
+    if [[ -d "$STATE_ROOT/config/projects" ]]; then
       while IFS= read -r proj; do
         [[ -d "$proj" ]] || continue
         n=0
         while IFS= read -r f; do
           n=$((n + 1))
           if [[ $n -gt $SESSION_KEEP ]]; then
-            SESSION_EXCLUDES+=(--exclude="${f#/state/config/}")
+            SESSION_EXCLUDES+=(--exclude="${f#"$STATE_ROOT"/config/}")
             SKIPPED=$((SKIPPED + 1))
           fi
         done < <(ls -1t "$proj"/*.jsonl 2>/dev/null)
-      done < <(find /state/config/projects -mindepth 1 -maxdepth 1 -type d 2>/dev/null)
+      done < <(find "$STATE_ROOT/config/projects" -mindepth 1 -maxdepth 1 -type d 2>/dev/null)
     fi
     log "session cap: keeping ${SESSION_KEEP} newest transcript(s) per project, skipping ${SKIPPED}"
 
@@ -133,9 +146,9 @@ data:
     # See monitoring/backup/app/configmap.yaml, where the old decision and the
     # new one are both recorded.
     for m in $MEMBERS; do
-      src="/state/${m}"
+      src="$STATE_ROOT/${m}"
       if [[ ! -d "$src" ]]; then
-        log "FATAL: /state/${m} is not mounted; a member missing from the archive must not look like a member with nothing in it"
+        log "FATAL: ${src} is not mounted; a member missing from the archive must not look like a member with nothing in it"
         exit 1
       fi
       tar -czf "${STAGE}/${m}.tar.gz" -C "$src" "${EXCLUDES[@]}" "${SESSION_EXCLUDES[@]}" . \
