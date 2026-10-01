@@ -422,6 +422,16 @@ jobs:
       - name: row 21 answers for the system backup family
         run: bash scripts/check-offsite-family-split.sh
 
+      # #145 + #146 (R3): the claudecode archive has no retention logic of its
+      # own — monitoring/backup's prune loop sweeps the whole prefix and
+      # therefore decides it, at BACKUP_RETAIN_DAYS. Nobody chose that; it is
+      # what the two key shapes produce. The case that must keep failing:
+      # either key stops yielding an 8-digit stamp, because the loop then skips
+      # that family forever and unbounded growth of a credential-bearing
+      # archive looks exactly like nothing happening.
+      - name: the retention loop still recognises both archive families
+        run: bash scripts/check-prune-covers-both-families.sh
+
       # #129: the sample told operators CLUSTER_GATEWAY_ADDR was
       # envoy-external's LoadBalancer IP; envoy.yaml binds it to
       # envoy-INTERNAL, and the one that really is envoy-external's

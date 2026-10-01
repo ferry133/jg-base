@@ -485,6 +485,24 @@ data:
       [0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]) ;;
       *) log "WARNING: no usable retention cutoff; keeping every archive"; CUTOFF="" ;;
     esac
+    # ⚠️ THIS LOOP NOW PRUNES TWO ARCHIVE FAMILIES, not just this app's.
+    #
+    # It lists the whole ${CLUSTER_NAME}/ prefix, and since ferry133/jg-base#145
+    # that prefix also holds the claudecode state archive
+    # (`<cluster>-claudecode-<stamp>.tar.gz.age`, written by a different Job in
+    # a different namespace). The stamp extractor below matches that name too,
+    # so BACKUP_RETAIN_DAYS silently governs the lifetime of an archive this app
+    # does not produce -- including the agent keyring inside it. Nobody chose
+    # that; it is what the two key shapes happen to produce, and until
+    # 2026-10-01 no file said it (FO-runbook [5fe39a], acceptance of #146).
+    #
+    # Left as the single pruner on purpose: one loop in a slightly wrong place
+    # beats two loops over one prefix, which drift in the deletion direction.
+    # But it is no longer a statement about this app alone -- renaming or
+    # retiring this Job takes the other family's retention with it.
+    # scripts/check-prune-covers-both-families.sh holds both key shapes against
+    # this extractor; the matching claudecode-side note is in
+    # claudecode/claude-code/im/enabled/state-archive-script.yaml.
     if [[ -n "$CUTOFF" ]]; then
       log "pruning archives older than ${CUTOFF} (${KEEP} days)"
       aws s3 ls --endpoint-url "$BACKUP_R2_ENDPOINT" "s3://${BACKUP_R2_BUCKET}/${CLUSTER_NAME}/" 2>/dev/null \

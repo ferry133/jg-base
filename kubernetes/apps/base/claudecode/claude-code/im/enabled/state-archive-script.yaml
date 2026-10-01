@@ -196,3 +196,31 @@ data:
       exit 1
     fi
     log "==> Done. members=${MEMBERS// /,} skipped_transcripts=${SKIPPED}"
+
+    # ⚠️ RETENTION IS 30 DAYS, AND THIS FILE DOES NOT DECIDE IT.
+    #
+    # There is no prune step here, and that absence used to read as "these
+    # archives are kept forever". They are not: monitoring/backup's own
+    # retention loop lists the WHOLE ${CLUSTER_NAME}/ prefix, pulls an 8-digit
+    # date out of each object name and deletes anything older than
+    # BACKUP_RETAIN_DAYS (default 30). The key written above matches that
+    # extractor, so these objects are swept by another app's Job on another
+    # app's knob. Nobody chose that -- it is what the two key shapes happen to
+    # produce, and until 2026-10-01 no file said it (found by FO-runbook
+    # [5fe39a] during acceptance of #146).
+    #
+    # Two consequences that belong to whoever reads this file:
+    #   - the off-site lifetime of an archive CONTAINING LIVE CREDENTIALS is
+    #     30 days, set by a variable named after database backups. The
+    #     retention window is the exposure window, so changing one changes
+    #     both -- which is a decision for ferry133, not a tidy-up.
+    #   - if `offsite-backup` is removed or disabled on a cluster, nothing
+    #     prunes this family at all. Small, but unbounded.
+    #
+    # ⛔ Do NOT add a second prune loop here to "fix" the coupling. Two
+    # deleters walking one prefix is strictly worse than one in the wrong
+    # place: they drift, and the direction they drift in is deletion.
+    # scripts/check-prune-covers-both-families.sh asserts the key above still
+    # matches that extractor -- if it stops, this family silently stops being
+    # pruned, and unbounded growth of a credential-bearing archive looks
+    # exactly like nothing happening.

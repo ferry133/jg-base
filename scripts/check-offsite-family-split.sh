@@ -58,26 +58,30 @@ PY
 
 NOW=1767225600   # fixed "now": ages are arithmetic, not wall-clock
 
-mkfix() { # mkfix <system age h|-> <claudecode age h|->
-  python3 - "$NOW" "$1" "$2" <<'PY'
+mkfix() { # mkfix <cluster> <system age h|-> <claudecode age h|->
+  python3 - "$NOW" "$1" "$2" "$3" <<'PY'
 import sys, json, datetime
-now, sysage, ccage = int(sys.argv[1]), sys.argv[2], sys.argv[3]
+now, cn, sysage, ccage = int(sys.argv[1]), sys.argv[2], sys.argv[3], sys.argv[4]
 def ts(h):
     t = datetime.datetime.fromtimestamp(now - int(h) * 3600, datetime.timezone.utc)
     return t.strftime("%Y-%m-%dT%H:%M:%S+00:00")
+# Keys built from the cluster name the way the two uploaders build them
+# (monitoring/backup backup.sh, claudecode archive.sh), so a cluster name
+# containing "-claudecode-" produces the colliding shape for real instead of
+# being asserted about.
 c = []
-if sysage != "-": c.append({"Key": "demo/demo-20260930T190000Z.tar.gz.age", "LastModified": ts(sysage)})
-if ccage  != "-": c.append({"Key": "demo/demo-claudecode-20261001T190000Z.tar.gz.age", "LastModified": ts(ccage)})
+if sysage != "-": c.append({"Key": "%s/%s-20260930T190000Z.tar.gz.age" % (cn, cn), "LastModified": ts(sysage)})
+if ccage  != "-": c.append({"Key": "%s/%s-claudecode-20261001T190000Z.tar.gz.age" % (cn, cn), "LastModified": ts(ccage)})
 print(json.dumps({"Contents": c} if c else {"RequestCharged": None}))
 PY
 }
 
 FAILED=0
-run() { # run <block> <label> <sysage> <ccage> <want-level> <must-contain>
-  local blk="$1" label="$2" sysage="$3" ccage="$4" want="$5" needle="$6"
-  local fixture; fixture="$(mkfix "$sysage" "$ccage")"
+run() { # run <block> <label> <cluster> <sysage> <ccage> <want-level> <needle>...
+  local blk="$1" label="$2" cn="$3" sysage="$4" ccage="$5" want="$6"; shift 6
+  local fixture; fixture="$(mkfix "$cn" "$sysage" "$ccage")"
   OUT=""
-  CLUSTER_NAME="demo"; BACKUP_R2_BUCKET="demo-backup"
+  CLUSTER_NAME="$cn"; BACKUP_R2_BUCKET="demo-backup"
   BACKUP_R2_ENDPOINT="https://minio.example.cc"
   BACKUP_R2_ACCESS_KEY_ID="AKIA"; BACKUP_R2_SECRET_ACCESS_KEY="s3cr3t"
   record() { OUT="[$1] $2${3:+ — $3}"; }
@@ -90,61 +94,98 @@ run() { # run <block> <label> <sysage> <ccage> <want-level> <must-contain>
   source "$blk"
   unset -f aws date epoch_of record 2>/dev/null || true
 
-  local got="${OUT:-<no row>}" lvl
+  local got="${OUT:-<no row>}" lvl bad=""
   lvl="${got%%]*}"; lvl="${lvl#[}"
   LAST_LEVEL="$lvl"
-  if [[ "$lvl" == "$want" ]] && [[ "$got" == *"$needle"* ]]; then
-    printf 'PASS  %-20s sys=%-4s cc=%-4s -> %s\n' "$label" "$sysage" "$ccage" "${got:0:76}"
+  [[ "$lvl" == "$want" ]] || bad="level [$lvl] != [$want]"
+  # Every needle, and they are deliberately WHOLE phrases including numbers.
+  # The first version asserted only "claudecode:", which "claudecode: none"
+  # also satisfies -- so a mutation making the claudecode age always read empty
+  # (object present, report says `none`) PASSED. That is exactly the "we
+  # stopped looking at it" green this guard's header claims to catch: the
+  # header was ahead of the assertions, and FO-runbook [5fe39a]'s M6/M7/M8 all
+  # returned rc=0 against the first version. A pass message that claims more
+  # than it verified is worse than no message.
+  local n
+  for n in "$@"; do
+    [[ "$got" == *"$n"* ]] || bad="${bad}${bad:+; }missing '"'"'${n}'"'"'"
+  done
+  if [[ -z "$bad" ]]; then
+    printf 'PASS  %-18s %-14s sys=%-4s cc=%-4s -> %s\n' "$label" "$cn" "$sysage" "$ccage" "${got:0:54}"
   else
-    printf 'FAIL  %-20s sys=%-4s cc=%-4s -> %s\n        wanted level [%s] containing %q\n' \
-      "$label" "$sysage" "$ccage" "$got" "$want" "$needle"
+    printf 'FAIL  %-18s %-14s sys=%-4s cc=%-4s -> %s\n        %s\n' \
+      "$label" "$cn" "$sysage" "$ccage" "$got" "$bad"
     FAILED=$((FAILED + 1))
   fi
 }
 
 B="$WORK/block.sh"
+CC1="claudecode: 1h ago, 1 objects"   # the whole phrase, numbers included
 # The case the defect lived in: the system archive is three days dead and the
 # claudecode one is an hour old. The row must speak about the system archive.
-run "$B" db-dead-cc-alive   72  1  fail "claudecode:"
+run "$B" db-dead-cc-alive  demo  72  1  fail "newest system archive is 72h old" "$CC1"
 # Positive control for the line above: the SAME system age with nothing to mask
 # it. Same verdict, so the fail above is about the system archive's age and not
 # about the extra object being there.
-run "$B" db-dead-alone      72  -  fail "claudecode: none"
-# Neither family stale.
-run "$B" both-fresh          2  1  ok   "claudecode:"
+run "$B" db-dead-alone     demo  72  -  fail "claudecode: none"
+# Neither family stale. The COUNT is asserted too: folding both families into
+# "system objects" leaves the verdict unchanged and is therefore invisible.
+run "$B" both-fresh        demo   2  1  ok   "1 system objects" "$CC1"
 # System family absent entirely. "The prefix is not empty" is true and useless.
-run "$B" cc-only             -  1  fail "no system archive"
-# Nothing from claudecode yet (every cluster, until this ships).
-run "$B" sys-only            2  -  ok   "claudecode: none"
+run "$B" cc-only           demo   -  1  fail "no system archive; $CC1"
+# Nothing from claudecode yet -- every cluster, until this ships.
+run "$B" sys-only          demo   2  -  ok   "1 system objects" "claudecode: none"
 # The thresholds still belong to the system family.
-run "$B" db-late-cc-fresh   30  1  warn "claudecode:"
+run "$B" db-late-cc-fresh  demo  30  1  warn "newest system archive is 30h old" "$CC1"
+# ⚠️ A cluster whose own NAME contains the discriminator. Under a bare
+# contains("-claudecode-") the SYSTEM key `jg-claudecode/jg-claudecode-<stamp>`
+# matched the claudecode family, leaving zero system objects and a false
+# `no system archive` (measured by FO-runbook [5fe39a]). Fail-closed, and still
+# a trap for whoever names the next cluster.
+run "$B" name-collides     jg-claudecode  2  1  ok "1 system objects" "$CC1"
 
 echo
 # --- control: can this guard see the defect it was written for? -------------
 # Rebuild the pre-fix selector FROM THE LIVE BLOCK rather than asserting the
 # current text looks right. A guard that only reads the fixed code cannot tell
 # a fix from a coincidence.
+#
+# ⚠️ A control that cannot run must NOT outrank a case that actually failed.
+# First version called `exit 2` here directly, and a mutation that flipped the
+# selector's polarity produced both a real FAIL and an unrunnable control --
+# the exit 2 won and the regression was reported as "cannot measure". Three
+# reds (missing tool, broken control, failed assertion) are not one colour,
+# and the assertion is the one worth keeping.
+CTL_NOTE=""
+unmeasurable() { CTL_NOTE="${CTL_NOTE}${CTL_NOTE:+
+}cannot measure: $1"; }
+
 sed 's/select(${CC_SEL} | not) | \.LastModified/.LastModified/' "$B" > "$WORK/blind.sh"
 if cmp -s "$B" "$WORK/blind.sh"; then
-  echo "cannot measure: the family-blind control changed nothing — the selector is not written the way this control expects, so every PASS above is unverified"
-  exit 2
+  unmeasurable "the family-blind control changed nothing — the selector is not written the way this control expects, so the passes above are unverified"
+else
+  # The control is EXPECTED to come back wrong, so its verdict must not be
+  # counted as a failure of the shipped code. First version did count it, and
+  # the guard reported "1 case wrong" on a correct tree — a guard that flags
+  # correct input is the kind that gets switched off.
+  _keep=$FAILED
+  run "$WORK/blind.sh" CONTROL-blind demo 72  1  fail "newest system archive is 72h old" >/dev/null 2>&1
+  FAILED=$_keep
+  if [[ "$LAST_LEVEL" == "fail" ]]; then
+    unmeasurable "with the family selector removed, the dead-system case STILL reads fail — this guard is not reading the selector, and its passes mean nothing"
+  else
+    echo "control: removing the family selector flips db-dead-cc-alive from [fail] to [${LAST_LEVEL}] — the defect is reconstructible from the shipped block"
+  fi
 fi
-# The control is EXPECTED to come back wrong, so its verdict must not be
-# counted as a failure of the shipped code. First version did count it, and
-# the guard reported "1 case wrong" on a correct tree — a guard that flags
-# correct input is the kind that gets switched off.
-_keep=$FAILED
-run "$WORK/blind.sh" CONTROL-blind    72  1  fail "claudecode:" >/dev/null 2>&1
-FAILED=$_keep
-if [[ "$LAST_LEVEL" == "fail" ]]; then
-  echo "cannot measure: with the family selector removed, the dead-system case STILL reads fail — this guard is not reading the selector, and its passes mean nothing"
-  exit 2
-fi
-echo "control: removing the family selector flips db-dead-cc-alive from [fail] to [${LAST_LEVEL}] — the defect is reconstructible from the shipped block"
 
 if [[ $FAILED -ne 0 ]]; then
+  [[ -n "$CTL_NOTE" ]] && echo "note: a control could not run either — ${CTL_NOTE#cannot measure: }"
   echo "FAIL — ${FAILED} case(s) wrong"
   exit 1
 fi
-echo "PASS — row 21 verdicts follow the system family, and all six outcomes still name the claudecode family"
+if [[ -n "$CTL_NOTE" ]]; then
+  echo "$CTL_NOTE"
+  exit 2
+fi
+echo "PASS — row 21 verdicts follow the system family; all seven outcomes name the claudecode family WITH its age and count, the system object count excludes it, and a cluster named *-claudecode-* is still classified correctly"
 exit 0

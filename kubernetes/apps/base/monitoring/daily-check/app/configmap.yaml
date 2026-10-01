@@ -1194,21 +1194,33 @@ data:
           # is the fuller answer and is not in this PR; this change is only
           # the half that had to land no later than the first upload.
           #
-          # `contains`, not a suffix/regex match: the key is
-          # `<cluster>/<cluster>-claudecode-<stamp>.tar.gz.age` while the
-          # system one is `<cluster>/<cluster>-<stamp>.tar.gz.age`, and a
-          # cluster literally named `claudecode` would still not produce
-          # `-claudecode-` in the stamp position.
-          CC_SEL='(.Key // "") | contains("-claudecode-")'
-          DEST_LATEST=$(echo "$DEST_JSON" | jq -r "[(.Contents // [])[] | select(${CC_SEL} | not) | .LastModified] | sort | last // \"\"")
-          DEST_CC_LATEST=$(echo "$DEST_JSON" | jq -r "[(.Contents // [])[] | select(${CC_SEL}) | .LastModified] | sort | last // \"\"")
-          DEST_CC_COUNT=$(echo "$DEST_JSON" | jq -r "[(.Contents // [])[] | select(${CC_SEL})] | length")
+          # ANCHORED on CLUSTER_NAME, not a bare `contains("-claudecode-")`.
+          # The first version carried a comment claiming a cluster literally
+          # named `claudecode` would still be classified correctly. True for
+          # the bare name -- and wrong for `jg-claudecode` or `x-claudecode-y`,
+          # where the SYSTEM key `<c>/<c>-<stamp>.tar.gz.age` contains
+          # `-claudecode-` all by itself. FO-runbook [5fe39a] measured it on a
+          # fixture: system 0, claudecode 2, and the row reporting
+          # `no system archive` on a cluster whose backup was fine.
+          #
+          # That direction is fail-closed (a false alarm, not a mask) and no
+          # current cluster name contains the string -- so it was a defect in
+          # the COMMENT first. Anchoring fixes the code instead of narrowing
+          # the claim, because a documented limitation is still a trap for
+          # whoever names the next cluster.
+          #
+          # `--arg`, not interpolation: the cluster name reaches jq as data, so
+          # a name with jq-significant characters cannot rewrite the filter.
+          CC_SEL='(.Key // "") | startswith($cn + "/" + $cn + "-claudecode-")'
+          DEST_LATEST=$(echo "$DEST_JSON" | jq -r --arg cn "$CLUSTER_NAME" "[(.Contents // [])[] | select(${CC_SEL} | not) | .LastModified] | sort | last // \"\"")
+          DEST_CC_LATEST=$(echo "$DEST_JSON" | jq -r --arg cn "$CLUSTER_NAME" "[(.Contents // [])[] | select(${CC_SEL}) | .LastModified] | sort | last // \"\"")
+          DEST_CC_COUNT=$(echo "$DEST_JSON" | jq -r --arg cn "$CLUSTER_NAME" "[(.Contents // [])[] | select(${CC_SEL})] | length")
           # `+00:00` to `Z` for epoch_of's busybox fallback. GNU date takes
           # either and coreutils is installed above, so this costs nothing
           # today; it stops the sibling image's spelling being a live trap if
           # this block is ever lifted into it.
           DEST_LATEST="${DEST_LATEST/+00:00/Z}"
-          DEST_COUNT=$(echo "$DEST_JSON" | jq -r "[(.Contents // [])[] | select(${CC_SEL} | not)] | length")
+          DEST_COUNT=$(echo "$DEST_JSON" | jq -r --arg cn "$CLUSTER_NAME" "[(.Contents // [])[] | select(${CC_SEL} | not)] | length")
           # Said in the same breath as the system verdict, so neither family
           # can go quiet without a reader noticing.
           if [[ -n "$DEST_CC_LATEST" ]]; then
