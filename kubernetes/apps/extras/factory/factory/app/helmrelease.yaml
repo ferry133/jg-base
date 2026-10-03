@@ -294,6 +294,13 @@ spec:
           factory:
             app:
               - path: /home/claude/.claude
+              # ⚠️ The same sentence in the base `im` release is contradicted
+              # by measurement ON THAT CLAIM (no `keyrings/` in a real archive;
+              # tokens in `.credentials.json` — ferry133/jg-base#145, 2026-10-03).
+              # Nobody has measured THIS release's claim, so the reading is not
+              # generalised here and the mount stays. Said so rather than left
+              # silent: two copies of one sentence, one of them known shaky, is
+              # how the shaky one gets trusted.
               # gnome-keyring's store — Claude's OAuth tokens land here via
               # secret-service; unmounted, they die with the pod.
               - path: /home/claude/.local/share/keyrings

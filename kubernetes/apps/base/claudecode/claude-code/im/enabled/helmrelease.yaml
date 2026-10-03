@@ -114,7 +114,7 @@ spec:
             env:
               # The pod runs as uid 0 (see defaultPodOptions), which would
               # resolve HOME=/root -- but all state (claude config PVC,
-              # keyring, workspace) lives under /home/claude.
+              # credential store, workspace) lives under /home/claude.
               HOME: /home/claude
               # Without this, onboarding/account state goes to ~/.claude.json
               # in the ephemeral overlay and login is lost on every pod
@@ -418,7 +418,9 @@ spec:
                 memory: 128Mi
     persistence:
       # One PVC, two mounts, and they stay together: an OAuth token and the
-      # keyring holding it have no reason to live on different volumes.
+      # credential store holding it have no reason to live on different
+      # volumes. (Said as "the keyring" until 2026-10-03; measured to be
+      # `.credentials.json` at the claim root — ferry133/jg-base#145.)
       # `retain: true` on both claims (helm.sh/resource-policy: keep, added by
       # the chart) so neither an opt-out prune nor a helm uninstall deletes
       # login state or a workspace -- and so the enable path can adopt the
@@ -432,8 +434,24 @@ spec:
         size: 5Gi
         globalMounts:
           - path: /home/claude/.claude
-          # gnome-keyring's store -- claude's OAuth tokens land here via
+          # ⚠️ This mount's stated reason is CONTRADICTED by measurement and
+          # is kept, not deleted, because the mount itself is still here and
+          # someone will ask why.
+          #
+          # SAYS: gnome-keyring's store -- claude's OAuth tokens land here via
           # secret-service; without this mount they die with the pod.
+          #
+          # MEASURED 2026-10-03 (FO-runbook [5fe39a], a real archive of this
+          # claim from jg-jcc2: 551 files): there is **no `keyrings/`** in it,
+          # and the tokens are in `.credentials.json` at the claim root. So
+          # either nothing writes to the keyring on this image, or the content
+          # is not reaching an archive that tars the claim root with no
+          # matching exclusion. Unresolved -- see the long note in
+          # state-archive-script.yaml (same directory), ferry133/jg-base#145.
+          # ⛔ Do not remove this mount on the strength of that reading: a
+          # one-archive measurement is not "the keyring is never used", and
+          # dropping a mount that something does write to loses the login on
+          # every pod restart.
           - path: /home/claude/.local/share/keyrings
             subPath: keyrings
       claude-workspace:

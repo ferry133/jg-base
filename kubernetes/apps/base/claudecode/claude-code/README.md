@@ -43,7 +43,10 @@ the old pin. That failure mode is at least the visible-in-git kind, which
 
 ## PVC adoption / survival
 
-Both claims (`im-claude-config`: `~/.claude` + keyring = OAuth login;
+Both claims (`im-claude-config`: `~/.claude` + the OAuth credential —
+measured 2026-10-03 to be `.credentials.json` at the claim root, NOT a
+`keyrings/` directory, despite the `subPath: keyrings` mount; see
+ferry133/jg-base#145;
 `im-claude-workspace`) render with `retain: true` →
 `helm.sh/resource-policy: keep`. Helm uninstall (opt-out prune, migration)
 leaves them in place, and a later release named `im` adopts them — same
