@@ -90,6 +90,17 @@ run() { # run <block> <label> <cluster> <sysage> <ccage> <want-level> <needle>..
   # families, and then every case here would pass whatever the selector did.
   epoch_of() { python3 -c "import sys,datetime;print(int(datetime.datetime.strptime(sys.argv[1],'%Y-%m-%dT%H:%M:%S%z').timestamp()))" "${1/Z/+00:00}" 2>/dev/null; }
   aws() { printf '%s\n' "$fixture"; }
+  # ⚠️ Per-case reset, and its absence was a real hole (FO-runbook [5fe39a] on
+  # #151). `run` unset the stub FUNCTIONS but not these VARIABLES, so
+  # DEST_CC_AGE_H survived from the previous case -- and the shipped script
+  # assigns it in exactly one place (configmap.yaml:1230), inside the
+  # `[[ -n "$DEST_CC_LATEST" ]]` branch. With no claudecode objects the Job
+  # therefore sees it UNSET, while this harness saw the previous case's value.
+  # So the `cc-none-stays-ok` case never walked the path the Job walks, and a
+  # mutation that alerts on `none` BY TESTING THAT UNSET VARIABLE passed.
+  # A harness that carries state between cases is testing a tree nobody runs.
+  unset DEST_CC_AGE_H DEST_CC_EPOCH DEST_CC_LATEST DEST_CC_COUNT DEST_CC_NOTE \
+        DEST_LEVEL DEST_LATE DEST_AGE_H DEST_EPOCH DEST_LATEST DEST_COUNT DEST_JSON
   # shellcheck disable=SC1091
   source "$blk"
   unset -f aws date epoch_of record 2>/dev/null || true
@@ -144,6 +155,27 @@ run "$B" db-late-cc-fresh  demo  30  1  warn "newest system archive is 30h old" 
 # a trap for whoever names the next cluster.
 run "$B" name-collides     jg-claudecode  2  1  ok "1 system objects" "$CC1"
 
+# --- the claudecode family gets a VERDICT, not just a sentence -------------
+# Until 2026-10-03 its age was printed and never compared, so a claudecode
+# archive that had stopped uploading left this row at [ok] with the number
+# sitting in the prose. These four cases are the difference between reporting a
+# family and alerting on it.
+run "$B" cc-dead-sys-fresh demo   2 72  fail "claudecode 72h" "claudecode: 72h ago"
+run "$B" cc-late-sys-fresh demo   2 30  warn "claudecode 30h"
+run "$B" both-stale        demo  72 72  fail "system 72h, claudecode 72h"
+# ⚠️ The MIXED case, and it was missing until a mutation found the hole: a
+# system family past 48h with a claudecode family only past 26h must stay
+# [fail]. `both-stale` does not cover it — there the claudecode age trips the
+# fail branch directly and never passes through the warn branch, so replacing
+# `[[ $DEST_LEVEL == fail ]] || DEST_LEVEL=warn` with a bare `DEST_LEVEL=warn`
+# downgraded a real failure to a warning and every case here still passed.
+# A case list only covers the combinations somebody thought to write down.
+run "$B" sys-fail-cc-late  demo  72 30  fail "system 72h, claudecode 30h"
+# ⚠️ And the case that must NOT fire: no claudecode objects at all is the
+# permanent, correct state of every `im/disabled` cluster. A row that cries wolf
+# there gets switched off, which costs more than this check is worth.
+run "$B" cc-none-stays-ok  demo   2  -  ok   "claudecode: none"
+
 echo
 # --- control: can this guard see the defect it was written for? -------------
 # Rebuild the pre-fix selector FROM THE LIVE BLOCK rather than asserting the
@@ -178,6 +210,38 @@ else
   fi
 fi
 
+# Second control, for the claudecode THRESHOLD rather than the selector:
+# reconstruct the pre-2026-10-03 behaviour from the live block by deleting that
+# threshold, and `cc-dead-sys-fresh` must fall back to [ok]. Without it, an edit
+# that drops the threshold while keeping the message passes every case above —
+# which is exactly what shipped on 2026-10-01.
+# ⚠️ Neutralise the condition rather than delete a line RANGE. The first
+# version used `sed '/DEST_CC_AGE_H:-/,/^ *fi$/d'`, which took the inner `fi`
+# and left the outer one: the mutated block failed `bash -n` (11 `fi` -> 10),
+# bash refused to source it, every case came back unchanged, and the control
+# printed "reconstructible" anyway. A control that cannot run its own mutation
+# reads exactly like a control that ran and agreed (FO-runbook [5fe39a], #151).
+sed 's/if \[\[ -n "${DEST_CC_AGE_H:-}" \]\] && (( DEST_CC_COUNT > 0 )); then/if false; then/' "$B" > "$WORK/nothresh.sh"
+if cmp -s "$B" "$WORK/nothresh.sh"; then
+  # Most often this means the condition was EDITED -- including by whatever
+  # mutation is being tested right now, since a control that mutates the thing
+  # under test collides with mutations of that same thing. That collision is
+  # acceptable (a real FAIL still outranks this note) but it must not read as a
+  # pass, so it is reported with its likely cause rather than as a bare miss.
+  unmeasurable "the claudecode-threshold control matched nothing — the condition it mutates was rewritten (possibly by the change under test), so the four verdict cases are unverified on this tree"
+elif ! bash -n "$WORK/nothresh.sh" 2>/dev/null; then
+  unmeasurable "the claudecode-threshold control produced a block that does not parse, so it was never executed — and an unexecuted mutation returns the same readings as one that was caught"
+else
+  _k=$FAILED
+  run "$WORK/nothresh.sh" CONTROL-nothresh demo 2 72 fail "claudecode 72h" >/dev/null 2>&1
+  FAILED=$_k
+  if [[ "$LAST_LEVEL" == "fail" ]]; then
+    unmeasurable "with the claudecode threshold deleted, a 72h-old claudecode archive STILL read fail — the verdict cases are not reading that threshold"
+  else
+    echo "control: deleting the claudecode threshold drops cc-dead-sys-fresh from [fail] to [${LAST_LEVEL}] — the pre-2026-10-03 behaviour is reconstructible"
+  fi
+fi
+
 if [[ $FAILED -ne 0 ]]; then
   [[ -n "$CTL_NOTE" ]] && echo "note: a control could not run either — ${CTL_NOTE#cannot measure: }"
   echo "FAIL — ${FAILED} case(s) wrong"
@@ -187,5 +251,5 @@ if [[ -n "$CTL_NOTE" ]]; then
   echo "$CTL_NOTE"
   exit 2
 fi
-echo "PASS — row 21 verdicts follow the system family; all seven outcomes name the claudecode family WITH its age and count, the system object count excludes it, and a cluster named *-claudecode-* is still classified correctly"
+echo "PASS — row 21 gives BOTH families a verdict (worst wins) and names both in every outcome; the system object count excludes claudecode; an absent claudecode family stays [ok]; and a cluster named *-claudecode-* is still classified correctly"
 exit 0
