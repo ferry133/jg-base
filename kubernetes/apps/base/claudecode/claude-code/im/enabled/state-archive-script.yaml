@@ -170,10 +170,33 @@ data:
     # ⚠️ IT IS NOT "the keyring", and this line said that until 2026-10-03.
     # Measured by FO-runbook [5fe39a] on a real archive
     # (jg-jcc2-claudecode-20261002T190001Z, 551 files in config.tar.gz): there
-    # is **no `keyrings/`** in it. The token store is `config/.credentials.json`,
-    # alongside `sessions/*.key` and five `.claude.json.backup.*`. Same risk,
-    # different file -- and a record with the wrong name sends the next person
-    # looking in the wrong place.
+    # is **no `keyrings/`** in it (798 entries, 247 of them directory entries,
+    # and `./backups/`, `./cache/`, `./plugins/`, `./sessions/` all listed --
+    # so the absence is a reading, not a filter).
+    #
+    # The credential FILE present is `config/.credentials.json`, alongside
+    # `sessions/*.key` and five `.claude.json.backup.*`.
+    #
+    # ⚠️ That it HOLDS the OAuth login is not a reading of its CONTENTS --
+    # nobody has opened it. This comment said "the token store is" until that
+    # distinction was pointed out. What there is, in three parts and from two
+    # independent places:
+    #
+    #   - on THIS claim, 2026-10-03: the file exists at the claim root, and the
+    #     decrypted plaintext carries `oauth` x27 / `credentials` x112.
+    #   - on the FACTORY claim, 2026-08-23, on a running pod and six weeks
+    #     before any of the above: `~/.claude/.credentials.json` is
+    #     `root:root 0600` and was identified as Claude Code's own credentials
+    #     (extras/factory/factory/README.md and that app's helmrelease.yaml).
+    #     A security change was made on that premise -- globalMounts ->
+    #     advancedMounts, to stop oauth2-proxy from holding the agent's
+    #     identity -- so it is a premise this repo has already acted on.
+    #   - different release, same image, so it corroborates rather than proves.
+    #
+    # ⚠️ And that older reading was in this repo the whole time. Neither I nor
+    # the peer who measured the archive searched for it before calling the
+    # finding new; it turned up from a `credentials.json` grep run for an
+    # unrelated reason. Search by the MECHANISM, not by your own wording.
     #
     # ⚠️ Why `keyrings/` is absent is NOT settled, and it has a benign and a
     # malign reading. Benign: nothing writes there, because the tokens go to

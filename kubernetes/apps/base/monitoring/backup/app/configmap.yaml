@@ -206,7 +206,8 @@ data:
     # an archive that travels off-site.
     #
     # NOW: **ferry133 ruled on 2026-09-11 that credentials are included.** That
-    # does not change this function, which still cannot reach them and still
+    # does not change this function, which still cannot reach them (said as
+    # "cannot reach the keyring" until 2026-10-03) and still
     # should not try: exec into a running pod is the wrong instrument for it.
     # The inclusion happens in the claudecode state archive, which mounts the
     # whole claude-config PVC and therefore reaches the whole claim by the same
@@ -226,10 +227,17 @@ data:
     # credentials leaving the site and bought nothing.
     #
     # MEASURED instead (FO-runbook [5fe39a], on a real archive: 551 files, no
-    # `keyrings/` in it): the token store is `config/.credentials.json`. A
-    # portable JSON credential file is MORE likely to restore on another
-    # platform than a gnome-keyring store, so the cost argued above is weaker
-    # than it was written -- the direction favours the ruling.
+    # `keyrings/` in it): the credential file present is
+    # `config/.credentials.json`. That it holds the OAuth login is NOT a
+    # reading of its contents -- it rests on the filename, on `oauth` x27 /
+    # `credentials` x112 in the plaintext, and on an independent 2026-08-23
+    # running-pod measurement of the same file on the factory claim (same
+    # image, different release) that this repo already acted on by narrowing
+    # that mount away from oauth2-proxy. A portable JSON credential file is
+    # MORE likely to
+    # restore on another platform than a gnome-keyring store, so the cost
+    # argued above is weaker than it was written -- the direction favours the
+    # ruling, on an inference rather than on a reading of the file.
     #
     # ⚠️ It does not make the cost zero and the conclusion is NOT reversed
     # here: nobody has run the restore drill. Only the premise is corrected.

@@ -295,8 +295,10 @@ spec:
             app:
               - path: /home/claude/.claude
               # ⚠️ The same sentence in the base `im` release is contradicted
-              # by measurement ON THAT CLAIM (no `keyrings/` in a real archive;
-              # tokens in `.credentials.json` — ferry133/jg-base#145, 2026-10-03).
+              # by measurement ON THAT CLAIM (no `keyrings/` in a real archive,
+              # a `.credentials.json` at the claim root instead — and the
+              # subPath mount itself not taking effect on 2 of 3 clusters,
+              # ferry133/jg-base#150; 2026-10-03).
               # Nobody has measured THIS release's claim, so the reading is not
               # generalised here and the mount stays. Said so rather than left
               # silent: two copies of one sentence, one of them known shaky, is
