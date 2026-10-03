@@ -90,6 +90,17 @@ run() { # run <block> <label> <cluster> <sysage> <ccage> <want-level> <needle>..
   # families, and then every case here would pass whatever the selector did.
   epoch_of() { python3 -c "import sys,datetime;print(int(datetime.datetime.strptime(sys.argv[1],'%Y-%m-%dT%H:%M:%S%z').timestamp()))" "${1/Z/+00:00}" 2>/dev/null; }
   aws() { printf '%s\n' "$fixture"; }
+  # ⚠️ Per-case reset, and its absence was a real hole (FO-runbook [5fe39a] on
+  # #151). `run` unset the stub FUNCTIONS but not these VARIABLES, so
+  # DEST_CC_AGE_H survived from the previous case -- and the shipped script
+  # assigns it in exactly one place (configmap.yaml:1230), inside the
+  # `[[ -n "$DEST_CC_LATEST" ]]` branch. With no claudecode objects the Job
+  # therefore sees it UNSET, while this harness saw the previous case's value.
+  # So the `cc-none-stays-ok` case never walked the path the Job walks, and a
+  # mutation that alerts on `none` BY TESTING THAT UNSET VARIABLE passed.
+  # A harness that carries state between cases is testing a tree nobody runs.
+  unset DEST_CC_AGE_H DEST_CC_EPOCH DEST_CC_LATEST DEST_CC_COUNT DEST_CC_NOTE \
+        DEST_LEVEL DEST_LATE DEST_AGE_H DEST_EPOCH DEST_LATEST DEST_COUNT DEST_JSON
   # shellcheck disable=SC1091
   source "$blk"
   unset -f aws date epoch_of record 2>/dev/null || true
@@ -204,9 +215,22 @@ fi
 # threshold, and `cc-dead-sys-fresh` must fall back to [ok]. Without it, an edit
 # that drops the threshold while keeping the message passes every case above —
 # which is exactly what shipped on 2026-10-01.
-sed '/DEST_CC_AGE_H:-/,/^ *fi$/d' "$B" > "$WORK/nothresh.sh"
+# ⚠️ Neutralise the condition rather than delete a line RANGE. The first
+# version used `sed '/DEST_CC_AGE_H:-/,/^ *fi$/d'`, which took the inner `fi`
+# and left the outer one: the mutated block failed `bash -n` (11 `fi` -> 10),
+# bash refused to source it, every case came back unchanged, and the control
+# printed "reconstructible" anyway. A control that cannot run its own mutation
+# reads exactly like a control that ran and agreed (FO-runbook [5fe39a], #151).
+sed 's/if \[\[ -n "${DEST_CC_AGE_H:-}" \]\] && (( DEST_CC_COUNT > 0 )); then/if false; then/' "$B" > "$WORK/nothresh.sh"
 if cmp -s "$B" "$WORK/nothresh.sh"; then
-  unmeasurable "the claudecode-threshold control changed nothing, so the four verdict cases are unverified"
+  # Most often this means the condition was EDITED -- including by whatever
+  # mutation is being tested right now, since a control that mutates the thing
+  # under test collides with mutations of that same thing. That collision is
+  # acceptable (a real FAIL still outranks this note) but it must not read as a
+  # pass, so it is reported with its likely cause rather than as a bare miss.
+  unmeasurable "the claudecode-threshold control matched nothing — the condition it mutates was rewritten (possibly by the change under test), so the four verdict cases are unverified on this tree"
+elif ! bash -n "$WORK/nothresh.sh" 2>/dev/null; then
+  unmeasurable "the claudecode-threshold control produced a block that does not parse, so it was never executed — and an unexecuted mutation returns the same readings as one that was caught"
 else
   _k=$FAILED
   run "$WORK/nothresh.sh" CONTROL-nothresh demo 2 72 fail "claudecode 72h" >/dev/null 2>&1
