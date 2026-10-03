@@ -144,6 +144,27 @@ run "$B" db-late-cc-fresh  demo  30  1  warn "newest system archive is 30h old" 
 # a trap for whoever names the next cluster.
 run "$B" name-collides     jg-claudecode  2  1  ok "1 system objects" "$CC1"
 
+# --- the claudecode family gets a VERDICT, not just a sentence -------------
+# Until 2026-10-03 its age was printed and never compared, so a claudecode
+# archive that had stopped uploading left this row at [ok] with the number
+# sitting in the prose. These four cases are the difference between reporting a
+# family and alerting on it.
+run "$B" cc-dead-sys-fresh demo   2 72  fail "claudecode 72h" "claudecode: 72h ago"
+run "$B" cc-late-sys-fresh demo   2 30  warn "claudecode 30h"
+run "$B" both-stale        demo  72 72  fail "system 72h, claudecode 72h"
+# ⚠️ The MIXED case, and it was missing until a mutation found the hole: a
+# system family past 48h with a claudecode family only past 26h must stay
+# [fail]. `both-stale` does not cover it — there the claudecode age trips the
+# fail branch directly and never passes through the warn branch, so replacing
+# `[[ $DEST_LEVEL == fail ]] || DEST_LEVEL=warn` with a bare `DEST_LEVEL=warn`
+# downgraded a real failure to a warning and every case here still passed.
+# A case list only covers the combinations somebody thought to write down.
+run "$B" sys-fail-cc-late  demo  72 30  fail "system 72h, claudecode 30h"
+# ⚠️ And the case that must NOT fire: no claudecode objects at all is the
+# permanent, correct state of every `im/disabled` cluster. A row that cries wolf
+# there gets switched off, which costs more than this check is worth.
+run "$B" cc-none-stays-ok  demo   2  -  ok   "claudecode: none"
+
 echo
 # --- control: can this guard see the defect it was written for? -------------
 # Rebuild the pre-fix selector FROM THE LIVE BLOCK rather than asserting the
@@ -178,6 +199,25 @@ else
   fi
 fi
 
+# Second control, for the claudecode THRESHOLD rather than the selector:
+# reconstruct the pre-2026-10-03 behaviour from the live block by deleting that
+# threshold, and `cc-dead-sys-fresh` must fall back to [ok]. Without it, an edit
+# that drops the threshold while keeping the message passes every case above —
+# which is exactly what shipped on 2026-10-01.
+sed '/DEST_CC_AGE_H:-/,/^ *fi$/d' "$B" > "$WORK/nothresh.sh"
+if cmp -s "$B" "$WORK/nothresh.sh"; then
+  unmeasurable "the claudecode-threshold control changed nothing, so the four verdict cases are unverified"
+else
+  _k=$FAILED
+  run "$WORK/nothresh.sh" CONTROL-nothresh demo 2 72 fail "claudecode 72h" >/dev/null 2>&1
+  FAILED=$_k
+  if [[ "$LAST_LEVEL" == "fail" ]]; then
+    unmeasurable "with the claudecode threshold deleted, a 72h-old claudecode archive STILL read fail — the verdict cases are not reading that threshold"
+  else
+    echo "control: deleting the claudecode threshold drops cc-dead-sys-fresh from [fail] to [${LAST_LEVEL}] — the pre-2026-10-03 behaviour is reconstructible"
+  fi
+fi
+
 if [[ $FAILED -ne 0 ]]; then
   [[ -n "$CTL_NOTE" ]] && echo "note: a control could not run either — ${CTL_NOTE#cannot measure: }"
   echo "FAIL — ${FAILED} case(s) wrong"
@@ -187,5 +227,5 @@ if [[ -n "$CTL_NOTE" ]]; then
   echo "$CTL_NOTE"
   exit 2
 fi
-echo "PASS — row 21 verdicts follow the system family; all seven outcomes name the claudecode family WITH its age and count, the system object count excludes it, and a cluster named *-claudecode-* is still classified correctly"
+echo "PASS — row 21 gives BOTH families a verdict (worst wins) and names both in every outcome; the system object count excludes claudecode; an absent claudecode family stays [ok]; and a cluster named *-claudecode-* is still classified correctly"
 exit 0
