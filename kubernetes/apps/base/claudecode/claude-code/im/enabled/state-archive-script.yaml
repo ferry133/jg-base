@@ -74,7 +74,9 @@ data:
     #     cannot name them. That half is jg-cluster-template's.
     # So what this file covers is the enabled-`im` case -- which `kubectl
     # exec` could already reach. The value it adds there is not reach, it is
-    # removing the running pod from the path and taking the keyring with it.
+    # removing the running pod from the path and taking the OAuth credential
+    # with it. ⚠️ "the keyring" is what this line said until 2026-10-03 and it
+    # was the wrong name -- see the members section below.
     set -uo pipefail
 
     log() { echo "[$(date -u '+%Y-%m-%dT%H:%M:%SZ')] $*"; }
@@ -161,9 +163,53 @@ data:
     log "session cap: keeping ${SESSION_KEEP} newest transcript(s) per project, skipping ${SKIPPED}"
 
     # --- the members --------------------------------------------------------
-    # ⚠️ The keyring IS included, and that reverses what this fleet shipped.
-    # See monitoring/backup/app/configmap.yaml, where the old decision and the
-    # new one are both recorded.
+    # ⚠️ The live OAuth CREDENTIAL is included, and that reverses what this
+    # fleet shipped. See monitoring/backup/app/configmap.yaml, where the old
+    # decision and the new one are both recorded.
+    #
+    # ⚠️ IT IS NOT "the keyring", and this line said that until 2026-10-03.
+    # Measured by FO-runbook [5fe39a] on a real archive
+    # (jg-jcc2-claudecode-20261002T190001Z, 551 files in config.tar.gz): there
+    # is **no `keyrings/`** in it (798 entries, 247 of them directory entries,
+    # and `./backups/`, `./cache/`, `./plugins/`, `./sessions/` all listed --
+    # so the absence is a reading, not a filter).
+    #
+    # The credential FILE present is `config/.credentials.json`, alongside
+    # `sessions/*.key` and five `.claude.json.backup.*`.
+    #
+    # ⚠️ That it HOLDS the OAuth login is not a reading of its CONTENTS --
+    # nobody has opened it. This comment said "the token store is" until that
+    # distinction was pointed out. What there is, in three parts and from two
+    # independent places:
+    #
+    #   - on THIS claim, 2026-10-03: the file exists at the claim root, and the
+    #     decrypted plaintext carries `oauth` x27 / `credentials` x112.
+    #   - on the FACTORY claim, 2026-08-23, on a running pod and six weeks
+    #     before any of the above: `~/.claude/.credentials.json` is
+    #     `root:root 0600` and was identified as Claude Code's own credentials
+    #     (extras/factory/factory/README.md and that app's helmrelease.yaml).
+    #     A security change was made on that premise -- globalMounts ->
+    #     advancedMounts, to stop oauth2-proxy from holding the agent's
+    #     identity -- so it is a premise this repo has already acted on.
+    #   - different release, same image, so it corroborates rather than proves.
+    #
+    # ⚠️ And that older reading was in this repo the whole time. Neither I nor
+    # the peer who measured the archive searched for it before calling the
+    # finding new; it turned up from a `credentials.json` grep run for an
+    # unrelated reason. Search by the MECHANISM, not by your own wording.
+    #
+    # ⚠️ Why `keyrings/` is absent is NOT settled, and it has a benign and a
+    # malign reading. Benign: nothing writes there, because the tokens go to
+    # the JSON file. Malign: something is there and the archive is not getting
+    # it -- which would mean the thing ferry133 authorised did not happen.
+    # Measured here (repo only, 2026-10-03), which removes the two likeliest
+    # malign mechanisms but not the question: `exclude.txt` names no
+    # keyring/credential/secret/token pattern, and the tar below starts at the
+    # claim ROOT, so a `keyrings/` at that root would be included. What is
+    # still unexplained is that the HelmRelease DOES mount `subPath: keyrings`
+    # (helmrelease.yaml, same directory) and kubernetes creates a subPath
+    # directory on mount, so even an empty `./keyrings/` entry should appear
+    # in the listing.
     for m in $MEMBERS; do
       src="$STATE_ROOT/${m}"
       if [[ ! -d "$src" ]]; then

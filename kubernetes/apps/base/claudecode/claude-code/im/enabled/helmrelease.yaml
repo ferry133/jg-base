@@ -114,7 +114,8 @@ spec:
             env:
               # The pod runs as uid 0 (see defaultPodOptions), which would
               # resolve HOME=/root -- but all state (claude config PVC,
-              # keyring, workspace) lives under /home/claude.
+              # credential store, workspace) lives under /home/claude.
+              # ("keyring" until 2026-10-03 — ferry133/jg-base#145.)
               HOME: /home/claude
               # Without this, onboarding/account state goes to ~/.claude.json
               # in the ephemeral overlay and login is lost on every pod
@@ -418,7 +419,9 @@ spec:
                 memory: 128Mi
     persistence:
       # One PVC, two mounts, and they stay together: an OAuth token and the
-      # keyring holding it have no reason to live on different volumes.
+      # credential store holding it have no reason to live on different
+      # volumes. (Said as "the keyring" until 2026-10-03; measured to be
+      # `.credentials.json` at the claim root — ferry133/jg-base#145.)
       # `retain: true` on both claims (helm.sh/resource-policy: keep, added by
       # the chart) so neither an opt-out prune nor a helm uninstall deletes
       # login state or a workspace -- and so the enable path can adopt the
@@ -432,8 +435,34 @@ spec:
         size: 5Gi
         globalMounts:
           - path: /home/claude/.claude
-          # gnome-keyring's store -- claude's OAuth tokens land here via
+          # ⚠️ This mount's stated reason is CONTRADICTED by measurement and
+          # is kept, not deleted, because the mount itself is still here and
+          # someone will ask why.
+          #
+          # SAYS: gnome-keyring's store -- claude's OAuth tokens land here via
           # secret-service; without this mount they die with the pod.
+          #
+          # MEASURED 2026-10-03 (FO-runbook [5fe39a]): a real archive of this
+          # claim has **no `keyrings/`** entry at all, and a `.credentials.json`
+          # at the claim root (that the latter holds the login is inferred from
+          # its name and from `oauth`/`credentials` hit counts, not from opening
+          # it).
+          #
+          # ⚠️ AND THE CAUSE IS THIS MOUNT NOT WORKING, on 2 of 3 clusters:
+          # `/home/claude/.local/share/keyrings` is on the OVERLAY, not on the
+          # claim (`stat %d` differs from the claim root) on jg-jcc2 and jcom,
+          # both `local-path`; it IS claim-backed on jg-jiahd, `longhorn`. The
+          # pod's own spec carries the subPath and belongs to the current
+          # ReplicaSet, so this is spec -> runtime, not a stale pod. Tracked as
+          # ferry133/jg-base#150; root cause unmeasured.
+          #
+          # So the archive is faithful to the claim and the POD is not faithful
+          # to the Deployment -- but this mount is not buying the protection
+          # the line above claims on those two clusters: if the image ever does
+          # use the keyring there, the login dies on every restart.
+          #
+          # ⛔ Do not remove the mount on the strength of any of this. It is
+          # the thing that is broken, not the thing that is wrong.
           - path: /home/claude/.local/share/keyrings
             subPath: keyrings
       claude-workspace:

@@ -206,23 +206,43 @@ data:
     # an archive that travels off-site.
     #
     # NOW: **ferry133 ruled on 2026-09-11 that credentials are included.** That
-    # does not change this function, which still cannot reach the keyring and
-    # still should not try: exec into a running pod is the wrong instrument for
-    # it. The inclusion happens in the claudecode state archive, which mounts
-    # the whole claude-config PVC and therefore reaches the keyring by the same
-    # construction that used to exclude it
+    # does not change this function, which still cannot reach them (said as
+    # "cannot reach the keyring" until 2026-10-03) and still
+    # should not try: exec into a running pod is the wrong instrument for it.
+    # The inclusion happens in the claudecode state archive, which mounts the
+    # whole claude-config PVC and therefore reaches the whole claim by the same
+    # construction that used to exclude part of it
     # (kubernetes/apps/base/claudecode/claude-code/im/enabled/state-archive.yaml
     # — under the `im` gate, not `app/`: `app/` is applied on every cluster and
     # the archive must not exist where the claims do not,
     # ferry133/jg-base#145).
     #
-    # ⚠️ The cost of that ruling, written down because it has NOT been measured
-    # away: the pod's OAuth lives in gnome-keyring, and a restore onto macOS
-    # would face a Claude Code that reads the macOS Keychain. If the restored
-    # gnome-keyring is unusable there, the decision paid for itself in live
-    # credentials leaving the site and bought nothing. That is an inference,
-    # not a finding; the restore drill is what settles it, and the decision
-    # does not change before it does.
+    # ⚠️ The cost of that ruling, and its PREMISE WAS WRONG (corrected
+    # 2026-10-03, kept rather than rewritten because the original reasoning is
+    # what a reader will have been told elsewhere).
+    #
+    # WAS: the pod's OAuth lives in gnome-keyring, so a restore onto macOS
+    # would face a Claude Code that reads the macOS Keychain; if the restored
+    # gnome-keyring is unusable there, the ruling paid for itself in live
+    # credentials leaving the site and bought nothing.
+    #
+    # MEASURED instead (FO-runbook [5fe39a], on a real archive: 551 files, no
+    # `keyrings/` in it): the credential file present is
+    # `config/.credentials.json`. That it holds the OAuth login is NOT a
+    # reading of its contents -- it rests on the filename, on `oauth` x27 /
+    # `credentials` x112 in the plaintext, and on an independent 2026-08-23
+    # running-pod measurement of the same file on the factory claim (same
+    # image, different release) that this repo already acted on by narrowing
+    # that mount away from oauth2-proxy. A portable JSON credential file is
+    # MORE likely to
+    # restore on another platform than a gnome-keyring store, so the cost
+    # argued above is weaker than it was written -- the direction favours the
+    # ruling, on an inference rather than on a reading of the file.
+    #
+    # ⚠️ It does not make the cost zero and the conclusion is NOT reversed
+    # here: nobody has run the restore drill. Only the premise is corrected.
+    # The drill is still what settles it, and the ruling does not change before
+    # it does.
     dump_claude_config() {
       local ns=claudecode
       local instances
@@ -492,7 +512,8 @@ data:
     # (`<cluster>-claudecode-<stamp>.tar.gz.age`, written by a different Job in
     # a different namespace). The stamp extractor below matches that name too,
     # so BACKUP_RETAIN_DAYS silently governs the lifetime of an archive this app
-    # does not produce -- including the agent keyring inside it. Nobody chose
+    # does not produce -- including the live OAuth credential inside it (NOT
+    # "the keyring": measured 2026-10-03, see the note above). Nobody chose
     # that; it is what the two key shapes happen to produce, and until
     # 2026-10-01 no file said it (FO-runbook [5fe39a], acceptance of #146).
     #

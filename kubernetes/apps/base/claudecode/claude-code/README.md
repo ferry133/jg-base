@@ -43,7 +43,13 @@ the old pin. That failure mode is at least the visible-in-git kind, which
 
 ## PVC adoption / survival
 
-Both claims (`im-claude-config`: `~/.claude` + keyring = OAuth login;
+Both claims (`im-claude-config`: `~/.claude` + the OAuth credential — a
+`.credentials.json` at the claim root, and NOT a `keyrings/` directory, because
+the `subPath: keyrings` mount does not take effect on 2 of 3 clusters
+(`local-path`). ⚠️ That the file *holds* the login has not been read out of it;
+it rests on the filename, on hit counts in a decrypted archive (2026-10-03) and
+on a 2026-08-23 running-pod measurement of the same file on the factory claim.
+See ferry133/jg-base#145 and #150;
 `im-claude-workspace`) render with `retain: true` →
 `helm.sh/resource-policy: keep`. Helm uninstall (opt-out prune, migration)
 leaves them in place, and a later release named `im` adopts them — same
