@@ -46,7 +46,7 @@ The `app` container's Claude Code agent SHALL have access, via a registered remo
 
 #### Scenario: Management plane down, node still answers on the LAN
 - **WHEN** a node's SideroLink to Omni is down so the Omni-proxied call to it times out or returns `Unavailable`, and the operator credential is present
-- **THEN** the same read tool answers from the node directly over the LAN and its first line reads `[via direct LAN]`, so the agent can read the node's own `siderolink` link state during the very outage that hides it from Omni
+- **THEN** the same read tool answers from the node directly over the LAN and its first line (after the expiry warning line, when one is present) reads `[via direct LAN]`, so the agent can read the node's own `siderolink` link state during the very outage that hides it from Omni
 
 #### Scenario: Management plane down, no operator credential
 - **WHEN** the Omni-proxied call fails and no operator credential is present
@@ -62,14 +62,14 @@ The `app` container's Claude Code agent SHALL have access, via a registered remo
 
 ### Requirement: Gated mutating capability
 
-The sidecar SHALL expose exactly one mutating tool, a graceful node reboot, and only while a non-empty operator credential is mounted. The tool's call contract (two-phase confirmation, call-time node allowlist, audit line, own-node handling) is specified in `k8scc`'s `talos-operator-escalation` capability; this requirement fixes the sidecar-level conditions.
+The sidecar SHALL expose exactly one mutating tool, a graceful node reboot, and only while a non-empty, readable and unexpired operator credential is mounted. The tool's call contract (two-phase confirmation, call-time node allowlist, audit line, own-node handling) is specified in `k8scc`'s `talos-operator-escalation` capability; this requirement fixes the sidecar-level conditions.
 
 #### Scenario: No operator credential, no mutating tool
 - **WHEN** the MCP server's tool list is inspected on a sidecar whose operator credential is absent or empty
 - **THEN** it contains only the four read-only diagnostic tools; `reboot_node` is not present
 
 #### Scenario: Operator credential present, one mutating tool
-- **WHEN** the MCP server's tool list is inspected on a sidecar whose operator credential is mounted and non-empty
+- **WHEN** the MCP server's tool list is inspected on a sidecar whose operator credential is mounted, non-empty, readable and unexpired
 - **THEN** it contains the four read-only tools plus `reboot_node`, and no tool capable of reset, apply-config, upgrade, shutdown or certificate minting
 
 #### Scenario: Node outside this cluster is refused

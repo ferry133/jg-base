@@ -229,7 +229,8 @@ spec:
               TALOS_OPERATOR_CONFIG: /etc/talos-mcp/operator-talosconfig
               # This pod is hostNetwork, so the pod IP IS the node IP.
               # reboot_node compares its target against it: rebooting the node
-              # it sits on means no --wait, because that answer never comes
+              # it sits on means --wait=false (talosctl defaults --wait to
+              # true, measured by k8scc 2026-10-13), because that answer never comes
               # back (root design.md, Risks).
               POD_IP:
                 valueFrom:

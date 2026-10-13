@@ -69,7 +69,7 @@ Omni 文件：Talos API CA 輪替不中斷叢集內連線、不重開節點；�
 insideman 的「工具不存在＋角色拒絕」雙保險在 reboot 這一格變成「工具存在但四層門檻」。這是有意識的降級，換來的是客戶端能自己走完。
 
 **5. 讀取退路用 operator 憑證 `--endpoints <node>` 直連，Omni 路徑仍是主路。**
-主路保留 Omni 的 `x-sidero-signature` 稽核；退路只在主路失敗（timeout／`Unavailable`／`no route`）且 operator 憑證在場時啟用，輸出第一行標 `[via direct LAN]`。
+主路保留 Omni 的 `x-sidero-signature` 稽核；退路只在主路失敗（timeout／`Unavailable`／`no route`）且 operator 憑證在場時啟用，輸出第一行標 `[via direct LAN]`（有到期警告行時緊接在它之後——k8scc 2026-10-13 定稿）。
 - *替代*：全部改直連——拒絕，平時少一份 Omni 稽核，而且 reader 憑證就沒用了。
 
 **6. permission 規則由 `claude-session` 寫進 `settings.json`，合併不覆寫。**
@@ -82,7 +82,7 @@ insideman 的「工具不存在＋角色拒絕」雙保險在 reboot 這一格�
 
 - **[Risk] tainted 的語意沒量過** → rollout 前在 FAC1 拋棄式叢集走一次：鑄 → 看標籤 → 做一次 template sync 與 Talos upgrade → `rotate talos-ca` → 看標籤 → 舊憑證被拒。**不在 jcom／jg-jiahd 先試。**
 - **[Risk] 一年效期到了工具會默默變瞎** → server 啟動時讀 `talosctl config info` 的到期日，< 30 天在每個工具輸出前綴警告；fleet-ops skill 的 verify 子命令列出到期日；`docs/verification-status.md` 收一列。
-- **[Risk] 單節點叢集 reboot 自己坐的那台，`--wait` 永遠回不來** → sidecar 是 hostNetwork，pod IP ＝ node IP；`node` 等於自己時不帶 `--wait`、回傳「已下令，本 pod 將隨節點重啟」。
+- **[Risk] 單節點叢集 reboot 自己坐的那台，`--wait` 永遠回不來** → sidecar 是 hostNetwork，pod IP ＝ node IP；`node` 等於自己時明寫 `--wait=false`、回傳「已下令，本 pod 將隨節點重啟」；其他節點 `--wait=true --timeout=600s`。**k8scc 2026-10-13 量到 `talosctl reboot --wait` 預設是 true**（talosctl 1.12），「不帶 `--wait`」照字面做會等自己死掉——所以旗標要明寫。
 - **[Risk] allowlist 靠 `kubectl get nodes`，API server 不可用時推不出來** → fail closed：拒絕並說明；不退回 `TALOS_NODES`。
 - **[Risk] confirm token 被重放** → 單次有效、120 秒過期、綁 node。
 - **[Trade-off] 每座交付叢集永久 tainted** → 接受；它是標籤不是限制（待量）。代價是 Omni 無法再宣稱「所有 Talos 存取都經我」——本來 `app` 的 cluster-admin 就已讓這句話不成立。
