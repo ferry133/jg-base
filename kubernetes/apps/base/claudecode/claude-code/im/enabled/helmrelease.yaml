@@ -11,7 +11,10 @@
 #   - The talos-mcp sidecar is always present. On clusters without Omni its
 #     secret values are empty; since k8scc#5 the server still starts (probes
 #     pass) and every tool answers "not configured on this cluster" instead
-#     of a bare talosctl auth error.
+#     of a bare talosctl auth error. Its OPTIONAL second credential
+#     (`operatorConfig`, im-onsite-operator-tools) follows the same rule: a
+#     cluster that has not minted one mounts a 0-byte file, and the server
+#     offers no mutating tool and no direct-LAN fallback.
 #   - The email allowlist is an initContainer, not a rendered ConfigMap:
 #     postBuild substitution collapses newlines in multi-line values, so the
 #     comma-separated ${FACTORY_ALLOWED_EMAILS} is split into one-per-line
@@ -185,9 +188,11 @@ spec:
               limits:
                 memory: 1Gi
           talos-mcp:
-            # Own container, own credential mount -- the app container above
-            # never sees this secret. See openspec/changes/insideman for the
-            # full design. Present on every cluster: without Omni credentials
+            # Own container, own credential mounts (reader always, operator
+            # when minted) -- the app container above never sees this secret.
+            # See openspec/changes/insideman for the base design and
+            # openspec/changes/im-onsite-operator-tools for the second
+            # credential. Present on every cluster: without Omni credentials
             # the server serves a "not configured" answer (k8scc#5) rather
             # than crash or lie.
             image:
@@ -213,6 +218,23 @@ spec:
                   secretKeyRef:
                     name: talos-mcp-secret
                     key: omniEndpoint
+              # The OPTIONAL os:operator credential (im-onsite-operator-tools):
+              # the direct-LAN read fallback for when SideroLink is down, and
+              # the gated reboot_node tool. A PATH, like TALOSCONFIG -- the file
+              # it names is 0 bytes on a cluster that has not minted one, and
+              # the server reads 0 bytes as absent: no reboot_node, no
+              # fallback. The mount that puts it there is under persistence
+              # below, on this container only; scripts/
+              # check-operator-credential-isolation.sh holds the two together.
+              TALOS_OPERATOR_CONFIG: /etc/talos-mcp/operator-talosconfig
+              # This pod is hostNetwork, so the pod IP IS the node IP.
+              # reboot_node compares its target against it: rebooting the node
+              # it sits on means no --wait, because that answer never comes
+              # back (root design.md, Risks).
+              POD_IP:
+                valueFrom:
+                  fieldRef:
+                    fieldPath: status.podIP
             securityContext:
               allowPrivilegeEscalation: false
               capabilities: { drop: ["ALL"] }
@@ -519,6 +541,12 @@ spec:
             talos-mcp:
               - path: /etc/talos-mcp/talosconfig
                 subPath: talosconfig
+                readOnly: true
+              # The os:operator credential, at the path TALOS_OPERATOR_CONFIG
+              # names above. 0 bytes until the cluster mints one (see
+              # talos-mcp-secret.yaml for the jcom measurement).
+              - path: /etc/talos-mcp/operator-talosconfig
+                subPath: operatorConfig
                 readOnly: true
     defaultPodOptions:
       hostNetwork: true

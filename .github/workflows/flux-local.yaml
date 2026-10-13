@@ -384,6 +384,20 @@ jobs:
       - name: claudecode claims do not share a storage class
         run: bash scripts/check-claudecode-pvc-classes.sh
 
+      # im-onsite-operator-tools: a second Talos credential -- os:operator, with
+      # a key inside -- joins the talos-mcp sidecar. What makes that acceptable
+      # is insideman's boundary (sidecar only, never the app container), held
+      # by three lines in two files that nothing else ties together. The
+      # failure that matters is silent: an env path and a mount path that
+      # disagree make the server read 0 bytes at its path (== absent, by
+      # design) while the real credential sits unread -- reboot_node gone,
+      # every signal green. The cases that must keep failing: the key moved to
+      # stringData, the two paths diverging, the mount losing readOnly, the app
+      # or an init container mounting or env-reading the Secret, POD_IP losing
+      # its fieldRef. --self-test runs each of them against a scratch copy.
+      - name: operator credential stays in the sidecar
+        run: bash scripts/check-operator-credential-isolation.sh && bash scripts/check-operator-credential-isolation.sh --self-test
+
       # #145: the claudecode state archive mounts PVCs directly, because
       # `kubectl exec` needs a RUNNING pod and a scaled-to-0 instance has
       # none -- its content never reached off-site storage. Mounting removes
