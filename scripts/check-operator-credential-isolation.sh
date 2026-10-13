@@ -129,17 +129,28 @@ check() {
 }
 
 self_test() {
-  local tmp; tmp="$(mktemp -d -t operator-isolation)"
+  # The harness is gated BEFORE the cases, and loudly: on the first CI run
+  # `mktemp -d -t name` (a BSD spelling; GNU wants XXXXXX) returned nothing,
+  # every case ran against /hr.yaml and came back 2 -- and the one case that
+  # EXPECTS 2 read as PASS. A case whose expected value is the harness's own
+  # failure code is not a control once the harness is broken; so the harness
+  # has to be shown working first, and a copy that fails to stage is a FAIL of
+  # its own, never a case result.
+  local tmp
+  tmp="$(mktemp -d "${TMPDIR:-/tmp}/operator-isolation.XXXXXX")" && [[ -d "$tmp" ]] \
+    || { echo "cannot measure: could not create a scratch directory for the self-test"; return 2; }
   # shellcheck disable=SC2064
   trap "rm -rf '$tmp'" RETURN
   local failed=0 n=0
   expect() {  # label, want_rc, yq-expr-for-HR, yq-expr-for-Secret
     local label="$1" want="$2" hexpr="$3" sexpr="$4" got out
-    cp "$HR" "$tmp/hr.yaml"; cp "$SECRET" "$tmp/secret.yaml"
+    n=$((n + 1))
+    if ! cp "$HR" "$tmp/hr.yaml" || ! cp "$SECRET" "$tmp/secret.yaml"; then
+      echo "FAIL  ${label}: could not stage the scratch copy — harness, not guard"; failed=$((failed + 1)); return
+    fi
     [[ -z "$hexpr" ]] || yq -i "$hexpr" "$tmp/hr.yaml"
     [[ -z "$sexpr" ]] || yq -i "$sexpr" "$tmp/secret.yaml"
     out="$(check "$tmp/hr.yaml" "$tmp/secret.yaml")"; got=$?
-    n=$((n + 1))
     if [[ "$got" == "$want" ]]; then
       echo "PASS  ${label} (rc=${got})"
     else
