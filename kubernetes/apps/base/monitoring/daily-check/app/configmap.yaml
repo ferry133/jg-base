@@ -1767,6 +1767,130 @@ data:
       fi
     fi
 
+    # 27. Cilium service backends vs EndpointSlice, per node (ferry133/jg-base#159).
+    #
+    # On 2026-10-14 jg-jiahd's `.21` Cilium agent held a THIRD kube-dns backend,
+    # `10.244.14.1`, that no EndpointSlice had: a third of DNS from that node went
+    # into a black hole for days (ferry133/jg-jiahd#5). Service, EndpointSlice,
+    # Node and Pod all read healthy — the stale entry lived only in that agent's
+    # BPF service map, so nothing that asks the API could see it. This row asks
+    # each agent (`cilium-dbg service list -o json`) and compares every ClusterIP
+    # service it holds with the API's ready endpoints.
+    #
+    # ⚠️ The population comes from the agent's own list, not from service names
+    # anyone thought of: the same agent had 28 stale lines that day, not one.
+    #
+    # ⚠️ What this costs, chosen by ferry133 on #159 (2026-10-16): `pods/exec` in
+    # kube-system for this ServiceAccount — `daily-check-cilium-exec` in rbac.yaml.
+    # RBAC cannot pin the command; this row is the only caller and runs exactly
+    # `cilium-dbg service list -o json`.
+    #
+    # A difference must hold across two reads ~10 s apart before it is reported:
+    # the agent and the API are read at different instants, and a rollout in
+    # between would otherwise be reported as drift (#6: a red that flies on a
+    # healthy cluster gets switched off).
+    #
+    # Verdicts: a backend the API does not have → fail (that is the black hole);
+    # only missing backends → warn (traffic still lands on a real pod); any node
+    # not measured → skip, naming the node and why — unless another node already
+    # failed, because red outranks "could not measure".
+    cil_compare() {
+      # $1 agent's service list, $2 EndpointSlice list, $3 node name
+      jq -rn --slurpfile svc "$1" --slurpfile eps "$2" --arg node "$3" '
+        ($eps[0].items // [])
+          | map(select(.addressType != "FQDN" and ((.metadata.labels // {})["kubernetes.io/service-name"] // "") != "")) as $sl
+        | [ $svc[0][] | .spec | select(.flags.type == "ClusterIP")
+            | { k: "\(.flags.namespace)/\(.flags.name)",
+                local: (.flags.intTrafficPolicy == "Local"),
+                b: [ (.["backend-addresses"] // [])[] | select((.state // "active") == "active") | "\(.ip):\(.port)" ] } ]
+        | group_by(.k)
+        | map({ k: .[0].k, local: any(.[]; .local), have: (map(.b) | add | unique) })
+        | map(. as $s
+            | ($s.k | split("/")) as [$ns, $n]
+            | [ $sl[] | select(.metadata.namespace == $ns and .metadata.labels["kubernetes.io/service-name"] == $n) ] as $mine
+            | select($mine | length > 0)
+            | [ $mine[] | . as $e | (.endpoints // [])[]
+                | select(.conditions.ready != false)
+                | select(($s.local | not) or .nodeName == $node)
+                | .addresses[] as $a | ($e.ports // [])[] | select(.port != null) | "\($a):\(.port)" ] | unique
+            | . as $want
+            | { k: $s.k, extra: ($s.have - $want), missing: ($want - $s.have) })
+        | (.[] | select((.extra | length) > 0 or (.missing | length) > 0)
+               | "DRIFT|\(.k)|\(.extra | join(","))|\(.missing | join(","))"),
+          "COMPARED|\(length)"'
+    }
+    # One node, one read: prints DRIFT lines then COMPARED|n, or a single
+    # UNMEASURED|<reason> line. Never empty.
+    cil_read() {
+      local pod="$1" node="$2" svc eps out
+      svc=$(mktemp); eps=$(mktemp)
+      if ! kubectl -n kube-system exec "$pod" -c cilium-agent -- cilium-dbg service list -o json > "$svc" 2>/dev/null; then
+        echo "UNMEASURED|exec into ${pod} failed (pods/exec RBAC, or cilium-dbg is not in the agent image)"
+      elif ! jq -e 'type == "array"' "$svc" >/dev/null 2>&1; then
+        echo "UNMEASURED|${pod} returned something that is not a JSON list (cilium-dbg output format changed?)"
+      elif ! kubectl get endpointslices -A -o json > "$eps" 2>/dev/null; then
+        echo "UNMEASURED|could not list EndpointSlices (RBAC on discovery.k8s.io/endpointslices)"
+      elif ! out=$(cil_compare "$svc" "$eps" "$node") || ! grep -q '^COMPARED|' <<< "$out"; then
+        echo "UNMEASURED|the comparison itself failed on ${pod}'s output"
+      elif grep -q '^COMPARED|0$' <<< "$out"; then
+        echo "UNMEASURED|${pod} listed no ClusterIP service that the API also has — nothing was compared"
+      else
+        echo "$out"
+      fi
+      rm -f "$svc" "$eps"
+    }
+    CIL_PODS=$(kubectl -n kube-system get pods -l k8s-app=cilium -o json 2>/dev/null \
+      | jq -r '.items[] | select(.status.phase == "Running") | "\(.metadata.name) \(.spec.nodeName)"' 2>/dev/null)
+    if [[ -z "$CIL_PODS" ]]; then
+      record skip "Cilium backends vs EndpointSlice" "no running Cilium agent pod (k8s-app=cilium in kube-system) could be listed"
+    else
+      CIL_FAIL=(); CIL_WARN=(); CIL_SKIP=(); CIL_OK=()
+      while read -r CIL_POD CIL_NODE; do
+        CIL_R1=$(cil_read "$CIL_POD" "$CIL_NODE")
+        if grep -q '^UNMEASURED|' <<< "$CIL_R1"; then
+          CIL_SKIP+=("${CIL_NODE}: $(grep '^UNMEASURED|' <<< "$CIL_R1" | cut -d'|' -f2-)")
+          continue
+        fi
+        if grep -q '^DRIFT|' <<< "$CIL_R1"; then
+          sleep 10
+          CIL_R2=$(cil_read "$CIL_POD" "$CIL_NODE")
+          if grep -q '^UNMEASURED|' <<< "$CIL_R2"; then
+            CIL_SKIP+=("${CIL_NODE}: differed on the first read, then $(grep '^UNMEASURED|' <<< "$CIL_R2" | cut -d'|' -f2-)")
+            continue
+          fi
+          # Keep only services that differed in BOTH reads; report the second.
+          CIL_KEYS1=$(grep '^DRIFT|' <<< "$CIL_R1" | cut -d'|' -f2)
+          CIL_HELD=$(grep '^DRIFT|' <<< "$CIL_R2" | while IFS='|' read -r _ k x m; do
+            grep -qxF "$k" <<< "$CIL_KEYS1" && echo "${k} extra=[${x}] missing=[${m}]"; done)
+        else
+          CIL_HELD=""
+        fi
+        CIL_N=$(grep '^COMPARED|' <<< "${CIL_R2:-$CIL_R1}" | cut -d'|' -f2)
+        if [[ -z "$CIL_HELD" ]]; then
+          CIL_OK+=("${CIL_NODE} ${CIL_N}")
+        elif grep -q 'extra=\[[^]]' <<< "$CIL_HELD"; then
+          CIL_FAIL+=("${CIL_NODE}: $(tr '\n' ';' <<< "$CIL_HELD")")
+        else
+          CIL_WARN+=("${CIL_NODE}: $(tr '\n' ';' <<< "$CIL_HELD")")
+        fi
+        unset CIL_R2
+      done <<< "$CIL_PODS"
+      # Plain concatenation rather than a nested conditional expansion: envsubst
+      # cannot parse the nested form even in a comment (scripts/check-envsubst-parses.sh).
+      CIL_ALSO=""
+      [[ ${#CIL_WARN[@]} -gt 0 ]] && CIL_ALSO="${CIL_ALSO} | missing backends: ${CIL_WARN[*]}"
+      [[ ${#CIL_SKIP[@]} -gt 0 ]] && CIL_ALSO="${CIL_ALSO} | not measured: ${CIL_SKIP[*]}"
+      if [[ ${#CIL_FAIL[@]} -gt 0 ]]; then
+        record fail "Cilium backends vs EndpointSlice" "a node's Cilium agent routes to backends the API does not have (traffic to them is dropped): ${CIL_FAIL[*]}${CIL_ALSO}"
+      elif [[ ${#CIL_SKIP[@]} -gt 0 ]]; then
+        record skip "Cilium backends vs EndpointSlice" "could not compare every node${CIL_ALSO}"
+      elif [[ ${#CIL_WARN[@]} -gt 0 ]]; then
+        record warn "Cilium backends vs EndpointSlice" "an agent lacks ready backends the API has (held across two reads): ${CIL_WARN[*]}"
+      else
+        record ok "Cilium backends vs EndpointSlice" "${#CIL_OK[@]} node(s) agree with the API — services compared per node: ${CIL_OK[*]}"
+      fi
+    fi
+
     if [[ $FAIL_COUNT -gt 0 ]]; then
       STATUS_TAG="❌ ${FAIL_COUNT} FAIL"
       [[ $WARN_COUNT -gt 0 ]] && STATUS_TAG="${STATUS_TAG}, ${WARN_COUNT} WARN"

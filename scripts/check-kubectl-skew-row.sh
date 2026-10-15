@@ -25,10 +25,12 @@ CM="$ROOT/kubernetes/apps/base/monitoring/daily-check/app/configmap.yaml"
 [[ -r "$CM" ]] || { echo "cannot measure: $CM not readable"; exit 2; }
 command -v jq >/dev/null 2>&1 || { echo "cannot measure: jq is missing"; exit 2; }
 
-# Anchored on the row's own `if`, and on the next row header, so the anchors
+# Anchored on the row's own `if`, and on the next row header (row 27 since
+# #159; the FAIL_COUNT line if it is ever the last row again), so the anchors
 # hold nothing the mutations change.
 BLOCK="$(awk '
     /^[[:space:]]*if ! command -v kubectl >\/dev\/null 2>&1; then/ { grabbing = 1 }
+    grabbing && /^[[:space:]]*# [0-9]+[a-z]?\. / { exit }
     grabbing && /^[[:space:]]*if \[\[ \$FAIL_COUNT -gt 0 \]\]; then/ { exit }
     grabbing { print }
   ' "$CM" | sed 's/^    //')"
