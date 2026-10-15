@@ -1231,10 +1231,61 @@ data:
                 DEST_CC_NOTE="; claudecode: ${DEST_CC_AGE_H}h ago, ${DEST_CC_COUNT} objects"
             else
               DEST_CC_NOTE="; claudecode: ${DEST_CC_COUNT} objects, timestamp unparseable"
+              DEST_CC_UNPARSEABLE=1
             fi
           else
             DEST_CC_NOTE="; claudecode: none"
           fi
+          # ⚠️ Is the claudecode archive SUPPOSED to be uploading? (ferry133/jg-base#152)
+          # The bucket alone cannot say. Until this, "never enabled" and "enabled
+          # and never once uploaded" were the same `claudecode: none` [ok], and an
+          # `im` turned enabled -> disabled kept its last archives ageing in the
+          # prefix (the system job's 30-day prune removes them, not the archive
+          # job) -- so this row went warn after 26h and fail after 48h on a
+          # cluster where nobody did anything wrong. That is the check that fires
+          # every run and gets switched off.
+          #
+          # The discriminator is the archive's own CronJob. It ships from
+          # `im/enabled` and `im/disabled` is an EMPTY path, which Flux prunes
+          # (`im-ks.yaml`): absent CronJob == feature off. Four outcomes, kept
+          # apart because they mean different things:
+          #   on        -> both families judged; `none` judged by the CronJob's age
+          #                (grace: a freshly enabled cluster has not reached its
+          #                first 19:00 UTC run yet)
+          #   off       -> claudecode age REPORTED, never judged
+          #   suspended -> warn: paused on purpose is still not being backed up
+          #   unknown   -> the read failed for a reason other than NotFound; keep
+          #                judging what is in the bucket, and an empty family is
+          #                warn, because "could not tell" is not a pass
+          # ⚠️ Known edge, inferred not measured: turning `im` off with Flux
+          # `suspend: true` instead of the empty path (which `im-ks.yaml` warns
+          # against) leaves the CronJob in place AND running -- so it keeps
+          # uploading and this row stays correct.
+          # RBAC: ClusterRole `daily-check` has batch/cronjobs get,list
+          # (rbac.yaml); read off the live role on jcom and jg-jiahd 2026-10-15.
+          DEST_CC_ARMED=unknown
+          DEST_CC_CJ_MSG=""
+          DEST_CC_CJ_ERR=$(mktemp)
+          if ! command -v kubectl >/dev/null 2>&1; then
+            DEST_CC_CJ_MSG="kubectl is not installed"
+          elif DEST_CC_CJ_JSON=$(kubectl -n claudecode get cronjob claudecode-state-backup -o json 2>"$DEST_CC_CJ_ERR"); then
+            if [[ "$(echo "$DEST_CC_CJ_JSON" | jq -r '.spec.suspend // false')" == "true" ]]; then
+              DEST_CC_ARMED=suspended
+            else
+              DEST_CC_ARMED=on
+              DEST_CC_CJ_CREATED=$(echo "$DEST_CC_CJ_JSON" | jq -r '.metadata.creationTimestamp // ""')
+            fi
+          elif grep -q 'NotFound' "$DEST_CC_CJ_ERR"; then
+            DEST_CC_ARMED=off
+          else
+            DEST_CC_CJ_MSG=$(tr '\n' ' ' <"$DEST_CC_CJ_ERR")
+          fi
+          rm -f "$DEST_CC_CJ_ERR"
+          case "$DEST_CC_ARMED" in
+            off)       DEST_CC_NOTE="${DEST_CC_NOTE} (archive off: CronJob absent, not judged)" ;;
+            suspended) DEST_CC_NOTE="${DEST_CC_NOTE} (archive CronJob suspended)" ;;
+            unknown)   DEST_CC_NOTE="${DEST_CC_NOTE} (archive CronJob unreadable: ${DEST_CC_CJ_MSG:-no message})" ;;
+          esac
           if [[ -z "$DEST_LATEST" ]]; then
             # Listed fine, nothing there. On a versioned + object-locked bucket
             # a delete marker produces exactly this, and that is the case this
@@ -1265,15 +1316,12 @@ data:
               # checking a peer's claim that this row would go red within 24h if the
               # archive stopped; it would not have.
               #
-              # ⚠️ Thresholded ONLY when that family has at least one object.
-              # `claudecode: none` is the permanent and correct state of every
-              # cluster on `im/disabled`: the archive CronJob ships from
-              # `im/enabled`, so it never runs and never uploads there. Alerting on
-              # "none" would fire daily on clusters that did nothing wrong, and a row
-              # that cries wolf gets switched off. The cost, stated rather than
-              # hidden: "never enabled" and "enabled and has never once uploaded"
-              # are the same reading HERE, and separating them needs something that
-              # knows whether `im` is on (ferry133/jg-base#145 condition 7).
+              # ⚠️ Until 2026-10-15 this was thresholded ONLY when the family had
+              # at least one object, and the cost was written here: "never
+              # enabled" and "enabled and never once uploaded" read the same.
+              # The CronJob discriminator above (ferry133/jg-base#152) now
+              # separates them, and also stops an `im` turned off from alarming
+              # on its leftover archives.
               DEST_LEVEL=ok
               DEST_LATE=""
               if (( DEST_AGE_H > 48 )); then
@@ -1281,6 +1329,9 @@ data:
               elif (( DEST_AGE_H > 26 )); then
                 DEST_LEVEL=warn; DEST_LATE="system ${DEST_AGE_H}h"
               fi
+              # Judged only when the archive is supposed to run (or we could
+              # not tell). `off` reports the age and judges nothing (#152).
+              if [[ "$DEST_CC_ARMED" == on || "$DEST_CC_ARMED" == unknown ]]; then
               if [[ -n "${DEST_CC_AGE_H:-}" ]] && (( DEST_CC_COUNT > 0 )); then
                 if (( DEST_CC_AGE_H > 48 )); then
                   DEST_LEVEL=fail; DEST_LATE="${DEST_LATE}${DEST_LATE:+, }claudecode ${DEST_CC_AGE_H}h"
@@ -1288,6 +1339,42 @@ data:
                   [[ "$DEST_LEVEL" == "fail" ]] || DEST_LEVEL=warn
                   DEST_LATE="${DEST_LATE}${DEST_LATE:+, }claudecode ${DEST_CC_AGE_H}h"
                 fi
+              fi
+              # An unreadable timestamp is "could not measure", which must not
+              # read better than a family that has one (#152, the system-side
+              # twin is `cannot parse object timestamp` -> warn).
+              if [[ -n "${DEST_CC_UNPARSEABLE:-}" ]]; then
+                [[ "$DEST_LEVEL" == "fail" ]] || DEST_LEVEL=warn
+                DEST_LATE="${DEST_LATE}${DEST_LATE:+, }claudecode timestamp unparseable"
+              fi
+              # Empty family. `on`: judged by how long the CronJob has existed,
+              # same 26h/48h -- a cluster enabled an hour ago has simply not
+              # reached its first run. `unknown`: warn, never ok.
+              if (( DEST_CC_COUNT == 0 )); then
+                if [[ "$DEST_CC_ARMED" == unknown ]]; then
+                  [[ "$DEST_LEVEL" == "fail" ]] || DEST_LEVEL=warn
+                  DEST_LATE="${DEST_LATE}${DEST_LATE:+, }claudecode none and its CronJob unreadable"
+                else
+                  DEST_CC_CJ_EPOCH="$(epoch_of "${DEST_CC_CJ_CREATED:-}")"
+                  if [[ -z "$DEST_CC_CJ_EPOCH" ]]; then
+                    [[ "$DEST_LEVEL" == "fail" ]] || DEST_LEVEL=warn
+                    DEST_LATE="${DEST_LATE}${DEST_LATE:+, }claudecode none, CronJob age unreadable (${DEST_CC_CJ_CREATED:-empty})"
+                  else
+                    DEST_CC_CJ_AGE_H=$(( ( $(date -u +%s) - DEST_CC_CJ_EPOCH ) / 3600 ))
+                    if (( DEST_CC_CJ_AGE_H > 48 )); then
+                      DEST_LEVEL=fail; DEST_LATE="${DEST_LATE}${DEST_LATE:+, }claudecode none, enabled ${DEST_CC_CJ_AGE_H}h ago"
+                    elif (( DEST_CC_CJ_AGE_H > 26 )); then
+                      [[ "$DEST_LEVEL" == "fail" ]] || DEST_LEVEL=warn
+                      DEST_LATE="${DEST_LATE}${DEST_LATE:+, }claudecode none, enabled ${DEST_CC_CJ_AGE_H}h ago"
+                    else
+                      DEST_CC_NOTE="${DEST_CC_NOTE} (enabled ${DEST_CC_CJ_AGE_H}h ago, first archive pending)"
+                    fi
+                  fi
+                fi
+              fi
+              elif [[ "$DEST_CC_ARMED" == suspended ]]; then
+                [[ "$DEST_LEVEL" == "fail" ]] || DEST_LEVEL=warn
+                DEST_LATE="${DEST_LATE}${DEST_LATE:+, }claudecode archive suspended"
               fi
               case "$DEST_LEVEL" in
                 fail) record fail "Off-site backup destination stale" "${DEST_LATE} — newest system archive is ${DEST_AGE_H}h old (${DEST_LATEST})${DEST_CC_NOTE}" ;;
