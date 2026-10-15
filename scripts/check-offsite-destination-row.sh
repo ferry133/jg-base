@@ -77,6 +77,13 @@ run() {
   BACKUP_R2_SECRET_ACCESS_KEY="s3cr3t"
 
   record() { OUT="[$1] $2${3:+ — $3}"; }
+  # Row 21 also asks whether the claudecode archive CronJob exists (#152).
+  # This guard is about the SYSTEM family, so every case here is a cluster
+  # whose archive is off: answer NotFound, the way the API server does.
+  # Without the stub the block reached for a real kubectl -- absent in CI
+  # ("unreadable" -> warn, which turned `fresh` red), and on a laptop it
+  # would have asked whatever cluster KUBECONFIG pointed at.
+  kubectl() { echo 'Error from server (NotFound): cronjobs.batch "claudecode-state-backup" not found' >&2; return 1; }
   # `date -u +%s` must be deterministic; every other date call falls through.
   date() { if [[ "$*" == "-u +%s" ]]; then echo "$NOW"; else command date "$@"; fi; }
   epoch_of() { [[ "$1" == UNPARSEABLE ]] && return 0; echo $(( NOW - age * 3600 )); }
@@ -106,7 +113,7 @@ run() {
   # shellcheck disable=SC1091
   source "$WORK/block.sh"
   PATH="$saved_path"
-  unset -f aws date epoch_of record 2>/dev/null || true
+  unset -f aws date epoch_of record kubectl 2>/dev/null || true
 
   local got="${OUT:-<no row>}"
   local level="${got%%]*}"; level="${level#[}"

@@ -63,6 +63,7 @@ mkfix() { # mkfix <cluster> <system age h|-> <claudecode age h|->
 import sys, json, datetime
 now, cn, sysage, ccage = int(sys.argv[1]), sys.argv[2], sys.argv[3], sys.argv[4]
 def ts(h):
+    if h == "bad": return "not-a-time"
     t = datetime.datetime.fromtimestamp(now - int(h) * 3600, datetime.timezone.utc)
     return t.strftime("%Y-%m-%dT%H:%M:%S+00:00")
 # Keys built from the cluster name the way the two uploaders build them
@@ -90,6 +91,22 @@ run() { # run <block> <label> <cluster> <sysage> <ccage> <want-level> <needle>..
   # families, and then every case here would pass whatever the selector did.
   epoch_of() { python3 -c "import sys,datetime;print(int(datetime.datetime.strptime(sys.argv[1],'%Y-%m-%dT%H:%M:%S%z').timestamp()))" "${1/Z/+00:00}" 2>/dev/null; }
   aws() { printf '%s\n' "$fixture"; }
+  # The archive CronJob as the row reads it (#152). CJ is set per case:
+  #   on:<h>   present, not suspended, created <h> hours before NOW
+  #   suspended / off (NotFound) / err (any other error: the third outcome)
+  # It checks its ARGUMENTS, so a row that asks about the wrong object reads
+  # `err` here instead of passing on whatever the stub happens to say.
+  kubectl() {
+    [[ "$*" == "-n claudecode get cronjob claudecode-state-backup -o json" ]] \
+      || { echo "stub: unexpected kubectl $*" >&2; return 1; }
+    case "$CJ" in
+      on:*) python3 -c 'import sys,json,datetime;n=int(sys.argv[1]);h=int(sys.argv[2]);print(json.dumps({"metadata":{"creationTimestamp":datetime.datetime.fromtimestamp(n-h*3600,datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")},"spec":{"suspend":False}}))' "$NOW" "${CJ#on:}" ;;
+      suspended) echo '{"metadata":{"creationTimestamp":"2025-01-01T00:00:00Z"},"spec":{"suspend":true}}' ;;
+      off) echo 'Error from server (NotFound): cronjobs.batch "claudecode-state-backup" not found' >&2; return 1 ;;
+      err) echo 'Error from server (Forbidden): cronjobs.batch "claudecode-state-backup" is forbidden' >&2; return 1 ;;
+      *) echo "stub: unknown CJ=$CJ" >&2; return 1 ;;
+    esac
+  }
   # ⚠️ Per-case reset, and its absence was a real hole (FO-runbook [5fe39a] on
   # #151). `run` unset the stub FUNCTIONS but not these VARIABLES, so
   # DEST_CC_AGE_H survived from the previous case -- and the shipped script
@@ -100,10 +117,12 @@ run() { # run <block> <label> <cluster> <sysage> <ccage> <want-level> <needle>..
   # mutation that alerts on `none` BY TESTING THAT UNSET VARIABLE passed.
   # A harness that carries state between cases is testing a tree nobody runs.
   unset DEST_CC_AGE_H DEST_CC_EPOCH DEST_CC_LATEST DEST_CC_COUNT DEST_CC_NOTE \
-        DEST_LEVEL DEST_LATE DEST_AGE_H DEST_EPOCH DEST_LATEST DEST_COUNT DEST_JSON
+        DEST_LEVEL DEST_LATE DEST_AGE_H DEST_EPOCH DEST_LATEST DEST_COUNT DEST_JSON \
+        DEST_CC_UNPARSEABLE DEST_CC_ARMED DEST_CC_CJ_MSG DEST_CC_CJ_JSON \
+        DEST_CC_CJ_CREATED DEST_CC_CJ_EPOCH DEST_CC_CJ_AGE_H
   # shellcheck disable=SC1091
   source "$blk"
-  unset -f aws date epoch_of record 2>/dev/null || true
+  unset -f aws date epoch_of record kubectl 2>/dev/null || true
 
   local got="${OUT:-<no row>}" lvl bad=""
   lvl="${got%%]*}"; lvl="${lvl#[}"
@@ -122,15 +141,16 @@ run() { # run <block> <label> <cluster> <sysage> <ccage> <want-level> <needle>..
     [[ "$got" == *"$n"* ]] || bad="${bad}${bad:+; }missing '"'"'${n}'"'"'"
   done
   if [[ -z "$bad" ]]; then
-    printf 'PASS  %-18s %-14s sys=%-4s cc=%-4s -> %s\n' "$label" "$cn" "$sysage" "$ccage" "${got:0:54}"
+    printf 'PASS  %-22s %-14s sys=%-4s cc=%-4s cj=%-9s -> %s\n' "$label" "$cn" "$sysage" "$ccage" "$CJ" "${got:0:54}"
   else
-    printf 'FAIL  %-18s %-14s sys=%-4s cc=%-4s -> %s\n        %s\n' \
-      "$label" "$cn" "$sysage" "$ccage" "$got" "$bad"
+    printf 'FAIL  %-22s %-14s sys=%-4s cc=%-4s cj=%-9s -> %s\n        %s\n' \
+      "$label" "$cn" "$sysage" "$ccage" "$CJ" "$got" "$bad"
     FAILED=$((FAILED + 1))
   fi
 }
 
 B="$WORK/block.sh"
+CJ="on:500"   # default: archive enabled long ago, not suspended (#152)
 CC1="claudecode: 1h ago, 1 objects"   # the whole phrase, numbers included
 # The case the defect lived in: the system archive is three days dead and the
 # claudecode one is an hour old. The row must speak about the system archive.
@@ -144,8 +164,10 @@ run "$B" db-dead-alone     demo  72  -  fail "claudecode: none"
 run "$B" both-fresh        demo   2  1  ok   "1 system objects" "$CC1"
 # System family absent entirely. "The prefix is not empty" is true and useless.
 run "$B" cc-only           demo   -  1  fail "no system archive; $CC1"
-# Nothing from claudecode yet -- every cluster, until this ships.
-run "$B" sys-only          demo   2  -  ok   "1 system objects" "claudecode: none"
+# Nothing from claudecode, archive off (CronJob absent): an im/disabled cluster.
+CJ=off
+run "$B" sys-only          demo   2  -  ok   "1 system objects" "claudecode: none (archive off"
+CJ="on:500"
 # The thresholds still belong to the system family.
 run "$B" db-late-cc-fresh  demo  30  1  warn "newest system archive is 30h old" "$CC1"
 # ⚠️ A cluster whose own NAME contains the discriminator. Under a bare
@@ -174,7 +196,56 @@ run "$B" sys-fail-cc-late  demo  72 30  fail "system 72h, claudecode 30h"
 # ⚠️ And the case that must NOT fire: no claudecode objects at all is the
 # permanent, correct state of every `im/disabled` cluster. A row that cries wolf
 # there gets switched off, which costs more than this check is worth.
-run "$B" cc-none-stays-ok  demo   2  -  ok   "claudecode: none"
+CJ=off
+run "$B" cc-none-stays-ok  demo   2  -  ok   "claudecode: none (archive off"
+
+# --- #152: is the claudecode archive SUPPOSED to be uploading? -------------
+# CronJob {present, absent, suspended, unreadable} x claudecode {none, fresh,
+# stale}. Each verdict below is asserted as a level AND a phrase, so "ignore
+# the discriminator" and "invert it" are caught by a case, not by a crash.
+CJ=off
+run "$B" off-stale-not-judged  demo  2 72  ok   "claudecode: 72h ago, 1 objects (archive off"
+run "$B" off-fresh             demo  2  1  ok   "claudecode: 1h ago, 1 objects (archive off"
+run "$B" off-bad-ts-not-judged demo  2 bad ok   "timestamp unparseable (archive off"
+run "$B" off-sys-dead-still    demo 72 72  fail "system 72h" "(archive off"
+CJ="on:500"
+run "$B" on-stale              demo  2 72  fail "claudecode 72h"
+run "$B" on-none-long          demo  2  -  fail "claudecode none, enabled 500h ago"
+CJ="on:2"
+run "$B" on-none-grace         demo  2  -  ok   "first archive pending"
+CJ="on:26"
+run "$B" on-none-26h           demo  2  -  ok   "enabled 26h ago, first archive pending"
+CJ="on:27"
+run "$B" on-none-27h           demo  2  -  warn "claudecode none, enabled 27h ago"
+CJ="on:48"
+run "$B" on-none-48h           demo  2  -  warn "claudecode none, enabled 48h ago"
+CJ="on:49"
+run "$B" on-none-49h           demo  2  -  fail "claudecode none, enabled 49h ago"
+CJ=suspended
+run "$B" suspended-fresh       demo  2  1  warn "claudecode archive suspended" "(archive CronJob suspended)"
+run "$B" suspended-sys-dead    demo 72  1  fail "system 72h, claudecode archive suspended"
+CJ=err
+run "$B" unknown-stale-judged  demo  2 72  fail "claudecode 72h" "unreadable: Error from server (Forbidden)"
+run "$B" unknown-none-warns    demo  2  -  warn "claudecode none and its CronJob unreadable"
+run "$B" unknown-fresh         demo  2  1  ok   "claudecode: 1h ago, 1 objects (archive CronJob unreadable"
+CJ="on:500"
+
+# --- #152 item 2: an unreadable claudecode timestamp is warn, not ok --------
+run "$B" cc-bad-ts-warns       demo  2 bad warn "claudecode timestamp unparseable"
+run "$B" cc-bad-ts-sys-fail    demo 72 bad fail "system 72h, claudecode timestamp unparseable"
+
+# --- #152 item 3: both edges of both thresholds, both families --------------
+# The comparisons are `>`: 26h ok, 27h warn; 48h warn, 49h fail. Cases on each
+# side so moving an edge by one hour (or by two, which the 2h/30h/72h cases
+# above never noticed) is caught.
+run "$B" sys-26h               demo 26  1  ok   "fresh (26h ago"
+run "$B" sys-27h               demo 27  1  warn "system 27h"
+run "$B" sys-48h               demo 48  1  warn "system 48h"
+run "$B" sys-49h               demo 49  1  fail "system 49h"
+run "$B" cc-26h                demo  2 26  ok   "claudecode: 26h ago"
+run "$B" cc-27h                demo  2 27  warn "claudecode 27h"
+run "$B" cc-48h                demo  2 48  warn "claudecode 48h"
+run "$B" cc-49h                demo  2 49  fail "claudecode 49h"
 
 echo
 # --- control: can this guard see the defect it was written for? -------------
@@ -251,5 +322,5 @@ if [[ -n "$CTL_NOTE" ]]; then
   echo "$CTL_NOTE"
   exit 2
 fi
-echo "PASS — row 21 gives BOTH families a verdict (worst wins) and names both in every outcome; the system object count excludes claudecode; an absent claudecode family stays [ok]; and a cluster named *-claudecode-* is still classified correctly"
+echo "PASS — row 21 gives BOTH families a verdict (worst wins) and names both in every outcome; the system object count excludes claudecode; the claudecode family is judged only when its CronJob exists (absent: reported, not judged; suspended: warn; unreadable: warn when empty), an empty family on an enabled cluster is judged by the CronJob's age; an unparseable claudecode timestamp is warn; both edges of 26h/48h hold for both families; and a cluster named *-claudecode-* is still classified correctly"
 exit 0
