@@ -18,3 +18,24 @@ spec:
     namespace: flux-system
   targetNamespace: monitoring
   wait: false
+---
+# Row 27's exec grant lives in kube-system, so it cannot ride in the
+# Kustomization above (targetNamespace: monitoring rewrites it). See
+# kube-system/rbac.yaml.
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: daily-check-cilium-exec
+  namespace: flux-system
+spec:
+  interval: 1h
+  path: ./kubernetes/apps/base/monitoring/daily-check/kube-system
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: jg-base
+    namespace: flux-system
+  # No targetNamespace on purpose: the manifests say kube-system themselves,
+  # and the RoleBinding's subject is in monitoring — a namespace transform
+  # could rewrite that subject too.
+  wait: false
