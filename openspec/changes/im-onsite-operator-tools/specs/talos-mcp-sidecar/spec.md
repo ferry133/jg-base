@@ -55,14 +55,14 @@ The `app` container's Claude Code agent SHALL have access, via a registered remo
 ## REMOVED Requirements
 
 ### Requirement: No mutating Talos capability introduced
-**Reason**: 2026-10-11 showed the "manual, ephemeral break-glass workflow" this requirement deferred to costs the operator company ~3 hours and the on-site agent nothing it can do; the customer's own agent must be able to graceful-reboot its own node with the on-site human's approval.
+**Reason**: 2026-10-11 showed the "manual, ephemeral break-glass workflow" this requirement deferred to costs the operator company ~3 hours and the on-site agent nothing it can do; the company's on-site agent (`im`) must be able to graceful-reboot a node of the cluster it maintains on its own diagnosis. `im` is the company's tool and only company staff reach it (ferry133 ruling 2026-10-15, superseding the 2026-10-12 wording "with the on-site human's approval"), so the gate is server-side, never a human prompt.
 **Migration**: Replaced by "Gated mutating capability" below; the reader credential's read-only ceiling is unchanged, and the mutating tool exists only where an operator credential has been provisioned per `operator-credential-lifecycle`.
 
 ## ADDED Requirements
 
 ### Requirement: Gated mutating capability
 
-The sidecar SHALL expose exactly one mutating tool, a graceful node reboot, and only while a non-empty, readable and unexpired operator credential is mounted. The tool's call contract (two-phase confirmation, call-time node allowlist, audit line, own-node handling) is specified in `k8scc`'s `talos-operator-escalation` capability; this requirement fixes the sidecar-level conditions.
+The sidecar SHALL expose exactly one mutating tool, a graceful node reboot, and only while a non-empty, readable and unexpired operator credential is mounted. The tool's call contract (two-phase confirmation, call-time node allowlist, audit line, own-node handling, and — since the 2026-10-15 ruling — the server-side guardrails: control-plane quorum, per-node cooldown, caller-supplied reason) is specified in `k8scc`'s `talos-operator-escalation` capability; this requirement fixes the sidecar-level conditions. No human approval is part of the contract: the sidecar SHALL NOT depend on the agent's permission profile prompting anyone.
 
 #### Scenario: No operator credential, no mutating tool
 - **WHEN** the MCP server's tool list is inspected on a sidecar whose operator credential is absent or empty
@@ -75,3 +75,7 @@ The sidecar SHALL expose exactly one mutating tool, a graceful node reboot, and 
 #### Scenario: Node outside this cluster is refused
 - **WHEN** `reboot_node` is called with an IP that is not an InternalIP of a node in this cluster at call time
 - **THEN** the call is refused before any Talos API call is made, and the refusal is written to the audit line
+
+#### Scenario: No human prompt is relied upon
+- **WHEN** the agent calls `reboot_node` under a permission profile that auto-allows the tool (no prompt, nobody at the terminal)
+- **THEN** the only gates are the sidecar's own: credential present, node allowlisted at call time, two-phase token, and the server-side guardrails; the audit line is written regardless of how the agent's permission layer resolved the call

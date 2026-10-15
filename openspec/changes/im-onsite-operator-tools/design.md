@@ -21,13 +21,13 @@
 1. **Omni 管的叢集，直連 LAN 的 Talos 憑證只有 break-glass 一種來源。** `talosctl config new` 要 `os:admin`，Omni 不給任何身分這個角色（insideman Decision 2 量過）；`--break-glass` 固定給 `os:operator`、沒有 TTL 旗標（10-11 量到：一年）。
 2. **Omni 代理的路與 SideroLink 故障是同一條。** Reader 憑證再好，節點掉線時它就瞎了——而那正是需要它的時候。
 3. **`app` 容器早已是 `cluster-admin`**（`rbac.yaml`，2026-07-26 裁定：Omni 掛了也要有救援路）。它本來就能建 hostPID 特權 pod 用 sysrq 硬重開。sidecar 裡一把只會 reboot／shutdown、不會 reset 的 `os:operator`，**沒有擴大既有的爆炸半徑**。
-4. **Claude Code 的 Bash 分類器與 MCP 工具的 permission 規則是兩套東西。** 前者把 `talosctl` 整個當危險指令（連本機 `config info` 都擋）、auto mode 下對 reboot 無提示拒絕；後者可以逐工具寫 `allow`／`ask`，提示會停著等人按。
+4. **Claude Code 的 Bash 分類器與 MCP 工具的 permission 規則是兩套東西。** 前者把 `talosctl` 整個當危險指令（連本機 `config info` 都擋）、auto mode 下對 reboot 無提示拒絕；後者可以逐工具寫 `allow`／`ask`，提示會停著等人按。（`ask` 在 auto mode 下的實際行為，root 5.6 量到互相矛盾的讀數——見 tasks 5.6；2026-10-15 裁定後 `reboot_node` 走 `allow`，那一格不再是門的一部分。）
 
 ## Goals / Non-Goals
 
 **Goals：**
 - im 在 SideroLink 斷線時仍看得到節點（直連 LAN 讀取退路）。
-- im 能 graceful reboot 自己叢集的節點，由**坐在 ttyd 前的人**按一次確認，公司不必在場。
+- im 能 graceful reboot 自己叢集的節點，**依自己的診斷執行、預設沒有人按**，事後向公司回報。登得進 im 的只有公司的人（factory Auth0 tenant），不是客戶——ferry133 2026-10-15 裁定；10-12 版寫的「由坐在 ttyd 前的人按一次確認」已撤。
 - 憑證仍然只在 sidecar；`app` 容器拿不到；叢集外的節點碰不到。
 - 憑證的鑄造、攜帶、撤銷、效期各有一個會跑的家（fleet-ops skill ＋ pipeline），不再是「操作員手動、臨時、每次授權」。
 - 公司 → im 的交辦有一個不靠瀏覽器打字的通道。
@@ -64,16 +64,17 @@ Omni 文件：Talos API CA 輪替不中斷叢集內連線、不重開節點；�
 | Talos 角色 `os:operator` | reset／apply／upgrade／鑄憑證 | 節點伺服端 |
 | 工具面只有 `reboot_node` | 任何不是 graceful reboot 的動作 | MCP server 程式碼（k8scc） |
 | 兩段式 confirm ＋ 呼叫時推導的 allowlist ＋ audit | 手滑、叢集外節點、不留痕 | MCP server 程式碼（契約 spec 在 k8scc `talos-operator-escalation`） |
-| Claude Code `permissions.ask` | agent 自作主張 | 坐在 ttyd 前的人 |
+| 伺服端守衛：另一台控制平面不 Ready 就拒、每節點冷卻時間、自身節點時回應明說「整個 im 隨之停擺」、audit 行要 agent 給 `reason` | 診斷錯的重開、連鎖重開、說不出理由的重開 | MCP server 程式碼（k8scc） |
 
-insideman 的「工具不存在＋角色拒絕」雙保險在 reboot 這一格變成「工具存在但四層門檻」。這是有意識的降級，換來的是客戶端能自己走完。
+insideman 的「工具不存在＋角色拒絕」雙保險在 reboot 這一格變成「工具存在但四層門檻」。這是有意識的降級，換來的是在地的 im 能自己走完。
+**第四層的歷史**：10-12 版寫的是「Claude Code `permissions.ask`，由坐在 ttyd 前的人按」。2026-10-15 ferry133 裁定移除——im 是公司的工具，要自己走完，不等人；而且 5.6 量到的 `ask` 行為讀數互相矛盾（tasks 5.6），一道靠「人會看到提示」的門在沒有人坐著的 ttyd 上本來就不存在。兩段式 token 留著，但它是 agent 自己的第二眼，不是對 agent 的門——所以第四層改成伺服端守衛，而且**守衛要先落地，`ask` 才翻成 `allow`**。
 
 **5. 讀取退路用 operator 憑證 `--endpoints <node>` 直連，Omni 路徑仍是主路。**
 主路保留 Omni 的 `x-sidero-signature` 稽核；退路只在主路失敗（timeout／`Unavailable`／`no route`）且 operator 憑證在場時啟用，輸出第一行標 `[via direct LAN]`（有到期警告行時緊接在它之後——k8scc 2026-10-13 定稿）。
 - *替代*：全部改直連——拒絕，平時少一份 Omni 稽核，而且 reader 憑證就沒用了。
 
 **6. permission 規則由 `claude-session` 寫進 `settings.json`，合併不覆寫。**
-映像層的預設可重現；PVC 上的 `settings.json` 是客戶的、會被手改。寫 `permissions.allow: mcp__talos__get_*`、`permissions.ask: mcp__talos__reboot_node`。
+映像層的預設可重現；PVC 上的 `settings.json` 是那座 im 自己的、會被手改。寫 `permissions.allow` 給五個 `mcp__talos__*` 工具；`reboot_node` 在守衛（Decision 4 第四層）落地前維持 `ask`，落地的同一個映像裡改 `allow`——10-12 版寫的「`permissions.ask: mcp__talos__reboot_node`」是過渡態，不是終態（2026-10-15 裁定）。
 
 **7. 交辦信箱＝`~/workspace/inbox/`，`claude-session` 非空時印一行。**
 最便宜的耐久通道：公司這側 `kubectl exec`／`cp` 放檔，im 讀完改名 `*.read`。不做 MCP、不做通知——先量它有沒有被用。
@@ -85,6 +86,7 @@ insideman 的「工具不存在＋角色拒絕」雙保險在 reboot 這一格�
 - **[Risk] 單節點叢集 reboot 自己坐的那台，`--wait` 永遠回不來** → sidecar 是 hostNetwork，pod IP ＝ node IP；`node` 等於自己時明寫 `--wait=false`、回傳「已下令，本 pod 將隨節點重啟」；其他節點 `--wait=true --timeout=600s`。**k8scc 2026-10-13 量到 `talosctl reboot --wait` 預設是 true**（talosctl 1.12），「不帶 `--wait`」照字面做會等自己死掉——所以旗標要明寫。
 - **[Risk] allowlist 靠 `kubectl get nodes`，API server 不可用時推不出來** → fail closed：拒絕並說明；不退回 `TALOS_NODES`。
 - **[Risk] confirm token 被重放** → 單次有效、120 秒過期、綁 node。
+- **[Risk] im 自作主張重開**（2026-10-15 裁定後，取代「agent 自作主張 → 人按提示」那一格）→ 伺服端守衛：另一台控制平面不 Ready 就拒、每節點冷卻時間、自身節點時明說整個 im 停擺、audit 行帶 `reason`；每一格在拋棄式叢集有負對照；事後向公司回報。**守衛未落地前 `reboot_node` 維持 `ask`。**
 - **[Trade-off] 每座交付叢集永久 tainted** → 接受；它是標籤不是限制（待量）。代價是 Omni 無法再宣稱「所有 Talos 存取都經我」——本來 `app` 的 cluster-admin 就已讓這句話不成立。
 - **[Trade-off] CA 輪替成本是一次完整 rollout** → 所以不週期做；交接時本來就要重新發憑證。
 
@@ -96,3 +98,4 @@ insideman 的「工具不存在＋角色拒絕」雙保險在 reboot 這一格�
 4. `fleet-ops`：skill `talos-operator-credential`（mint／verify／rotate）；在拋棄式叢集量 taint 與輪替；`docs/content.md` 加入口。
 5. `jg-jiahd`（user repo，fleet-ops agent）：mint → `cluster.yaml` → `task configure` → push → 從 ttyd 驗證 `get_link_status` 直連路徑、`reboot_node` 的第一段（只拿 token，不重開）。真的重開只在拋棄式叢集驗。
 6. 回滾：拿掉欄位 → render → 工具消失、退路關閉。**憑證本身要 `rotate talos-ca` 才失效**——回滾與撤銷是兩件事。
+7. **2026-10-15 裁定後**（步驟 5 已在生產上走過一次：ferry133 坐在 ttyd 前、im 經 `reboot_node` 重開 `.23`）：`k8scc` 加伺服端守衛並在同一個映像把 `reboot_node` 改 `allow`、CLAUDE.md 寫明 im 的權限與事後回報 → k8scc CI 對 `jg-base` 開 pin-bump → 合併＝部署（兩座 im 各重啟一次）→ 守衛的負對照在拋棄式叢集量（tasks 7）。
