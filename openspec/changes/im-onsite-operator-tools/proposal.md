@@ -6,7 +6,7 @@
 
 | repo | change | 負責什麼 |
 |---|---|---|
-| `k8scc` | `im-onsite-operator-tools` | `talos_mcp_server.py`：第二把（operator）憑證、讀取工具的直連 LAN 退路、`reboot_node` 工具的 confirm／allowlist／audit 契約；`claude-session`：MCP 工具的 permission 規則、`inbox/` 非空時的提示；映像重建 |
+| `k8scc` | `im-onsite-operator-tools`（**已封存** 2026-10-15，k8scc#27 merge `4e9aaaa`：`openspec/changes/archive/2026-10-15-im-onsite-operator-tools`；三個 capability 的 spec 現住 k8scc `openspec/specs/{talos-operator-escalation,im-permission-profile,operator-inbox}`） | `talos_mcp_server.py`：第二把（operator）憑證、讀取工具的直連 LAN 退路、`reboot_node` 工具的 confirm／allowlist／audit 契約；`claude-session`：MCP 工具的 permission 規則、`inbox/` 非空時的提示；映像重建 |
 
 ## Why
 
@@ -33,7 +33,7 @@
 ### Modified Capabilities
 - `talos-mcp-sidecar`：(1) 「Isolated Talos credential per client」擴成兩把憑證、同一個隔離邊界；(2) 「Read-only Talos diagnostic tools」加上直連 LAN 退路的要求；(3) 「No mutating Talos capability introduced」**替換**為「Gated mutating capability」——工具契約本身（confirm／allowlist／audit）的 spec 住在 `k8scc` 的 sub-change（`talos-operator-escalation`），本 spec 只規定 sidecar 層的條件：operator 憑證不在場時工具不存在、`app` 容器拿不到憑證、叢集外節點被拒、**不以任何人類提示為門**（2026-10-15 裁定）。
 
-（`talos-operator-escalation`、`im-permission-profile`、`operator-inbox` 三個新 capability 的 spec **住在 `k8scc` 的 sub-change**，因為它們描述的是那個 repo 的檔案的行為；本 change 不複製。）
+（`talos-operator-escalation`、`im-permission-profile`、`operator-inbox` 三個新 capability 的 spec **住在 `k8scc` 的 sub-change**，因為它們描述的是那個 repo 的檔案的行為；本 change 不複製。）（sub-change 封存後它們在 k8scc 的 `openspec/specs/` 底下，路徑同上表。）
 
 ## Impact
 

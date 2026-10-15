@@ -86,9 +86,21 @@ insideman 的「工具不存在＋角色拒絕」雙保險在 reboot 這一格�
 - **[Risk] 單節點叢集 reboot 自己坐的那台，`--wait` 永遠回不來** → sidecar 是 hostNetwork，pod IP ＝ node IP；`node` 等於自己時明寫 `--wait=false`、回傳「已下令，本 pod 將隨節點重啟」；其他節點 `--wait=true --timeout=600s`。**k8scc 2026-10-13 量到 `talosctl reboot --wait` 預設是 true**（talosctl 1.12），「不帶 `--wait`」照字面做會等自己死掉——所以旗標要明寫。
 - **[Risk] allowlist 靠 `kubectl get nodes`，API server 不可用時推不出來** → fail closed：拒絕並說明；不退回 `TALOS_NODES`。
 - **[Risk] confirm token 被重放** → 單次有效、120 秒過期、綁 node。
-- **[Risk] im 自作主張重開**（2026-10-15 裁定後，取代「agent 自作主張 → 人按提示」那一格）→ 伺服端守衛：另一台控制平面不 Ready 就拒、每節點冷卻時間（自身節點從它上次開機起算，sidecar 重啟抹不掉——k8scc#25／#26）、自身節點時明說整個 im 停擺、audit 行帶 `reason`；每一格在拋棄式叢集有負對照；事後向公司回報。**守衛未落地前 `reboot_node` 維持 `ask`。**
+- **[Risk] im 自作主張重開**（2026-10-15 裁定後，取代「agent 自作主張 → 人按提示」那一格）→ 伺服端守衛：另一台控制平面不 Ready 就拒、每節點冷卻時間（自身節點從它上次開機起算，sidecar 重啟抹不掉——k8scc#25／#26）、自身節點時明說整個 im 停擺、audit 行帶 `reason`；每一格在拋棄式叢集有負對照；事後向公司回報。**守衛未落地前 `reboot_node` 維持 `ask`。**（已落地：守衛與 `allow` 同在 k8scc `d8d0fd3`，jg-base#169 部署，2026-10-15 21:0xZ；7.4 讀數。）
 - **[Trade-off] 每座交付叢集永久 tainted** → 接受；它是標籤不是限制（待量）。代價是 Omni 無法再宣稱「所有 Talos 存取都經我」——本來 `app` 的 cluster-admin 就已讓這句話不成立。
 - **[Trade-off] CA 輪替成本是一次完整 rollout** → 所以不週期做；交接時本來就要重新發憑證。
+
+## 收尾時寫回的事實（6.3，2026-10-16，jg-base-0a [4e5e8d]）
+
+執行中量到、而上面的設計沒寫到的事。每條附出處，量的與推的分開標。
+
+- **subPath 掛載不跟著 Secret 更新**（fleet-ops-77 量、k8s 文件如此）：operator 憑證 mint 或輪替後，`im` pod 一定要重啟才讀得到新值。流程的最後一步不是可省的。
+- **pin-bump 的代價是一次拉映像加兩座 `im` 各重啟一次**。jg-jiahd 2026-10-13 拉了 31 m 53 s，`im.jiahd.cc` 那段期間停擺；2026-10-15 的 `d8d0fd3` 約 2 分鐘。推的：差別在節點是否已有快取，沒量。所以部署時機由 ferry133 定。k8scc 只改 openspec 的 commit 也會觸發重建、產生新 digest，映像定義相同，但重建後 linux/amd64 有 11／23 層換掉（arm64 0／23，底座沒動），層內容差異**未審**（k8scc-0c [4dc61c] 用 k8scc#15 的逐層量具量 `d8d0fd3`→`4e9aaaa`；它原先說「只是 provenance／label」是推論且錯了，已在 #172 更正）。那張 pin-bump jg-base#172 經 ferry133 令關閉、未合併。
+- **`[via direct LAN]` 在生產上出現過一次，原因不是 Omni 掛了**（5.4 子項）。jg-jiahd `.21` 的 Cilium agent 拿著一個過期的 kube-dns backend，DNS 查詢被黑洞，Omni 路徑因此逾時。退路照設計接手，首行標記也照設計說了實話。這個 Cilium 漂移後來成為 daily-check row 27（jg-base#159）。
+- **im 曾兩次拒絕由別的 agent 轉述的重開請求**，要終端機前的人自己打（5.4 子項）。在當時的 `ask` 設計下那是對的。2026-10-15 裁定改成 im 自己走完之後，這個行為由伺服端守衛取代，不再適用。
+- **audit 欄位名是 `stated_reason`**（k8scc 7.2）：記的是 agent 給的理由，不是驗證過的原因。欄位名刻意這樣取，免得讀者把它當成診斷結果。
+- **自身節點的冷卻從開機起算，不從記憶體算**（k8scc#25／#26）。原因：自身節點一重開，sidecar 就跟著重啟，記憶體裡的冷卻紀錄隨之歸零，記憶體式的冷卻在這條路徑上等於不存在。代價：任何開機都算，包括停電回來。其他節點的冷卻仍放在記憶體。
+- **拋棄式驗證期間的量具自白**（fleet-ops-77）：拿假時鐘測 token 過期時，monkeypatch 沒有綁上，結果真的重開了一台拋棄式節點。真時鐘那格才是讀數。下次對會開槍的斷言，不要用假時鐘。
 
 ## Migration Plan
 
