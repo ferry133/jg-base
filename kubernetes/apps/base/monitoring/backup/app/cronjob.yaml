@@ -39,7 +39,12 @@ spec:
   jobTemplate:
     spec:
       backoffLimit: 1
-      ttlSecondsAfterFinished: 172800
+      # ⚠️ Coupled to failedJobsHistoryLimit above: two days of TTL against a
+      # daily schedule means the limit of 3 was never reachable, and the
+      # stricter knob wins without saying so (ferry133/jg-base#143). To hold N
+      # runs at interval G you need at least (N-1)*G. Guard:
+      # scripts/check-cronjob-retention.sh.
+      ttlSecondsAfterFinished: 259200
       # An upper bound, because without one a stuck run is not merely slow —
       # `concurrencyPolicy: Forbid` above means it blocks EVERY later schedule,
       # and a blocked schedule leaves no trace of its own. The stuck Job stays
