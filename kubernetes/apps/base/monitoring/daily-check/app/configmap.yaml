@@ -1266,7 +1266,10 @@ data:
           DEST_CC_ARMED=unknown
           DEST_CC_CJ_MSG=""
           DEST_CC_CJ_ERR=$(mktemp)
-          if ! command -v kubectl >/dev/null 2>&1; then
+          # Spelled differently from row 26's `if ! command -v kubectl …` on
+          # purpose: scripts/check-kubectl-skew-row.sh slices row 26 by that
+          # exact line, and an identical line here was found first.
+          if [[ -z "$(command -v kubectl)" ]]; then
             DEST_CC_CJ_MSG="kubectl is not installed"
           elif DEST_CC_CJ_JSON=$(kubectl -n claudecode get cronjob claudecode-state-backup -o json 2>"$DEST_CC_CJ_ERR"); then
             if [[ "$(echo "$DEST_CC_CJ_JSON" | jq -r '.spec.suspend // false')" == "true" ]]; then
