@@ -64,7 +64,7 @@ Omni 文件：Talos API CA 輪替不中斷叢集內連線、不重開節點；�
 | Talos 角色 `os:operator` | reset／apply／upgrade／鑄憑證 | 節點伺服端 |
 | 工具面只有 `reboot_node` | 任何不是 graceful reboot 的動作 | MCP server 程式碼（k8scc） |
 | 兩段式 confirm ＋ 呼叫時推導的 allowlist ＋ audit | 手滑、叢集外節點、不留痕 | MCP server 程式碼（契約 spec 在 k8scc `talos-operator-escalation`） |
-| 伺服端守衛：另一台控制平面不 Ready 就拒、每節點冷卻時間、自身節點時回應明說「整個 im 隨之停擺」、audit 行要 agent 給 `reason` | 診斷錯的重開、連鎖重開、說不出理由的重開 | MCP server 程式碼（k8scc） |
+| 伺服端守衛：另一台控制平面不 Ready 就拒、每節點冷卻時間（自身節點從它上次開機起算，sidecar 重啟抹不掉——k8scc#25／#26）、自身節點時回應明說「整個 im 隨之停擺」、audit 行要 agent 給 `reason` | 診斷錯的重開、連鎖重開、說不出理由的重開 | MCP server 程式碼（k8scc） |
 
 insideman 的「工具不存在＋角色拒絕」雙保險在 reboot 這一格變成「工具存在但四層門檻」。這是有意識的降級，換來的是在地的 im 能自己走完。
 **第四層的歷史**：10-12 版寫的是「Claude Code `permissions.ask`，由坐在 ttyd 前的人按」。2026-10-15 ferry133 裁定移除——im 是公司的工具，要自己走完，不等人；而且 5.6 量到的 `ask` 行為讀數互相矛盾（tasks 5.6），一道靠「人會看到提示」的門在沒有人坐著的 ttyd 上本來就不存在。兩段式 token 留著，但它是 agent 自己的第二眼，不是對 agent 的門——所以第四層改成伺服端守衛，而且**守衛要先落地，`ask` 才翻成 `allow`**。
@@ -86,7 +86,7 @@ insideman 的「工具不存在＋角色拒絕」雙保險在 reboot 這一格�
 - **[Risk] 單節點叢集 reboot 自己坐的那台，`--wait` 永遠回不來** → sidecar 是 hostNetwork，pod IP ＝ node IP；`node` 等於自己時明寫 `--wait=false`、回傳「已下令，本 pod 將隨節點重啟」；其他節點 `--wait=true --timeout=600s`。**k8scc 2026-10-13 量到 `talosctl reboot --wait` 預設是 true**（talosctl 1.12），「不帶 `--wait`」照字面做會等自己死掉——所以旗標要明寫。
 - **[Risk] allowlist 靠 `kubectl get nodes`，API server 不可用時推不出來** → fail closed：拒絕並說明；不退回 `TALOS_NODES`。
 - **[Risk] confirm token 被重放** → 單次有效、120 秒過期、綁 node。
-- **[Risk] im 自作主張重開**（2026-10-15 裁定後，取代「agent 自作主張 → 人按提示」那一格）→ 伺服端守衛：另一台控制平面不 Ready 就拒、每節點冷卻時間、自身節點時明說整個 im 停擺、audit 行帶 `reason`；每一格在拋棄式叢集有負對照；事後向公司回報。**守衛未落地前 `reboot_node` 維持 `ask`。**
+- **[Risk] im 自作主張重開**（2026-10-15 裁定後，取代「agent 自作主張 → 人按提示」那一格）→ 伺服端守衛：另一台控制平面不 Ready 就拒、每節點冷卻時間（自身節點從它上次開機起算，sidecar 重啟抹不掉——k8scc#25／#26）、自身節點時明說整個 im 停擺、audit 行帶 `reason`；每一格在拋棄式叢集有負對照；事後向公司回報。**守衛未落地前 `reboot_node` 維持 `ask`。**
 - **[Trade-off] 每座交付叢集永久 tainted** → 接受；它是標籤不是限制（待量）。代價是 Omni 無法再宣稱「所有 Talos 存取都經我」——本來 `app` 的 cluster-admin 就已讓這句話不成立。
 - **[Trade-off] CA 輪替成本是一次完整 rollout** → 所以不週期做；交接時本來就要重新發憑證。
 
