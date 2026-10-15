@@ -14,11 +14,12 @@
 
 ## 2. `k8scc` sub-change（指標，不複製）
 
-- [ ] 2.1 `k8scc`：完成 `openspec/changes/im-onsite-operator-tools`（server 的第二把憑證、直連退路、`reboot_node`、`claude-session` 的 permission 合併與 inbox 提示、`CLAUDE.md`、映像）；把新 image tag 回報到本檔 3.2。
+- [x] 2.1 `k8scc`：完成 `openspec/changes/im-onsite-operator-tools`（server 的第二把憑證、直連退路、`reboot_node`、`claude-session` 的 permission 合併與 inbox 提示、`CLAUDE.md`、映像）；把新 image tag 回報到本檔 3.2。
   - 實作：ferry133/k8scc#20（k8scc-0c [4dc61c]，head `27746a6`）；jg-base-0a [4e5e8d] 2026-10-13 23:58 驗收通過（22＋24 項測試、四個突變各紅；root 引用的 19 個字面值逐一命中）。**映像那一半未完**：k8scc 的 workflow 只在 push main 跑，合併要 ferry133 點頭；合併後 CI 對本 repo 開的 pin-bump PR 就是 3.2b 的輸入。
   - 映像（2026-10-13 22:10–22:49Z）：k8scc#20 以 `6e6beb2` 合併為 `42a1457`（ferry133「1. go」，jg-base-0a 按下）→ main build run 38475915481 在新加的 `test/claude-session-controls.sh` 紅（23/24）——**量具不是產品**：GNU `stat` 的 `-f` 是布林旗標，`stat -f %m FILE || stat -c %Y FILE` 在 Linux 收進檔案系統統計（會動的 Free blocks），macOS 看不到；k8scc#21 `7cbb98f`（mtime 改 python `st_mtime_ns`＋「touch 後讀數會動」的控制組）由 jg-base-0a 六格驗收、ferry133「go, merge #21」、合併為 **`fb98a11`**（22:40:06Z）→ run 38479314837 綠（32/0、14/0、22 OK、25/0）→ 映像 **`fb98a11@sha256:3ba87565bfbe2154dbdba9ffa2338953defcb4b1d87555e5958be7ec27770e78`**（bump job 的 written／built 兩源相等）→ CI 對本 repo 開 jg-base#156＝3.2b。 k8scc-0c 06:5x 以訊息回報 tag／digest（與 bump job 讀數相同；另有 `factory-`／`ops-` 變體，root 不用）；k8scc 自己的 3.2（回報）就是那封，3.3（archive）未做——**2.1 等 k8scc archive 後再勾**，6.3 跟著。
   - root 跟著 k8scc 量到的改字（本 PR）：`--wait=false` 取代「不帶 `--wait`」（talosctl 1.12 的 `--wait` 預設 true）；spec 的「non-empty」加「readable and unexpired」；「first line」加「到期警告行之後」。
   - 裁定（jg-base）：talos-mcp 容器**不設** `CLAUDE_USER_ID`，audit 的 `user` 留空——sidecar 不知道 ttyd 的身分，填常數會讀起來像身分。
+  - **完成（2026-10-16 勾）**：k8scc sub-change 以 k8scc#27 封存（merge `4e9aaaa`，k8scc-0c [4dc61c] 依 ferry133 令按下），14/14 tasks。生產映像是 `d8d0fd3`（3.2b／7.4，jg-base#169）；`4e9aaaa` 只多了 archive commit，它的 pin-bump jg-base#172 經 ferry133 令關閉、未合併。
 
 ## 3. `jg-base`
 
@@ -67,7 +68,8 @@
 
 - [ ] 6.1 `fleet-ops`：`escrow-refresh jg-jiahd`（`cluster.yaml` 變了）；`docs/verification-status.md` 重算。
 - [ ] 6.2 `fleet-ops`：`routing-log.md` 條目（本 change 建在 `jg-base` 的理由：它改的 spec 在那裡；fleet-ops 只持有 skill 與指標）；memory `jg-jiahd-break-glass-2026-10-11` 更新成 5.2 的結果。
-- [ ] 6.3 `jg-base`：`k8scc` sub-change archive 後，依四條規則更新本 root；本 root 在 sub 仍 active 時不可 archive。
+- [x] 6.3 `jg-base`：`k8scc` sub-change archive 後，依四條規則更新本 root；本 root 在 sub 仍 active 時不可 archive。
+  - **完成（2026-10-16，jg-base-0a [4e5e8d]）**：proposal 的 sub-change 表改指封存路徑與 k8scc `openspec/specs/`；design.md 新增「收尾時寫回的事實」一節，收齊沿途累積的七條；Risks 那條「守衛未落地前維持 `ask`」補上落地紀錄。`~/.claude/scripts/check-change-orchestration.py` 回報 every cross-repo link resolves。sub-change 已不再 active，本 root 可以封存；還沒勾的只剩 fleet-ops 的 6.1／6.2。
 
 ## 7. 2026-10-15 裁定後的修正：im 是公司的工具，自己走完（ferry133，原話見 proposal「權限層」那條）
 
