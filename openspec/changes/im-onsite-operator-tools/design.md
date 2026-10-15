@@ -95,7 +95,7 @@ insideman 的「工具不存在＋角色拒絕」雙保險在 reboot 這一格�
 執行中量到、而上面的設計沒寫到的事。每條附出處，量的與推的分開標。
 
 - **subPath 掛載不跟著 Secret 更新**（fleet-ops-77 量、k8s 文件如此）：operator 憑證 mint 或輪替後，`im` pod 一定要重啟才讀得到新值。流程的最後一步不是可省的。
-- **pin-bump 的代價是一次拉映像加兩座 `im` 各重啟一次**。jg-jiahd 2026-10-13 拉了 31 m 53 s，`im.jiahd.cc` 那段期間停擺；2026-10-15 的 `d8d0fd3` 約 2 分鐘。推的：差別在節點是否已有快取，沒量。所以部署時機由 ferry133 定。k8scc 只改 openspec 的 commit 也會觸發重建、產生新 digest，但映像定義相同（jg-base#172，ferry133 令關閉）。
+- **pin-bump 的代價是一次拉映像加兩座 `im` 各重啟一次**。jg-jiahd 2026-10-13 拉了 31 m 53 s，`im.jiahd.cc` 那段期間停擺；2026-10-15 的 `d8d0fd3` 約 2 分鐘。推的：差別在節點是否已有快取，沒量。所以部署時機由 ferry133 定。k8scc 只改 openspec 的 commit 也會觸發重建、產生新 digest，映像定義相同，但重建後 linux/amd64 有 11／23 層換掉（arm64 0／23，底座沒動），層內容差異**未審**（k8scc-0c [4dc61c] 用 k8scc#15 的逐層量具量 `d8d0fd3`→`4e9aaaa`；它原先說「只是 provenance／label」是推論且錯了，已在 #172 更正）。那張 pin-bump jg-base#172 經 ferry133 令關閉、未合併。
 - **`[via direct LAN]` 在生產上出現過一次，原因不是 Omni 掛了**（5.4 子項）。jg-jiahd `.21` 的 Cilium agent 拿著一個過期的 kube-dns backend，DNS 查詢被黑洞，Omni 路徑因此逾時。退路照設計接手，首行標記也照設計說了實話。這個 Cilium 漂移後來成為 daily-check row 27（jg-base#159）。
 - **im 曾兩次拒絕由別的 agent 轉述的重開請求**，要終端機前的人自己打（5.4 子項）。在當時的 `ask` 設計下那是對的。2026-10-15 裁定改成 im 自己走完之後，這個行為由伺服端守衛取代，不再適用。
 - **audit 欄位名是 `stated_reason`**（k8scc 7.2）：記的是 agent 給的理由，不是驗證過的原因。欄位名刻意這樣取，免得讀者把它當成診斷結果。
