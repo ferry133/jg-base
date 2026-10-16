@@ -6,3 +6,7 @@ resources:
   - ./rbac.yaml
   - ./secret.yaml
   - ./talos-mcp-secret.yaml
+  # Shared half of the claudecode state archive (jg-cluster-template#202):
+  # the CronJobs that use it live under im/enabled/ and in the per-user repo.
+  - ./state-archive-shared.yaml
+  - ./state-archive-script.yaml

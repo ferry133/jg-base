@@ -523,7 +523,7 @@ data:
     # retiring this Job takes the other family's retention with it.
     # scripts/check-prune-covers-both-families.sh holds both key shapes against
     # this extractor; the matching claudecode-side note is in
-    # claudecode/claude-code/im/enabled/state-archive-script.yaml.
+    # claudecode/claude-code/app/state-archive-script.yaml.
     if [[ -n "$CUTOFF" ]]; then
       log "pruning archives older than ${CUTOFF} (${KEEP} days)"
       aws s3 ls --endpoint-url "$BACKUP_R2_ENDPOINT" "s3://${BACKUP_R2_BUCKET}/${CLUSTER_NAME}/" 2>/dev/null \

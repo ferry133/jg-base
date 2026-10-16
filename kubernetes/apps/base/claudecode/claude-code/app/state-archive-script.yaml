@@ -5,12 +5,12 @@ metadata:
   name: claudecode-archive-script
   namespace: claudecode
   annotations:
-    # ⚠️ TEMPORARY, step 1 of 3 (jg-cluster-template#202). This object moves
-    # from the claude-code-im Kustomization to claude-code (jg-base#178), and
-    # Flux's FAQ says to disable GC before moving between Kustomizations:
-    # the source KS may reconcile first and prune it. The annotation has to
-    # be on the LIVE object before the move, because that is what GC reads.
-    # Step 3 removes it once both clusters show the object owned by claude-code.
+    # ⚠️ TEMPORARY, step 2 of 3 (jg-cluster-template#202): carried over from
+    # #179, which put it on the live object BEFORE this move so that the
+    # source Kustomization (claude-code-im) cannot prune it when it
+    # reconciles first (Flux FAQ: disable GC before moving between
+    # Kustomizations). Step 3 removes it once both clusters show this object
+    # owned by claude-code.
     kustomize.toolkit.fluxcd.io/prune: disabled
     # Contains literal ${...} for the shell. Same reason as daily-check's and
     # offsite-backup's script ConfigMaps: Flux's envsubst rewrites the whole
@@ -90,6 +90,36 @@ data:
 
     : "${CLUSTER_NAME:?required}"
 
+    # --- which instance -----------------------------------------------------
+    # Two knobs, and with BOTH unset this script does exactly what it did
+    # before they existed -- that is the base `im` CronJob, which sets neither.
+    # The callers that set them are the EXTRA instances' CronJobs, rendered by
+    # jg-cluster-template from `claude_instances` (jg-cluster-template#202);
+    # this one copy of the code serves all of them, so the session cap and the
+    # exclusion list below stay under the guards that execute them.
+    #
+    #   ARCHIVE_INSTANCE  unset -> the `im` key shape, unchanged:
+    #                       <cluster>/<cluster>-claudecode-<stamp>.tar.gz.age
+    #                     set   -> the instance name goes BEFORE the stamp:
+    #                       <cluster>/<cluster>-claudecode-<instance>-<stamp>.tar.gz.age
+    #                     Before, not after, for two readers that are not
+    #                     this file: monitoring/backup's prune loop takes the
+    #                     LAST `-<8 digits>T` in the name (so it still finds
+    #                     the stamp), and daily-check row 21 judges the `im`
+    #                     family by "`-claudecode-` then a stamp" -- an extra's
+    #                     archive must not keep a dead `im` archive looking
+    #                     fresh. scripts/check-prune-covers-both-families.sh
+    #                     and scripts/check-offsite-family-split.sh hold both.
+    #   ARCHIVE_MEMBERS   unset -> "config workspace". An instance rendered
+    #                     with `claudecode_workspace: false` has no workspace
+    #                     claim, so its CronJob says "config" -- and a member
+    #                     named here and not mounted is still FATAL below.
+    if [[ -n "${ARCHIVE_INSTANCE:-}" && ! "$ARCHIVE_INSTANCE" =~ ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$ ]]; then
+      log "FATAL: ARCHIVE_INSTANCE='${ARCHIVE_INSTANCE}' is not a DNS label; it goes into an object key"
+      exit 1
+    fi
+    FAMILY="${CLUSTER_NAME}-claudecode-${ARCHIVE_INSTANCE:+${ARCHIVE_INSTANCE}-}"
+
     # ⚠️ The ONLY reason this is a variable: it lets a guard run the real
     # session-cap code against a synthetic tree instead of a hand-copied
     # paraphrase of it. In the Job it is always /state -- the CronJob sets
@@ -109,7 +139,7 @@ data:
 
     STAMP="$(date -u '+%Y%m%dT%H%M%SZ')"
     WORK="$(mktemp -d)"
-    STAGE="$WORK/${CLUSTER_NAME}-claudecode-${STAMP}"
+    STAGE="$WORK/${FAMILY}${STAMP}"
     mkdir -p "$STAGE"
     trap 'rm -rf "$WORK"' EXIT
 
@@ -121,7 +151,7 @@ data:
     # HelmRelease declares a persistence key this Job does not mount. A name
     # listed here and nowhere checked would be the same silent-omission shape
     # the old comment warned about.
-    MEMBERS="config workspace"
+    MEMBERS="${ARCHIVE_MEMBERS:-config workspace}"
 
     EXCLUDES=()
     while IFS= read -r line; do
@@ -228,8 +258,8 @@ data:
       log "staged ${m}: $(wc -c <"${STAGE}/${m}.tar.gz") bytes"
     done
 
-    ARCHIVE="$WORK/${CLUSTER_NAME}-claudecode-${STAMP}.tar.gz"
-    tar -czf "$ARCHIVE" -C "$WORK" "${CLUSTER_NAME}-claudecode-${STAMP}" \
+    ARCHIVE="$WORK/${FAMILY}${STAMP}.tar.gz"
+    tar -czf "$ARCHIVE" -C "$WORK" "${FAMILY}${STAMP}" \
       || { log "FATAL: outer archive failed"; exit 1; }
 
     age -r "$BACKUP_AGE_RECIPIENT" -o "${ARCHIVE}.age" "$ARCHIVE" \
@@ -240,7 +270,10 @@ data:
     export AWS_ACCESS_KEY_ID="$BACKUP_R2_ACCESS_KEY_ID"
     export AWS_SECRET_ACCESS_KEY="$BACKUP_R2_SECRET_ACCESS_KEY"
     export AWS_DEFAULT_REGION=auto
-    KEY="${CLUSTER_NAME}/${CLUSTER_NAME}-claudecode-${STAMP}.tar.gz.age"
+    # Spelled out in full rather than through $FAMILY: the prune guard lifts
+    # this one line and renders it on its own, so it must not depend on a
+    # variable assigned elsewhere.
+    KEY="${CLUSTER_NAME}/${CLUSTER_NAME}-claudecode-${ARCHIVE_INSTANCE:+${ARCHIVE_INSTANCE}-}${STAMP}.tar.gz.age"
     if aws s3 cp --endpoint-url "$BACKUP_R2_ENDPOINT" --only-show-errors \
          "${ARCHIVE}.age" "s3://${BACKUP_R2_BUCKET}/${KEY}"; then
       log "uploaded s3://${BACKUP_R2_BUCKET}/${KEY}"

@@ -58,10 +58,10 @@ PY
 
 NOW=1767225600   # fixed "now": ages are arithmetic, not wall-clock
 
-mkfix() { # mkfix <cluster> <system age h|-> <claudecode age h|->
-  python3 - "$NOW" "$1" "$2" "$3" <<'PY'
+mkfix() { # mkfix <cluster> <system age h|-> <claudecode age h|->   (+ $XA, see below)
+  python3 - "$NOW" "$1" "$2" "$3" "${XA:--}" <<'PY'
 import sys, json, datetime
-now, cn, sysage, ccage = int(sys.argv[1]), sys.argv[2], sys.argv[3], sys.argv[4]
+now, cn, sysage, ccage, xage = int(sys.argv[1]), sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5]
 def ts(h):
     if h == "bad": return "not-a-time"
     t = datetime.datetime.fromtimestamp(now - int(h) * 3600, datetime.timezone.utc)
@@ -73,6 +73,9 @@ def ts(h):
 c = []
 if sysage != "-": c.append({"Key": "%s/%s-20260930T190000Z.tar.gz.age" % (cn, cn), "LastModified": ts(sysage)})
 if ccage  != "-": c.append({"Key": "%s/%s-claudecode-20261001T190000Z.tar.gz.age" % (cn, cn), "LastModified": ts(ccage)})
+# An EXTRA instance's archive (archive.sh with ARCHIVE_INSTANCE=cc,
+# jg-cluster-template#202): same prefix, instance name before the stamp.
+if xage   != "-": c.append({"Key": "%s/%s-claudecode-cc-20261002T190000Z.tar.gz.age" % (cn, cn), "LastModified": ts(xage)})
 print(json.dumps({"Contents": c} if c else {"RequestCharged": None}))
 PY
 }
@@ -151,6 +154,7 @@ run() { # run <block> <label> <cluster> <sysage> <ccage> <want-level> <needle>..
 
 B="$WORK/block.sh"
 CJ="on:500"   # default: archive enabled long ago, not suspended (#152)
+XA="-"        # default: no extra-instance archive in the prefix
 CC1="claudecode: 1h ago, 1 objects"   # the whole phrase, numbers included
 # The case the defect lived in: the system archive is three days dead and the
 # claudecode one is an hour old. The row must speak about the system archive.
@@ -247,6 +251,20 @@ run "$B" cc-27h                demo  2 27  warn "claudecode 27h"
 run "$B" cc-48h                demo  2 48  warn "claudecode 48h"
 run "$B" cc-49h                demo  2 49  fail "claudecode 49h"
 
+# --- jg-cluster-template#202: an EXTRA instance's archive in the same prefix --
+# It belongs to NEITHER family here, and both directions are a mask:
+#   counted as `im`     -> a fresh extra keeps a dead `im` archive looking fine
+#   counted as system   -> a fresh extra keeps a dead offsite-backup looking fine
+# Ages chosen so each wrong classification changes the verdict, and the
+# counts are asserted because the right verdict can survive a wrong count.
+XA=1
+run "$B" extra-fresh-im-dead   demo  2 72  fail "claudecode 72h" "claudecode: 72h ago, 1 objects"
+run "$B" extra-not-in-counts   demo  2  1  ok   "1 system objects" "claudecode: 1h ago, 1 objects"
+CJ=off
+run "$B" extra-not-system      demo  -  -  fail "no system archive"
+CJ="on:500"
+XA="-"
+
 echo
 # --- control: can this guard see the defect it was written for? -------------
 # Rebuild the pre-fix selector FROM THE LIVE BLOCK rather than asserting the
@@ -313,6 +331,24 @@ else
   fi
 fi
 
+# Third control, for the extra-instance split: point the `im` verdict back at
+# the any-claudecode selector, and the extra's fresh archive must mask the dead
+# `im` one. Rebuilt from the live block, so a block that no longer has two
+# selectors makes this say so instead of passing.
+sed 's/select(${CC_IM_SEL})/select(${CC_SEL})/g' "$B" > "$WORK/imblind.sh"
+if cmp -s "$B" "$WORK/imblind.sh"; then
+  unmeasurable "the im-selector control changed nothing — the block no longer selects the im family with CC_IM_SEL, so the extra-instance cases are unverified"
+else
+  _k=$FAILED
+  XA=1; run "$WORK/imblind.sh" CONTROL-imblind demo 2 72 fail "claudecode 72h" >/dev/null 2>&1; XA="-"
+  FAILED=$_k
+  if [[ "$LAST_LEVEL" == "fail" ]]; then
+    unmeasurable "with the im selector widened to every claudecode key, a fresh extra archive did NOT mask the dead im one — the extra-instance cases are not reading CC_IM_SEL"
+  else
+    echo "control: widening the im selector to every claudecode key drops extra-fresh-im-dead from [fail] to [${LAST_LEVEL}] — the mask is reconstructible"
+  fi
+fi
+
 if [[ $FAILED -ne 0 ]]; then
   [[ -n "$CTL_NOTE" ]] && echo "note: a control could not run either — ${CTL_NOTE#cannot measure: }"
   echo "FAIL — ${FAILED} case(s) wrong"
@@ -322,5 +358,5 @@ if [[ -n "$CTL_NOTE" ]]; then
   echo "$CTL_NOTE"
   exit 2
 fi
-echo "PASS — row 21 gives BOTH families a verdict (worst wins) and names both in every outcome; the system object count excludes claudecode; the claudecode family is judged only when its CronJob exists (absent: reported, not judged; suspended: warn; unreadable: warn when empty), an empty family on an enabled cluster is judged by the CronJob's age; an unparseable claudecode timestamp is warn; both edges of 26h/48h hold for both families; and a cluster named *-claudecode-* is still classified correctly"
+echo "PASS — row 21 gives BOTH families a verdict (worst wins) and names both in every outcome; the system object count excludes claudecode; the claudecode family is judged only when its CronJob exists (absent: reported, not judged; suspended: warn; unreadable: warn when empty), an empty family on an enabled cluster is judged by the CronJob's age; an unparseable claudecode timestamp is warn; both edges of 26h/48h hold for both families; a cluster named *-claudecode-* is still classified correctly; and an extra instance's archive (jg-cluster-template#202) is counted in neither family, so it masks neither"
 exit 0

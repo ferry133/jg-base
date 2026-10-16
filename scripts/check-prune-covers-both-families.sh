@@ -47,7 +47,7 @@ set -uo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BK="$ROOT/kubernetes/apps/base/monitoring/backup/app/configmap.yaml"
-AR="$ROOT/kubernetes/apps/base/claudecode/claude-code/im/enabled/state-archive-script.yaml"
+AR="$ROOT/kubernetes/apps/base/claudecode/claude-code/app/state-archive-script.yaml"
 for f in "$BK" "$AR"; do [[ -r "$f" ]] || { echo "cannot measure: $f not readable"; exit 2; }; done
 command -v yq >/dev/null 2>&1 || { echo "cannot measure: yq is missing (CI installs it)"; exit 2; }
 
@@ -148,10 +148,28 @@ for pair in "system:$SYS_T" "claudecode:$CC_T"; do
   check_family "${pair%%:*}" "${pair#*:}" || { rc=1; PLACE_FAILS=$((PLACE_FAILS + 1)); }
 done
 
+# The SAME claudecode template, rendered the way an EXTRA instance's CronJob
+# renders it (ARCHIVE_INSTANCE set; jg-cluster-template#202). Not a third
+# uploader -- one script, one KEY= line -- but a third key SHAPE that the one
+# prune loop must still date. And it must actually BE a different shape: a
+# KEY= line that stopped reading ARCHIVE_INSTANCE would render every extra's
+# archive under the `im` name, where daily-check row 21 would read it as the
+# `im` family and a dead `im` archive would look fresh.
+EXTRA_INST="cc"
+IM_NAME="$(basename_of "$CC_T")"
+EXTRA_NAME="$(ARCHIVE_INSTANCE="$EXTRA_INST"; basename_of "$CC_T")"
+if [[ "$EXTRA_NAME" == "$IM_NAME" || "$EXTRA_NAME" != *"-claudecode-${EXTRA_INST}-"* ]]; then
+  fail "the claudecode KEY= line renders the same name with ARCHIVE_INSTANCE=${EXTRA_INST} ('${EXTRA_NAME}') as without it ('${IM_NAME}'), or without '-claudecode-${EXTRA_INST}-' — an extra instance's archive would be filed as the im family"
+  PLACED=$((PLACED + 1))
+else
+  ( ARCHIVE_INSTANCE="$EXTRA_INST"; check_family claudecode-x "$CC_T" ) || { rc=1; PLACE_FAILS=$((PLACE_FAILS + 1)); }
+  PLACED=$((PLACED + 1))   # the subshell's increment does not come back
+fi
+
 # The call site is part of what must not vanish: a loop that stops calling
 # check_family leaves the controls below passing and nothing measured.
-if [[ "$PLACED" != "2" ]]; then
-  echo "cannot measure: the loop examined ${PLACED} families, not 2 — the readings above do not cover both"
+if [[ "$PLACED" != "3" ]]; then
+  echo "cannot measure: the loop examined ${PLACED} key shapes, not 3 — the readings above do not cover all of them"
   exit 2
 fi
 
@@ -231,6 +249,6 @@ if [[ -n "$CTL_NOTE" ]]; then
   echo "$CTL_NOTE"
   exit 2
 fi
-echo "PASS — both families sit directly under the prefix the shipped loop lists, and both yield a date to its extractor (so the 30-day default applies to the claudecode archive too; see the notes in both ConfigMaps)"
+echo "PASS — both families (and the extra-instance shape of the claudecode one, ARCHIVE_INSTANCE=${EXTRA_INST}) sit directly under the prefix the shipped loop lists, and all three yield a date to its extractor (so the 30-day default applies to the claudecode archive too; see the notes in both ConfigMaps)"
 echo "       ⚠️ measured with this machine's sed, not the image's busybox; no claudecode object has ever been through the loop; and the 'PRE <name>/' shape a sub-prefix produces is read from the AWS CLI's documented non-recursive output, not observed in-cluster"
 exit 0
