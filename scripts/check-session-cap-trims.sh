@@ -29,7 +29,7 @@
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-CM="$ROOT/kubernetes/apps/base/claudecode/claude-code/im/enabled/state-archive-script.yaml"
+CM="$ROOT/kubernetes/apps/base/claudecode/claude-code/app/state-archive-script.yaml"
 [[ -r "$CM" ]] || { echo "cannot measure: $CM not readable"; exit 2; }
 command -v yq >/dev/null 2>&1 || { echo "cannot measure: yq is missing (CI installs it)"; exit 2; }
 

@@ -1211,10 +1211,33 @@ data:
           #
           # `--arg`, not interpolation: the cluster name reaches jq as data, so
           # a name with jq-significant characters cannot rewrite the filter.
+          #
+          # ⚠️ TWO selectors, and which one each line uses is the point.
+          # Since jg-cluster-template#202 an EXTRA instance archives into the
+          # same prefix as `<c>/<c>-claudecode-<instance>-<stamp>.tar.gz.age`.
+          #   CC_SEL     every claudecode key, `im` or extra. Used ONLY to
+          #              keep them OUT of the system family -- narrowing it
+          #              would hand every extra's archive to the system count,
+          #              and a fresh extra would mask a dead offsite-backup.
+          #   CC_IM_SEL  the `im` family only: `-claudecode-` immediately
+          #              followed by the stamp (8 digits then `T`, checked
+          #              with explode rather than test(): no other line in
+          #              this script needs jq's regex support, so this one
+          #              does not start depending on it). This is what the claudecode
+          #              verdict below judges, and it is judged against the
+          #              `claudecode-state-backup` CronJob, which is `im`'s.
+          #              Using CC_SEL here would let a fresh extra archive keep
+          #              a dead `im` archive looking fine.
+          # ⚠️ So extras' archives are in NEITHER count and get no verdict
+          # here. That is a known gap, said rather than hidden: their CronJobs
+          # are named by `claude_instances` and live in the per-user repo, so
+          # this row cannot name them; on 2026-10-16 no cluster has one.
+          # scripts/check-offsite-family-split.sh holds both directions.
           CC_SEL='(.Key // "") | startswith($cn + "/" + $cn + "-claudecode-")'
+          CC_IM_SEL='(.Key // "") | startswith($cn + "/" + $cn + "-claudecode-") and (ltrimstr($cn + "/" + $cn + "-claudecode-") | (.[8:9] == "T") and (.[0:8] | explode | length == 8 and all(. >= 48 and . <= 57)))'
           DEST_LATEST=$(echo "$DEST_JSON" | jq -r --arg cn "$CLUSTER_NAME" "[(.Contents // [])[] | select(${CC_SEL} | not) | .LastModified] | sort | last // \"\"")
-          DEST_CC_LATEST=$(echo "$DEST_JSON" | jq -r --arg cn "$CLUSTER_NAME" "[(.Contents // [])[] | select(${CC_SEL}) | .LastModified] | sort | last // \"\"")
-          DEST_CC_COUNT=$(echo "$DEST_JSON" | jq -r --arg cn "$CLUSTER_NAME" "[(.Contents // [])[] | select(${CC_SEL})] | length")
+          DEST_CC_LATEST=$(echo "$DEST_JSON" | jq -r --arg cn "$CLUSTER_NAME" "[(.Contents // [])[] | select(${CC_IM_SEL}) | .LastModified] | sort | last // \"\"")
+          DEST_CC_COUNT=$(echo "$DEST_JSON" | jq -r --arg cn "$CLUSTER_NAME" "[(.Contents // [])[] | select(${CC_IM_SEL})] | length")
           # `+00:00` to `Z` for epoch_of's busybox fallback. GNU date takes
           # either and coreutils is installed above, so this costs nothing
           # today; it stops the sibling image's spelling being a live trap if
