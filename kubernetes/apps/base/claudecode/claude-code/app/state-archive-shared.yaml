@@ -38,6 +38,14 @@ kind: Secret
 metadata:
   name: claudecode-archive-config
   namespace: claudecode
+  annotations:
+    # ⚠️ TEMPORARY, step 2 of 3 (jg-cluster-template#202): carried over from
+    # #179, which put it on the live object BEFORE this move so that the
+    # source Kustomization (claude-code-im) cannot prune it when it
+    # reconciles first (Flux FAQ: disable GC before moving between
+    # Kustomizations). Step 3 removes it once both clusters show this object
+    # owned by claude-code.
+    kustomize.toolkit.fluxcd.io/prune: disabled
 type: Opaque
 stringData:
   CLUSTER_NAME: "${CLUSTER_NAME}"
@@ -58,4 +66,12 @@ kind: ServiceAccount
 metadata:
   name: claudecode-archive
   namespace: claudecode
+  annotations:
+    # ⚠️ TEMPORARY, step 2 of 3 (jg-cluster-template#202): carried over from
+    # #179, which put it on the live object BEFORE this move so that the
+    # source Kustomization (claude-code-im) cannot prune it when it
+    # reconciles first (Flux FAQ: disable GC before moving between
+    # Kustomizations). Step 3 removes it once both clusters show this object
+    # owned by claude-code.
+    kustomize.toolkit.fluxcd.io/prune: disabled
 automountServiceAccountToken: false
