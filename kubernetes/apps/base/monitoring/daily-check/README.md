@@ -391,7 +391,10 @@ kubernetes/apps/base/monitoring/
 ├── namespace.yaml                 (monitoring namespace; prune: disabled)
 └── daily-check/
     ├── README.md                  (this file)
-    ├── ks.yaml                    (inner Flux Kustomization, targetNamespace=monitoring)
+    ├── ks.yaml                    (two Flux Kustomizations: daily-check, targetNamespace=monitoring;
+    │                               daily-check-cilium-exec, NO targetNamespace)
+    ├── kube-system/               (row 27's pods/exec Role + RoleBinding — kept out of app/,
+    │                               whose targetNamespace would move them to monitoring, #173)
     └── app/
         ├── kustomization.yaml     (resource list)
         ├── rbac.yaml              (SA + ClusterRole + ClusterRoleBinding)

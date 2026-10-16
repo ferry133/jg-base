@@ -35,6 +35,37 @@ bash -n <<<"$BLOCK" || { echo "cannot measure: extracted block does not parse"; 
 rc=0
 fail() { echo "FAIL — $1"; rc=1; }
 
+# --- where the exec grant is APPLIED, not where it is written ---------------
+# #173 shipped the kube-system Role inside daily-check/app, whose Flux
+# Kustomization sets `targetNamespace: monitoring`; Flux applied it to
+# monitoring and row 27 could exec nothing (measured on both clusters,
+# 2026-10-15 22:4xZ). Every case below passed through that. So: find the
+# directory holding the Role, find the Flux Kustomization whose spec.path is
+# that directory, and require it not to move the Role out of kube-system.
+APPS="$ROOT/kubernetes/apps"
+ROLE_FILES="$(grep -rlE '^[[:space:]]*name: daily-check-cilium-exec[[:space:]]*$' "$APPS" --include='*.yaml' \
+  | xargs grep -l '^kind: Role$' 2>/dev/null)"
+[[ -n "$ROLE_FILES" ]] || { echo "cannot measure: no file declares Role daily-check-cilium-exec"; exit 2; }
+for rf in $ROLE_FILES; do
+  rel="./${rf#"$ROOT"/}"; dir="$(dirname "$rel")"
+  grep -qE '^  namespace: kube-system$' "$rf" || fail "$rel does not put the Role in kube-system"
+  # The Flux Kustomization document(s) whose spec.path is this directory.
+  ks_doc="$(find "$APPS" -name ks.yaml -print0 | xargs -0 awk -v want="$dir" '
+      FNR == 1 { if (doc != "" && hit) printf "%s", doc; doc = ""; hit = 0 }
+      /^---/   { if (hit) printf "%s", doc; doc = ""; hit = 0; next }
+      { doc = doc $0 "\n" }
+      $1 == "path:" && $2 == want { hit = 1 }
+      END { if (hit) printf "%s", doc }')"
+  if [[ -z "$ks_doc" ]]; then
+    fail "no Flux Kustomization has spec.path: $dir — the Role in $rel is never applied"
+    continue
+  fi
+  tn="$(awk '$1 == "targetNamespace:" { print $2 }' <<<"$ks_doc")"
+  if [[ -n "$tn" && "$tn" != kube-system ]]; then
+    fail "$rel is applied by a Flux Kustomization with targetNamespace: $tn, which moves the Role out of kube-system (#173's defect)"
+  fi
+done
+
 # --- fixtures ---------------------------------------------------------------
 # svc <name> <ns> <policy> <ip:port[:state]>...   → one agent service entry
 svc() {
@@ -180,6 +211,6 @@ case_ "terminating / not ready" OK "$(run)"
 [[ -s "$WORK/unexpected" ]] && fail "the row made kubectl calls the stub does not model: $(sort -u "$WORK/unexpected" | tr '\n' ';')"
 
 if [[ $rc -eq 0 ]]; then
-  echo "PASS — row 27: agree → ok; stale backend held over two reads → fail (named); transient → ok; missing only → warn; exec refused / no agents / not JSON / EndpointSlices unreadable / nothing compared → skip with distinct reasons; fail outranks skip; drift on different services in the two reads is not held; Local policy, terminating and not-ready are not drift (13 cases)"
+  echo "PASS — row 27: agree → ok; stale backend held over two reads → fail (named); transient → ok; missing only → warn; exec refused / no agents / not JSON / EndpointSlices unreadable / nothing compared → skip with distinct reasons; fail outranks skip; drift on different services in the two reads is not held; Local policy, terminating and not-ready are not drift (13 cases); the exec Role is applied in kube-system"
 fi
 exit $rc

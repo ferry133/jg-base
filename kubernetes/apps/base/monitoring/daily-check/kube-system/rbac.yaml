@@ -1,0 +1,40 @@
+---
+# Row 27 (ferry133/jg-base#159): exec into the Cilium agents to read their BPF
+# service map, the only place a stale backend shows — the API cannot see it.
+# ferry133 chose this grant on #159 (2026-10-16) knowing its size: the agents
+# run as root on every node, and RBAC cannot pin the command, so this Role lets
+# the daily-check ServiceAccount exec into ANY pod in kube-system. Kept in a
+# Role in kube-system rather than on the ClusterRole above so it does not reach
+# any other namespace. The only caller is row 27, which runs exactly
+# `cilium-dbg service list -o json`.
+#
+# ⚠️ Its own directory and its own Flux Kustomization (`daily-check-cilium-exec`
+# in ../ks.yaml), NOT ../app: that one sets `targetNamespace: monitoring`, which
+# rewrites every namespace in it — #173 shipped this Role inside ../app and Flux
+# applied it to `monitoring`, where it grants nothing row 27 needs (measured on
+# both clusters 2026-10-15 22:4xZ). scripts/check-cilium-backend-row.sh now
+# asserts the namespace the Role is APPLIED in, not the one written here.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: daily-check-cilium-exec
+  namespace: kube-system
+rules:
+  # Listing the agent pods is already on the ClusterRole above.
+  - apiGroups: [""]
+    resources: ["pods/exec"]
+    verbs: ["create"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: daily-check-cilium-exec
+  namespace: kube-system
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: daily-check-cilium-exec
+subjects:
+  - kind: ServiceAccount
+    name: daily-check
+    namespace: monitoring
