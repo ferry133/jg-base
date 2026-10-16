@@ -5,6 +5,13 @@ metadata:
   name: claudecode-archive-script
   namespace: claudecode
   annotations:
+    # ⚠️ TEMPORARY, step 1 of 3 (jg-cluster-template#202). This object moves
+    # from the claude-code-im Kustomization to claude-code (jg-base#178), and
+    # Flux's FAQ says to disable GC before moving between Kustomizations:
+    # the source KS may reconcile first and prune it. The annotation has to
+    # be on the LIVE object before the move, because that is what GC reads.
+    # Step 3 removes it once both clusters show the object owned by claude-code.
+    kustomize.toolkit.fluxcd.io/prune: disabled
     # Contains literal ${...} for the shell. Same reason as daily-check's and
     # offsite-backup's script ConfigMaps: Flux's envsubst rewrites the whole
     # rendered text, comments included, and a name it cannot resolve becomes
