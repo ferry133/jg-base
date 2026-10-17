@@ -68,9 +68,9 @@ A `LoadBalancer` Service in a namespace labelled `jg.tenant` SHALL never receive
 - **WHEN** a `LoadBalancer` Service exists in a non-tenant namespace
 - **THEN** it receives an address from the shared pool as before
 
-### Requirement: Daily check row 28 measures the tenant isolation invariants
+### Requirement: The daily check carries a tenant-isolation row (numbered when implemented)
 
-The daily check SHALL carry a row 28 that reads ClusterRoleBindings, RoleBindings, Namespace labels and PersistentVolumeClaims and records: `fail` if any ClusterRoleBinding names a `flux-system/tenant-*` ServiceAccount, if any RoleBinding for a tenant ServiceAccount references a role other than `tenant-admin`, if any tenant namespace lacks a `pod-security.kubernetes.io/enforce` label, or if a tenant namespace carries `enforce=privileged` **without** the label `jg.tenant-privileged=granted`; otherwise `warn` for every tenant namespace holding a PersistentVolumeClaim (named); otherwise `ok`, naming any tenant that is privileged by grant. With no tenant namespaces it SHALL record `skip`. It MUST NOT use `kubectl auth can-i --as`. The README legend SHALL list row 28 so `check-row-numbers-resolve.sh` passes.
+The daily check SHALL carry a tenant-isolation row — taking the next free number when it is implemented — that reads ClusterRoleBindings, RoleBindings, Namespace labels and PersistentVolumeClaims and records: `fail` if any ClusterRoleBinding names a `flux-system/tenant-*` ServiceAccount, if any RoleBinding for a tenant ServiceAccount references a role other than `tenant-admin`, if any tenant namespace lacks a `pod-security.kubernetes.io/enforce` label, or if a tenant namespace carries `enforce=privileged` **without** the label `jg.tenant-privileged=granted`; otherwise `warn` for every tenant namespace holding a PersistentVolumeClaim (named); otherwise `ok`, naming any tenant that is privileged by grant. With no tenant namespaces it SHALL record `skip`. It MUST NOT use `kubectl auth can-i --as`. The README legend SHALL list that row under its number so `check-row-numbers-resolve.sh` passes.
 
 #### Scenario: Four outcomes observed on a throwaway cluster
 - **WHEN** the row runs on a cluster with no tenants, then with a compliant tenant, then with that tenant holding a PVC, then with a RoleBinding to `admin` added
