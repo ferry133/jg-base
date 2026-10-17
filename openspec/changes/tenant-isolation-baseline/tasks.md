@@ -19,10 +19,11 @@
 - [ ] 3.2 `tenant-rbac/vap-binding.yaml`：`namespaceSelector` 只選 `jg.tenant` 存在；`paramRef` 指 **jg-base 自己渲染**的 `tenant-rbac/vap-params.yaml` ConfigMap（`domain: ${SECRET_DOMAIN}`，由這條 Kustomization 既有的 `postBuild.substituteFrom cluster-secrets` 代入——確認 `flux-system` 那條有 substituteFrom，沒有就加），`parameterNotFoundAction: Deny`；`validationActions: [Deny]`。
 - [ ] 3.3 拋棄式叢集：tenant namespace 掛 `im.<domain>` 被拒、**合規路由 UPDATE 成 `im.<domain>` 被拒且物件保持原 hostnames**、掛 `app.<tenant>.<domain>` Accepted、空 hostnames 被拒；`default` namespace 的 HTTPRoute 不被評估（負對照）；param 不在時被拒。
 
-## 3b. 主池不服務 tenant namespace
+## 3b. tenant 的 LB Service 永遠拿不到主池位址
 
-- [ ] 3b.1 `kube-system/cilium/app/networks.yaml` 的 `CiliumLoadBalancerIPPool` 加 `serviceSelector` 排除 `jg.tenant` namespace——先量這版 Cilium 支援的寫法（`io.kubernetes.service.namespace` 的 matchExpressions，或 namespace label selector），寫進 PR。
-- [ ] 3b.2 拋棄式叢集：無 `lan_ip` grant 的 tenant 建 LB Service 一直 pending；base 的 LB Service（例：envoy gateway）照常拿到 IP（負對照）。
+- [ ] 3b.1 **先量**這版 Cilium 的 `serviceSelector` 認什麼：Service 標籤、合成的 `io.kubernetes.service.namespace`／`name`、namespace 標籤——三格各一個 pool fixture 在拋棄式叢集上試。依讀數在 (A) 主池 `io.kubernetes.service.namespace notIn [tenant…]` 與 (B) VAP（`jg.tenant` namespace 的 `LoadBalancer` Service 必須 namespace 有 `jg.tenant-lan-ip=granted` 且 Service 帶 `jg.tenant=<自己>`）＋主池 `jg.tenant DoesNotExist`＋tenant 池 `jg.tenant=<name>` 之間選，偏好 (B)；寫進 PR 與 root design。
+- [ ] 3b.2 拋棄式叢集：無 `lan_ip` grant 的 tenant 建 LB Service 拿不到位址（被拒或 pending）；有 grant 的拿到的位址在 tenant 池範圍內、不在主池 blocks 內；**兩個 `CiliumLoadBalancerIPPool` 都沒有 `PoolConflict` condition 且 tenant 池真的發得出位址**（2026-08-12 的事故是窄池 `cidr_overlap` 從未發出任何位址）；base 的 LB Service（例：envoy gateway）照常拿到 IP（負對照）。
+- [ ] 3b.3 若選 (B)：主池 selector 改動對既有 Service 零影響——`flux-local` diff ＋ 拋棄式叢集上既有 LB 位址不變。
 
 ## 4. daily-check 第 28 列
 

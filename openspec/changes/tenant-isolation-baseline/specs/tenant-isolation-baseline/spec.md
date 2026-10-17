@@ -48,13 +48,21 @@ jg-base SHALL ship a `ValidatingAdmissionPolicy`, a binding whose `namespaceSele
 - **WHEN** an HTTPRoute is created or updated in a namespace without the `jg.tenant` label
 - **THEN** the policy does not evaluate it and `envoy.yaml` is byte-identical to before this capability
 
-### Requirement: The shared LoadBalancer pool does not serve tenant namespaces
+### Requirement: Tenant Services never draw from the shared LoadBalancer pool
 
-The fleet's shared `CiliumLoadBalancerIPPool` SHALL carry a `serviceSelector` that excludes Services in namespaces labelled `jg.tenant`, so that a tenant obtains a LAN address only from the tenant-specific pool the cluster template renders for a `lan_ip` grant.
+A `LoadBalancer` Service in a namespace labelled `jg.tenant` SHALL never receive an address from the fleet's shared `CiliumLoadBalancerIPPool`; it SHALL receive one only from the tenant pool the cluster template renders for a `lan_ip` grant, and without that grant it SHALL receive none (refused by admission or left pending). The tenant pool's range SHALL be disjoint from the shared pool's blocks, and neither pool SHALL report `PoolConflict`. The mechanism — a `serviceSelector` on the shared pool, an admission policy on tenant Services, or both — SHALL be chosen by measuring what this Cilium's `serviceSelector` matches; this requirement fixes the outcome, not the mechanism.
 
-#### Scenario: Tenant without a grant stays pending
+#### Scenario: Tenant without a grant gets no address
 - **WHEN** a tenant namespace without a `lan_ip` grant creates a `LoadBalancer` Service
-- **THEN** the Service receives no address from the shared pool and stays pending
+- **THEN** the Service holds no address from any pool — either admission refused it or it stays pending
+
+#### Scenario: Tenant with a grant draws only from its own pool
+- **WHEN** a tenant with `lan_ip: N` creates a `LoadBalancer` Service
+- **THEN** its address lies in the tenant pool's range and not in the shared pool's blocks
+
+#### Scenario: Pools do not conflict
+- **WHEN** a tenant pool is rendered beside the shared pool
+- **THEN** neither `CiliumLoadBalancerIPPool` reports a `PoolConflict` condition, and the tenant pool allocates
 
 #### Scenario: Platform Services unaffected
 - **WHEN** a `LoadBalancer` Service exists in a non-tenant namespace
