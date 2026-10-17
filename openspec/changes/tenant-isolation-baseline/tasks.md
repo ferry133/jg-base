@@ -4,19 +4,20 @@
 
 ## 1. 量現狀（root 任務 1.3／1.4 的 jg-base 半邊）
 
-- [ ] 1.1 gateway 物件的檔案路徑、`allowedRoutes.namespaces.from` 現值、既有 HTTPRoute 所在的 namespace 清單——寫回 root design 的 Open Questions。
-- [ ] 1.2 沒有 `serviceAccountName` 的 HelmRelease 數、跨 namespace 的 `sourceRef`／`chartRef` 數（只量不改）。
+- [x] 1.1 gateway：`network/envoy-gateway/app/envoy.yaml` 兩座 Gateway https `allowedRoutes.namespaces.from: All`、http `Same`；HTTPRoute 分佈 7 個 namespace（2026-10-17，jg-base-0a 與 fleet-ops-77 各量一次，`6f3c454`）。結論：gateway 不動，hostname 用 VAP 圈。
+- [ ] 1.2 沒有 `serviceAccountName` 的 HelmRelease 數、跨 namespace 的 `sourceRef`／`chartRef` 數（只量不改）——寫回 root design 的 Open Questions。
 
 ## 2. tenant-admin
 
-- [ ] 2.1 `kubernetes/apps/base/flux-system/tenant-rbac/clusterrole.yaml` ＋ `kustomization.yaml`，收進 `flux-system/kustomization.yaml`。
-- [ ] 2.2 `scripts/check-tenant-admin-role.sh`：禁列斷言 ＋ 負對照（臨時加一行 `kustomize.toolkit.fluxcd.io` 要紅）；接進 `.github/workflows/flux-local.yaml`。
-- [ ] 2.3 `flux-local` diff 證明四座叢集只多一個 ClusterRole。
+- [ ] 2.1 `kubernetes/apps/base/flux-system/tenant-rbac/clusterrole.yaml` ＋ `kustomization.yaml`，收進 `flux-system/kustomization.yaml`。verbs 明列，無 `*`。
+- [ ] 2.2 `scripts/check-tenant-admin-role.sh`：三類禁列斷言（apiGroups／cluster-scoped、verbs `escalate`／`bind`／`impersonate`、三欄通配）＋ 三份負對照各自要紅；接進 `.github/workflows/flux-local.yaml`。
+- [ ] 2.3 `flux-local` diff 證明四座叢集只多 ClusterRole ＋ VAP ＋ binding 三個物件。
 
-## 3. gateway
+## 3. hostname 範圍（VAP）
 
-- [ ] 3.1 依 1.1 的讀數改 `allowedRoutes.namespaces`：selector 涵蓋現狀 ＋ `jg.tenant`；不用 `from: All`。
-- [ ] 3.2 拋棄式叢集：tenant namespace 的 HTTPRoute `Accepted=True`；無標籤 namespace 的 `Accepted=False`（負對照）。
+- [ ] 3.1 `tenant-rbac/vap.yaml`：選 `gateway.networking.k8s.io` HTTPRoute；CEL：`has(object.spec.hostnames) && size(object.spec.hostnames) > 0 && object.spec.hostnames.all(h, h.endsWith('.' + namespaceObject.metadata.labels['jg.tenant'] + '.' + params.data.domain))`；`paramKind` ConfigMap。
+- [ ] 3.2 `tenant-rbac/vap-binding.yaml`：`namespaceSelector` 只選 `jg.tenant` 存在；`paramRef` 指模板渲染的 ConfigMap，`parameterNotFoundAction: Deny`；`validationActions: [Deny]`。
+- [ ] 3.3 拋棄式叢集：tenant namespace 掛 `im.<domain>` 被拒、掛 `app.<tenant>.<domain>` Accepted、空 hostnames 被拒；`default` namespace 的 HTTPRoute 不被評估（負對照）；param 不在時被拒。
 
 ## 4. daily-check 第 28 列
 

@@ -1,32 +1,44 @@
 ## ADDED Requirements
 
-### Requirement: tenant-admin is an explicit allow-list that excludes the Flux API
+### Requirement: tenant-admin is an explicit allow-list that excludes the Flux API, escalation verbs and wildcards
 
-jg-base SHALL ship a `ClusterRole tenant-admin` to every cluster. It SHALL enumerate its permitted API groups and resources explicitly (no aggregation labels) and MUST NOT grant any verb on `*.toolkit.fluxcd.io`, `cilium.io`, `storage.k8s.io`, `networking.k8s.io` NetworkPolicy, or any cluster-scoped resource. A CI guard SHALL assert the exclusion list and SHALL fail on its own negative control.
+jg-base SHALL ship a `ClusterRole tenant-admin` to every cluster. It SHALL enumerate its permitted API groups, resources and verbs explicitly (no aggregation labels). It MUST NOT grant any verb on `*.toolkit.fluxcd.io`, `cilium.io`, `storage.k8s.io`, `networking.k8s.io` NetworkPolicy, or any cluster-scoped resource; it MUST NOT grant the verbs `escalate`, `bind` or `impersonate`; and it MUST NOT use `*` in `verbs`, `resources` or `apiGroups`. A CI guard SHALL assert all three exclusion classes and SHALL fail on each of its negative controls.
 
 #### Scenario: Exclusions hold
 - **WHEN** the guard runs against `tenant-admin` on the branch
-- **THEN** it reports no forbidden apiGroup or cluster-scoped resource and exits 0
+- **THEN** it reports no forbidden apiGroup, verb, wildcard or cluster-scoped resource and exits 0
 
-#### Scenario: Negative control fails
-- **WHEN** the guard runs against a copy of `tenant-admin` with one rule for `kustomize.toolkit.fluxcd.io` added
-- **THEN** it exits non-zero naming that apiGroup
+#### Scenario: Negative controls fail
+- **WHEN** the guard runs against three copies of `tenant-admin` — one with a rule for `kustomize.toolkit.fluxcd.io`, one with `escalate` added to a verb list, one with `verbs: ["*"]`
+- **THEN** it exits non-zero for each, naming the offending apiGroup, verb or wildcard
+
+#### Scenario: Tenant cannot widen itself
+- **WHEN** a tenant ServiceAccount bound to `tenant-admin` creates a Role granting `kustomize.toolkit.fluxcd.io`
+- **THEN** the API server refuses it (escalation prevention) because the tenant holds neither that permission nor `escalate`
 
 #### Scenario: No subject by default
 - **WHEN** a cluster has no `app_repos`
 - **THEN** `tenant-admin` exists with no RoleBinding or ClusterRoleBinding referencing it
 
-### Requirement: Gateway accepts routes from tenant namespaces
+### Requirement: Tenant HTTPRoute hostnames are scoped by admission policy, not by the gateway
 
-The fleet gateway SHALL accept HTTPRoutes from namespaces labelled `jg.tenant`, in addition to the namespaces it accepts today, and SHALL NOT be widened to all namespaces.
+jg-base SHALL ship a `ValidatingAdmissionPolicy` and a binding whose `namespaceSelector` matches only namespaces carrying the `jg.tenant` label. For an HTTPRoute in such a namespace it SHALL deny admission unless `spec.hostnames` is non-empty and every hostname ends with `.<value of jg.tenant>.<domain>`, where `<domain>` comes from a parameter ConfigMap rendered by the cluster template; a missing parameter SHALL deny (`parameterNotFoundAction: Deny`). The fleet gateways' `allowedRoutes` SHALL NOT be changed by this capability (their https listeners already accept routes from all namespaces).
 
-#### Scenario: Tenant route accepted
-- **WHEN** an HTTPRoute is created in a namespace labelled `jg.tenant=<name>`
-- **THEN** its `Accepted` condition is True on the fleet gateway
+#### Scenario: Takeover refused
+- **WHEN** an HTTPRoute in a tenant namespace names `im.<domain>` as a hostname
+- **THEN** admission rejects it and the message names the policy and the hostname
 
-#### Scenario: Unlabelled namespace still refused
-- **WHEN** an HTTPRoute is created in a namespace with neither the tenant label nor today's allowance
-- **THEN** its `Accepted` condition is False with reason `NotAllowedByListeners`
+#### Scenario: Scoped hostname admitted
+- **WHEN** an HTTPRoute in a tenant namespace names only `app.<tenant>.<domain>`
+- **THEN** it is admitted and the gateway reports `Accepted=True`
+
+#### Scenario: Empty hostnames refused
+- **WHEN** an HTTPRoute in a tenant namespace has no `spec.hostnames`
+- **THEN** admission rejects it
+
+#### Scenario: Existing namespaces untouched
+- **WHEN** an HTTPRoute is created or updated in a namespace without the `jg.tenant` label
+- **THEN** the policy does not evaluate it and `envoy.yaml` is byte-identical to before this capability
 
 ### Requirement: Daily check row 28 measures the tenant isolation invariants
 
