@@ -15,9 +15,9 @@
 
 ## 3. hostname 範圍（VAP）
 
-- [ ] 3.1 `tenant-rbac/vap.yaml`：選 `gateway.networking.k8s.io` HTTPRoute；CEL：`has(object.spec.hostnames) && size(object.spec.hostnames) > 0 && object.spec.hostnames.all(h, h.endsWith('.' + namespaceObject.metadata.labels['jg.tenant'] + '.' + params.data.domain))`；`paramKind` ConfigMap。
-- [ ] 3.2 `tenant-rbac/vap-binding.yaml`：`namespaceSelector` 只選 `jg.tenant` 存在；`paramRef` 指模板渲染的 ConfigMap，`parameterNotFoundAction: Deny`；`validationActions: [Deny]`。
-- [ ] 3.3 拋棄式叢集：tenant namespace 掛 `im.<domain>` 被拒、掛 `app.<tenant>.<domain>` Accepted、空 hostnames 被拒；`default` namespace 的 HTTPRoute 不被評估（負對照）；param 不在時被拒。
+- [ ] 3.1 `tenant-rbac/vap.yaml`：`matchConstraints` 選 `gateway.networking.k8s.io` HTTPRoute、operations **CREATE 與 UPDATE**；CEL：`has(object.spec.hostnames) && size(object.spec.hostnames) > 0 && object.spec.hostnames.all(h, h.endsWith('.' + namespaceObject.metadata.labels['jg.tenant'] + '.' + params.data.domain))`；`paramKind` ConfigMap。
+- [ ] 3.2 `tenant-rbac/vap-binding.yaml`：`namespaceSelector` 只選 `jg.tenant` 存在；`paramRef` 指 **jg-base 自己渲染**的 `tenant-rbac/vap-params.yaml` ConfigMap（`domain: ${SECRET_DOMAIN}`，由這條 Kustomization 既有的 `postBuild.substituteFrom cluster-secrets` 代入——確認 `flux-system` 那條有 substituteFrom，沒有就加），`parameterNotFoundAction: Deny`；`validationActions: [Deny]`。
+- [ ] 3.3 拋棄式叢集：tenant namespace 掛 `im.<domain>` 被拒、**合規路由 UPDATE 成 `im.<domain>` 被拒且物件保持原 hostnames**、掛 `app.<tenant>.<domain>` Accepted、空 hostnames 被拒；`default` namespace 的 HTTPRoute 不被評估（負對照）；param 不在時被拒。
 
 ## 4. daily-check 第 28 列
 

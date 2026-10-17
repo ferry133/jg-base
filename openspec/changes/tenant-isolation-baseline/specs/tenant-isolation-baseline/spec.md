@@ -22,11 +22,15 @@ jg-base SHALL ship a `ClusterRole tenant-admin` to every cluster. It SHALL enume
 
 ### Requirement: Tenant HTTPRoute hostnames are scoped by admission policy, not by the gateway
 
-jg-base SHALL ship a `ValidatingAdmissionPolicy` and a binding whose `namespaceSelector` matches only namespaces carrying the `jg.tenant` label. For an HTTPRoute in such a namespace it SHALL deny admission unless `spec.hostnames` is non-empty and every hostname ends with `.<value of jg.tenant>.<domain>`, where `<domain>` comes from a parameter ConfigMap rendered by the cluster template; a missing parameter SHALL deny (`parameterNotFoundAction: Deny`). The fleet gateways' `allowedRoutes` SHALL NOT be changed by this capability (their https listeners already accept routes from all namespaces).
+jg-base SHALL ship a `ValidatingAdmissionPolicy`, a binding whose `namespaceSelector` matches only namespaces carrying the `jg.tenant` label, and the policy's parameter ConfigMap, whose `domain` value jg-base fills itself through the existing `postBuild.substituteFrom cluster-secrets` variable `${SECRET_DOMAIN}` (no template change). The policy's `matchConstraints` SHALL cover both CREATE and UPDATE of HTTPRoutes. For an HTTPRoute in a tenant namespace it SHALL deny admission unless `spec.hostnames` is non-empty and every hostname ends with `.<value of jg.tenant>.<domain>`; a missing parameter SHALL deny (`parameterNotFoundAction: Deny`). The fleet gateways' `allowedRoutes` SHALL NOT be changed by this capability (their https listeners already accept routes from all namespaces).
 
-#### Scenario: Takeover refused
-- **WHEN** an HTTPRoute in a tenant namespace names `im.<domain>` as a hostname
+#### Scenario: Takeover refused on create
+- **WHEN** an HTTPRoute in a tenant namespace is created naming `im.<domain>` as a hostname
 - **THEN** admission rejects it and the message names the policy and the hostname
+
+#### Scenario: Takeover refused on update
+- **WHEN** a compliant HTTPRoute in a tenant namespace is updated so that a hostname becomes `im.<domain>`
+- **THEN** admission rejects the update and the stored object keeps its previous hostnames
 
 #### Scenario: Scoped hostname admitted
 - **WHEN** an HTTPRoute in a tenant namespace names only `app.<tenant>.<domain>`
@@ -35,6 +39,10 @@ jg-base SHALL ship a `ValidatingAdmissionPolicy` and a binding whose `namespaceS
 #### Scenario: Empty hostnames refused
 - **WHEN** an HTTPRoute in a tenant namespace has no `spec.hostnames`
 - **THEN** admission rejects it
+
+#### Scenario: Parameter missing denies
+- **WHEN** the parameter ConfigMap is absent
+- **THEN** every HTTPRoute change in a tenant namespace is denied, never silently allowed
 
 #### Scenario: Existing namespaces untouched
 - **WHEN** an HTTPRoute is created or updated in a namespace without the `jg.tenant` label
