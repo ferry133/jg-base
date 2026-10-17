@@ -19,11 +19,16 @@
 - [ ] 3.2 `tenant-rbac/vap-binding.yaml`：`namespaceSelector` 只選 `jg.tenant` 存在；`paramRef` 指 **jg-base 自己渲染**的 `tenant-rbac/vap-params.yaml` ConfigMap（`domain: ${SECRET_DOMAIN}`，由這條 Kustomization 既有的 `postBuild.substituteFrom cluster-secrets` 代入——確認 `flux-system` 那條有 substituteFrom，沒有就加），`parameterNotFoundAction: Deny`；`validationActions: [Deny]`。
 - [ ] 3.3 拋棄式叢集：tenant namespace 掛 `im.<domain>` 被拒、**合規路由 UPDATE 成 `im.<domain>` 被拒且物件保持原 hostnames**、掛 `app.<tenant>.<domain>` Accepted、空 hostnames 被拒；`default` namespace 的 HTTPRoute 不被評估（負對照）；param 不在時被拒。
 
+## 3b. 主池不服務 tenant namespace
+
+- [ ] 3b.1 `kube-system/cilium/app/networks.yaml` 的 `CiliumLoadBalancerIPPool` 加 `serviceSelector` 排除 `jg.tenant` namespace——先量這版 Cilium 支援的寫法（`io.kubernetes.service.namespace` 的 matchExpressions，或 namespace label selector），寫進 PR。
+- [ ] 3b.2 拋棄式叢集：無 `lan_ip` grant 的 tenant 建 LB Service 一直 pending；base 的 LB Service（例：envoy gateway）照常拿到 IP（負對照）。
+
 ## 4. daily-check 第 28 列
 
-- [ ] 4.1 `configmap.yaml` 第 28 列（結構斷言；`skip`／`ok`／`warn`／`fail` 四種；缺讀權 → `skip` 附訊息）；`README.md` 圖例；`rbac.yaml` 讀權。
+- [ ] 4.1 `configmap.yaml` 第 28 列（結構斷言；`skip`／`ok`／`warn`／`fail` 四種；`privileged` 有 `jg.tenant-privileged=granted` → `ok` 列名、無 → `fail`；缺讀權 → `skip` 附訊息）；`README.md` 圖例；`rbac.yaml` 讀權。
 - [ ] 4.2 `check-row-numbers-resolve.sh` 綠；若有專列守衛慣例（如第 27 列的 `check-cilium-backend-row.sh`）照做一支。
-- [ ] 4.3 拋棄式叢集上四種結果各出現一次（順序：無 tenant → 合規 tenant → 加 PVC → 加一個綁 `admin` 的 RoleBinding），原始輸出貼 PR。
+- [ ] 4.3 拋棄式叢集上四種結果各出現一次（順序：無 tenant → 合規 tenant → 加 PVC → 加一個綁 `admin` 的 RoleBinding），再一組：namespace `privileged`＋granted 標籤 → `ok` 列名；手動拿掉標籤 → `fail`。原始輸出貼 PR。
 - [ ] 4.4 排程讀數：合併後隔日 `00:00Z` 在 jg-jiahd／jcom 的第 28 列是 `skip`（沒有 tenant），不是 `ok`——這一格不能提前觸發取讀數。
 
 ## 5. 收尾

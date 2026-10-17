@@ -48,13 +48,29 @@ jg-base SHALL ship a `ValidatingAdmissionPolicy`, a binding whose `namespaceSele
 - **WHEN** an HTTPRoute is created or updated in a namespace without the `jg.tenant` label
 - **THEN** the policy does not evaluate it and `envoy.yaml` is byte-identical to before this capability
 
+### Requirement: The shared LoadBalancer pool does not serve tenant namespaces
+
+The fleet's shared `CiliumLoadBalancerIPPool` SHALL carry a `serviceSelector` that excludes Services in namespaces labelled `jg.tenant`, so that a tenant obtains a LAN address only from the tenant-specific pool the cluster template renders for a `lan_ip` grant.
+
+#### Scenario: Tenant without a grant stays pending
+- **WHEN** a tenant namespace without a `lan_ip` grant creates a `LoadBalancer` Service
+- **THEN** the Service receives no address from the shared pool and stays pending
+
+#### Scenario: Platform Services unaffected
+- **WHEN** a `LoadBalancer` Service exists in a non-tenant namespace
+- **THEN** it receives an address from the shared pool as before
+
 ### Requirement: Daily check row 28 measures the tenant isolation invariants
 
-The daily check SHALL carry a row 28 that reads ClusterRoleBindings, RoleBindings, Namespace labels and PersistentVolumeClaims and records: `fail` if any ClusterRoleBinding names a `flux-system/tenant-*` ServiceAccount, if any RoleBinding for a tenant ServiceAccount references a role other than `tenant-admin`, or if any tenant namespace lacks a `pod-security.kubernetes.io/enforce` label or carries `privileged`; otherwise `warn` for every tenant namespace holding a PersistentVolumeClaim (named); otherwise `ok`. With no tenant namespaces it SHALL record `skip`. It MUST NOT use `kubectl auth can-i --as`. The README legend SHALL list row 28 so `check-row-numbers-resolve.sh` passes.
+The daily check SHALL carry a row 28 that reads ClusterRoleBindings, RoleBindings, Namespace labels and PersistentVolumeClaims and records: `fail` if any ClusterRoleBinding names a `flux-system/tenant-*` ServiceAccount, if any RoleBinding for a tenant ServiceAccount references a role other than `tenant-admin`, if any tenant namespace lacks a `pod-security.kubernetes.io/enforce` label, or if a tenant namespace carries `enforce=privileged` **without** the label `jg.tenant-privileged=granted`; otherwise `warn` for every tenant namespace holding a PersistentVolumeClaim (named); otherwise `ok`, naming any tenant that is privileged by grant. With no tenant namespaces it SHALL record `skip`. It MUST NOT use `kubectl auth can-i --as`. The README legend SHALL list row 28 so `check-row-numbers-resolve.sh` passes.
 
 #### Scenario: Four outcomes observed on a throwaway cluster
 - **WHEN** the row runs on a cluster with no tenants, then with a compliant tenant, then with that tenant holding a PVC, then with a RoleBinding to `admin` added
 - **THEN** it records `skip`, `ok`, `warn` naming the PVC, and `fail` naming the binding, in that order
+
+#### Scenario: Granted privilege is ok, stolen privilege is fail
+- **WHEN** a tenant namespace is `enforce=privileged` with `jg.tenant-privileged=granted`, and then the same label is removed by hand
+- **THEN** the row records `ok` naming the tenant as privileged by grant, and then `fail` naming the namespace
 
 #### Scenario: Missing read permission is not ok
 - **WHEN** the daily-check ServiceAccount cannot list ClusterRoleBindings
