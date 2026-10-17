@@ -12,8 +12,8 @@ Root 的設計決策在 `fleet-ops/openspec/changes/standalone-app-repos/design.
 ## Decisions
 
 - **D-a 明列而非扣除，verbs 一起釘**：RBAC 沒有「`admin` 減某些 group」。`tenant-admin` 是一份 verbs×resources 的白名單；守衛釘的是**禁列**（不含什麼），不是允列——漏給比多給安全。禁列有三類：apiGroups（`*.toolkit.fluxcd.io`、`cilium.io`、`storage.k8s.io`、cluster-scoped）、**verbs（`escalate`、`bind`、`impersonate`）**、**通配（三欄的 `*`）**。只釘第一類時，tenant 用 Role＋RoleBinding 把 Flux API 加給自己的那條路守衛看不見（jg-base-0a review）。
-- **D-b 第 28 列用結構不用 impersonation**：讀 CRB／RoleBinding／Namespace 標籤／PVC 四種物件就夠；`can-i --as` 在 Omni 代理下回的是呼叫者自己的權限（2026-09 量到），而且要給 daily-check `impersonate` 權才跑得動，本身就是提權。
-- **D-e 第 28 列分得出「授予的 privileged」與「偷升的」**：root D9 的 `host_network` grant 由模板把 namespace 標成 `privileged` ＋ `jg.tenant-privileged=granted`；tenant 對 Namespace 無 verb，加不了那個標籤。所以 `privileged` 有標籤 → `ok` 並列名（每天看得到誰是特權 tenant，但不響——每跑必響的檢查會被關掉）；`privileged` 無標籤 → `fail`。
+- **D-b tenant 隔離那一列（下一個空號）用結構不用 impersonation**：讀 CRB／RoleBinding／Namespace 標籤／PVC 四種物件就夠；`can-i --as` 在 Omni 代理下回的是呼叫者自己的權限（2026-09 量到），而且要給 daily-check `impersonate` 權才跑得動，本身就是提權。
+- **D-e tenant 隔離那一列分得出「授予的 privileged」與「偷升的」**：root D9 的 `host_network` grant 由模板把 namespace 標成 `privileged` ＋ `jg.tenant-privileged=granted`；tenant 對 Namespace 無 verb，加不了那個標籤。所以 `privileged` 有標籤 → `ok` 並列名（每天看得到誰是特權 tenant，但不響——每跑必響的檢查會被關掉）；`privileged` 無標籤 → `fail`。
 - **D-f tenant 的 LB Service 永遠拿不到主池位址——寫結果，機制量了再定**（jg-base-0a review 兩點）：
   - **不重疊是前提**：`networks.yaml:1-20` 記著 2026-08-12 的事故——一個是主池子集的窄池 `PoolConflict=cidr_overlap`，從未發出位址、沒人發現。tenant 池從 `lb_pool_blocks` 切子集會死得一樣。所以 tenant 的 `lan_ip_range` 必須在主池之外（模板側斷言不相交），3b.2 讀兩個池的 `PoolConflict` 都要是空。
   - **selector 認什麼要先量**：我的理解（推論，未量）是 Cilium `serviceSelector` 比 Service 標籤加合成的 `io.kubernetes.service.namespace`／`name`，不比 namespace 標籤。Service 標籤 tenant 自己能設，所以「主池排除 tenant」不能靠 tenant 守規矩。候選：(A) 主池 `io.kubernetes.service.namespace notIn [tenant…]`——合成標籤 tenant 設不了，但要在主池列舉每座叢集的 tenant 名，是每座的結構；(B) VAP 選 `jg.tenant` namespace 的 Service：`type=LoadBalancer` 必須 namespace 有 `jg.tenant-lan-ip=granted` 且 Service 帶 `jg.tenant=<自己的 tenant 名>`（CEL 比 namespace 標籤），主池 selector `jg.tenant DoesNotExist`、tenant 池 `jg.tenant=<name>`——全是 Service 標籤（確定支援），VAP 讓標籤可信。偏好 (B)：主池不必知道任何 tenant；(A) 當退路。
@@ -26,4 +26,4 @@ Root 的設計決策在 `fleet-ops/openspec/changes/standalone-app-repos/design.
 - [`tenant-admin` 漏了廠商需要的資源] → 廠商回來要，加一行、過守衛、合併；方向是對的。
 - [VAP 誤選到既有 namespace] → binding 只用 `namespaceSelector: jg.tenant exists`；拋棄式叢集上對 `default`／`network` 的 HTTPRoute 做負對照（不被評估）。`flux-local` diff 證明四座只多三個物件。
 - [VAP 的 param ConfigMap 不在時] → `paramRef.parameterNotFoundAction: Deny`——量不到就拒，不是放行。
-- [第 28 列的 RBAC 讀權在舊叢集未到就先跑] → `record skip "tenant isolation" "no RBAC read permission"`——量不到要說量不到，不是 `ok`。
+- [tenant 隔離那一列的 RBAC 讀權在舊叢集未到就先跑] → `record skip "tenant isolation" "no RBAC read permission"`——量不到要說量不到，不是 `ok`。

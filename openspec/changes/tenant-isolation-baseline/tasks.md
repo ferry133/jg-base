@@ -25,12 +25,12 @@
 - [ ] 3b.2 拋棄式叢集：無 `lan_ip` grant 的 tenant 建 LB Service 拿不到位址（被拒或 pending）；有 grant 的拿到的位址在 tenant 池範圍內、不在主池 blocks 內；**兩個 `CiliumLoadBalancerIPPool` 都沒有 `PoolConflict` condition 且 tenant 池真的發得出位址**（2026-08-12 的事故是窄池 `cidr_overlap` 從未發出任何位址）；base 的 LB Service（例：envoy gateway）照常拿到 IP（負對照）。
 - [ ] 3b.3 若選 (B)：主池 selector 改動對既有 Service 零影響——`flux-local` diff ＋ 拋棄式叢集上既有 LB 位址不變。
 
-## 4. daily-check 第 28 列
+## 4. daily-check 的 tenant 隔離列（下一個空號；號碼在實作時決定，spec 不預言——`check-row-numbers-resolve.sh` 掃全 repo 的 `row N` 引用）
 
-- [ ] 4.1 `configmap.yaml` 第 28 列（結構斷言；`skip`／`ok`／`warn`／`fail` 四種；`privileged` 有 `jg.tenant-privileged=granted` → `ok` 列名、無 → `fail`；缺讀權 → `skip` 附訊息）；`README.md` 圖例；`rbac.yaml` 讀權。
+- [ ] 4.1 `configmap.yaml` 新列、取下一個空號（結構斷言；`skip`／`ok`／`warn`／`fail` 四種；`privileged` 有 `jg.tenant-privileged=granted` → `ok` 列名、無 → `fail`；缺讀權 → `skip` 附訊息）；`README.md` 圖例；`rbac.yaml` 讀權。
 - [ ] 4.2 `check-row-numbers-resolve.sh` 綠；若有專列守衛慣例（如第 27 列的 `check-cilium-backend-row.sh`）照做一支。
 - [ ] 4.3 拋棄式叢集上四種結果各出現一次（順序：無 tenant → 合規 tenant → 加 PVC → 加一個綁 `admin` 的 RoleBinding），再一組：namespace `privileged`＋granted 標籤 → `ok` 列名；手動拿掉標籤 → `fail`。原始輸出貼 PR。
-- [ ] 4.4 排程讀數：合併後隔日 `00:00Z` 在 jg-jiahd／jcom 的第 28 列是 `skip`（沒有 tenant），不是 `ok`——這一格不能提前觸發取讀數。
+- [ ] 4.4 排程讀數：合併後隔日 `00:00Z` 在 jg-jiahd／jcom 的這一列是 `skip`（沒有 tenant），不是 `ok`——這一格不能提前觸發取讀數。
 
 ## 5. 收尾
 
