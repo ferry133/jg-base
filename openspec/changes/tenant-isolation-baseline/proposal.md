@@ -19,7 +19,7 @@ Root 的 Why 不在這裡複述（`fleet-ops/openspec/changes/standalone-app-rep
 
 ### New Capabilities
 
-- `tenant-isolation-baseline`：fleet 出貨給每一座叢集的 tenant 底——`tenant-admin` 的範圍與禁列（apiGroups、verbs、通配）、tenant namespace 的 HTTPRoute hostname 範圍（VAP）、主池不服務 tenant namespace、第 28 列的四種結果（含 privileged-by-grant）。
+- `tenant-isolation-baseline`：fleet 出貨給每一座叢集的 tenant 底——`tenant-admin` 的範圍與禁列（apiGroups、verbs、通配）、tenant namespace 的 HTTPRoute hostname 範圍（VAP）、主池不服務 tenant namespace、tenant 隔離列的四種結果（含 privileged-by-grant）。
 
 ### Modified Capabilities
 
@@ -32,4 +32,4 @@ Root 的 Why 不在這裡複述（`fleet-ops/openspec/changes/standalone-app-rep
 - `kubernetes/apps/base/monitoring/daily-check/app/configmap.yaml`（新列）、`README.md`（圖例）、`app/rbac.yaml`
 - `kubernetes/apps/base/kube-system/cilium/app/networks.yaml`（主池 `serviceSelector`）
 - `scripts/check-tenant-admin-role.sh`（新守衛）、`.github/workflows/flux-local.yaml` 接上
-- 四座既有叢集：多一個 ClusterRole、一支只選 `jg.tenant` namespace 的 VAP（對既有 7 個路由 namespace 不匹配、零影響——binding 的 `namespaceSelector` 是這一句的證據，PR 附 `flux-local` diff）、daily-check 多一列 `skip`——沒有 tenant 時第 28 列永遠 `skip`，不影響 `FAIL_COUNT`。
+- 四座既有叢集：多一個 ClusterRole、一支只選 `jg.tenant` namespace 的 VAP（對既有 7 個路由 namespace 不匹配、零影響——binding 的 `namespaceSelector` 是這一句的證據，PR 附 `flux-local` diff）、daily-check 多一列 `skip`——沒有 tenant 時tenant 隔離列永遠 `skip`，不影響 `FAIL_COUNT`。
