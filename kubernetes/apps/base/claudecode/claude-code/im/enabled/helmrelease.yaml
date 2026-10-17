@@ -158,6 +158,17 @@ spec:
               # address (Talos puts 169.254.x.x on lo).
               TTYD_INTERFACE: 127.0.0.1
               TTYD_AUTH_HEADER: X-Forwarded-Email
+              # The cluster's own apps repo (fleet-ops standalone-app-repos,
+              # k8scc im-apps-repo, ferry133/jg-base#183). `owner/repo` where
+              # the cluster has one; on every other cluster the default leaves
+              # it "", which claude-session treats as unset -- silent, nothing
+              # written (k8scc#34).
+              IM_APPS_REPO: "${IM_APPS_REPO:=}"
+              # The write deploy key, from the `im-apps-key` volume below.
+              # A directory mount, not a subPath one: claude-session writes
+              # ~/.ssh/config, so ~/.ssh cannot be a read-only Secret volume,
+              # and a subPath mount never sees a rotated key.
+              IM_APPS_KEY: /etc/im-apps/identity
             probes:
               # ttyd binds loopback, unreachable from kubelet's tcpSocket
               # probe (hostNetwork pod IP) -- check from inside the pod.
@@ -533,6 +544,27 @@ spec:
               - path: /etc/oauth2-proxy
             oauth2-proxy:
               - path: /etc/oauth2-proxy
+                readOnly: true
+      # Secret `im-apps-write-key` (key `identity`) exists only where the
+      # cluster has an apps repo: jg-cluster-template renders it into the
+      # per-user repo's kubernetes/tenants/ (root D5, jgct#214). Everywhere
+      # else -- every cluster today -- it is absent, so the volume must be
+      # optional or im never starts. app-template 4.6.2's `type: secret`
+      # cannot say `optional` (_volumes.tpl copies only defaultMode and
+      # items), hence `custom` with the whole volume spelled out.
+      # 256 = 0400: im runs as uid 0 and Secret files are root-owned, which
+      # claude-session's ownership check accepts (jg-base#183).
+      im-apps-key:
+        type: custom
+        volumeSpec:
+          secret:
+            secretName: im-apps-write-key
+            optional: true
+            defaultMode: 256
+        advancedMounts:
+          im:
+            app:
+              - path: /etc/im-apps
                 readOnly: true
       talos-mcp-config:
         type: secret
