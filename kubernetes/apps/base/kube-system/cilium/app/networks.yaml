@@ -18,6 +18,13 @@
 #
 # A cluster that has not narrowed supplies its whole node CIDR here, which is
 # today's behaviour written out explicitly rather than hardcoded.
+#
+# Tenant Services never draw from it (ferry133/jg-base#192; fleet-ops root
+# `standalone-app-repos` D9 (B)): a Service labelled `jg.tenant` is excluded
+# here and selected only by its tenant's own pool. Cilium's serviceSelector
+# matches Service labels (measured on jg-jcc2, root 3b.1), and the label is
+# made trustworthy by tenant-admission's LoadBalancer policy. No Service the
+# platform runs carries the label, so every one of them still matches.
 apiVersion: cilium.io/v2
 kind: CiliumLoadBalancerIPPool
 metadata:
@@ -25,6 +32,10 @@ metadata:
 spec:
   allowFirstLastIPs: "No"
   blocks: ${LB_POOL_BLOCKS:=[]}
+  serviceSelector:
+    matchExpressions:
+      - key: jg.tenant
+        operator: DoesNotExist
 ---
 # Still v2alpha1: only CiliumLoadBalancerIPPool graduated to v2. The clusters
 # serve no v2 for this kind, and applying one fails the whole dry-run.

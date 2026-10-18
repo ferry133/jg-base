@@ -137,14 +137,17 @@ data:
     # Each pool admits exactly one of the two consumers. Written out rather than
     # parameterised because the whole point is that the two are complements: a
     # reader has to be able to see that no Service falls between them.
+    # Both roles also exclude tenant Services (`jg.tenant DoesNotExist`,
+    # ferry133/jg-base#192): a tenant draws only from its own pool, never from
+    # an address the appliance discovered for the platform.
     selector_yaml() {
       case "$1" in
         external)
-          printf '  serviceSelector:\n    matchLabels:\n      %s: "%s"\n' \
+          printf '  serviceSelector:\n    matchLabels:\n      %s: "%s"\n    matchExpressions:\n      - key: jg.tenant\n        operator: DoesNotExist\n' \
             "$EXTERNAL_SELECTOR_KEY" "$EXTERNAL_GATEWAY"
           ;;
         *)
-          printf '  serviceSelector:\n    matchExpressions:\n      - key: %s\n        operator: NotIn\n        values: ["%s"]\n' \
+          printf '  serviceSelector:\n    matchExpressions:\n      - key: %s\n        operator: NotIn\n        values: ["%s"]\n      - key: jg.tenant\n        operator: DoesNotExist\n' \
             "$EXTERNAL_SELECTOR_KEY" "$EXTERNAL_GATEWAY"
           ;;
       esac
