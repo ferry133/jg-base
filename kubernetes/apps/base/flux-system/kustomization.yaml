@@ -8,3 +8,6 @@ resources:
   - ./namespace.yaml
   - ./flux-instance/ks.yaml
   - ./flux-operator/ks.yaml
+  # ClusterRole tenant-admin (jg-base#190). Cluster-scoped, so the
+  # `namespace: flux-system` above does not touch it.
+  - ./tenant-rbac
