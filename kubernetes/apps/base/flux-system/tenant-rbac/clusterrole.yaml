@@ -1,0 +1,129 @@
+---
+# The only role a tenant ServiceAccount is ever bound to (fleet-ops root
+# `standalone-app-repos` D3, sub-change `tenant-isolation-baseline` §2,
+# ferry133/jg-base#190). jg-cluster-template renders, per declared namespace,
+# `RoleBinding tenant-<name>` -> ClusterRole `tenant-admin` for subject
+# `flux-system/tenant-<name>`; the tenant's Kustomization applies as that SA.
+# The NAME is the contract with the template.
+#
+# Why not the built-in `admin`: it aggregates Flux's `flux-edit`, so a tenant
+# bound to it could create a Kustomization or HelmRelease, and one without
+# serviceAccountName is applied by the controller as cluster-admin. That is
+# the one real escalation path this role exists to close.
+#
+# Written as an ALLOW list, everything spelled out, no `*` anywhere: what is
+# missing has to be asked for and added (one line, through the guard), which
+# is the safe direction. scripts/check-tenant-admin-role.sh pins what must
+# never be here.
+#
+# Deliberately absent or read-only, each because the platform renders it:
+#   - NetworkPolicy (networking.k8s.io) and anything in cilium.io: Cilium ORs
+#     allow rules, so a tenant policy could widen the platform's
+#     `tenant-ingress`.
+#   - ResourceQuota, LimitRange: read-only, or a tenant raises its own quota
+#     (including `services.loadbalancers`, its LAN-IP grant).
+#   - Endpoints, EndpointSlices: read-only; a hand-written slice behind a
+#     selector-less Service points traffic at any address in the cluster.
+#   - Namespace, Node, PersistentVolume and every other cluster-scoped kind.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: tenant-admin
+  labels:
+    app.kubernetes.io/part-of: tenant-isolation
+rules:
+  # core: workloads and their configuration
+  - apiGroups: [""]
+    resources:
+      - configmaps
+      - persistentvolumeclaims
+      - pods
+      - secrets
+      - serviceaccounts
+      - services
+    verbs: [get, list, watch, create, update, patch, delete, deletecollection]
+  - apiGroups: [""]
+    resources:
+      - pods/attach
+      - pods/eviction
+      - pods/exec
+      - pods/portforward
+      - serviceaccounts/token
+    verbs: [get, create]
+  - apiGroups: [""]
+    resources:
+      - pods/log
+      - pods/status
+      - services/status
+      - persistentvolumeclaims/status
+    verbs: [get, list, watch]
+  - apiGroups: [""]
+    resources:
+      - events
+    verbs: [get, list, watch, create, patch]
+  # core: platform-rendered or address-bearing, read-only
+  - apiGroups: [""]
+    resources:
+      - endpoints
+      - limitranges
+      - resourcequotas
+      - resourcequotas/status
+    verbs: [get, list, watch]
+  - apiGroups: [discovery.k8s.io]
+    resources: [endpointslices]
+    verbs: [get, list, watch]
+  - apiGroups: [events.k8s.io]
+    resources: [events]
+    verbs: [get, list, watch, create, patch]
+  # apps
+  - apiGroups: [apps]
+    resources:
+      - daemonsets
+      - deployments
+      - replicasets
+      - statefulsets
+    verbs: [get, list, watch, create, update, patch, delete, deletecollection]
+  - apiGroups: [apps]
+    resources:
+      - deployments/scale
+      - replicasets/scale
+      - statefulsets/scale
+    verbs: [get, update, patch]
+  - apiGroups: [apps]
+    resources:
+      - controllerrevisions
+      - daemonsets/status
+      - deployments/status
+      - replicasets/status
+      - statefulsets/status
+    verbs: [get, list, watch]
+  # batch, autoscaling, policy
+  - apiGroups: [batch]
+    resources: [cronjobs, jobs]
+    verbs: [get, list, watch, create, update, patch, delete, deletecollection]
+  - apiGroups: [batch]
+    resources: [cronjobs/status, jobs/status]
+    verbs: [get, list, watch]
+  - apiGroups: [autoscaling]
+    resources: [horizontalpodautoscalers]
+    verbs: [get, list, watch, create, update, patch, delete, deletecollection]
+  - apiGroups: [policy]
+    resources: [poddisruptionbudgets]
+    verbs: [get, list, watch, create, update, patch, delete, deletecollection]
+  # leader election for apps that use it
+  - apiGroups: [coordination.k8s.io]
+    resources: [leases]
+    verbs: [get, list, watch, create, update, patch, delete]
+  # ingress: Ingress and HTTPRoute only. The hostname a route may claim is
+  # bounded separately (admission policy, ferry133/jg-base#191).
+  - apiGroups: [networking.k8s.io]
+    resources: [ingresses]
+    verbs: [get, list, watch, create, update, patch, delete, deletecollection]
+  - apiGroups: [gateway.networking.k8s.io]
+    resources: [httproutes]
+    verbs: [get, list, watch, create, update, patch, delete, deletecollection]
+  # RBAC inside the namespace. Without `escalate` and `bind`, the API server
+  # refuses any Role or RoleBinding granting more than this role already does.
+  - apiGroups: [rbac.authorization.k8s.io]
+    resources: [roles, rolebindings]
+    verbs: [get, list, watch, create, update, patch, delete, deletecollection]
