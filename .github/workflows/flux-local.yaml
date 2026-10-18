@@ -485,6 +485,10 @@ jobs:
       # #159: row 27 compares each Cilium agent's backends with the API.
       - name: daily-check Cilium backend row
         run: bash scripts/check-cilium-backend-row.sh
+      # Row 28: tenant isolation by structure; every verdict from the real
+      # block, kubectl stubbed to the four reads it makes.
+      - name: daily-check tenant isolation row
+        run: bash scripts/check-tenant-isolation-row.sh
       # #190: ClusterRole tenant-admin is the only thing a tenant SA is bound
       # to. Its deny list -- Flux/cilium/storage/cluster-scoped kinds,
       # escalate/bind/impersonate, any `*`, writable quota -- and a self-test

@@ -24,6 +24,10 @@ rules:
       - services
       - namespaces
     verbs: ["get", "list"]
+  # Row 28 reads tenant bindings by structure (no impersonation, decision D-b).
+  - apiGroups: ["rbac.authorization.k8s.io"]
+    resources: ["clusterrolebindings", "rolebindings"]
+    verbs: ["list"]
   # Row 27 compares each Cilium agent's backends with the API's ready endpoints.
   - apiGroups: ["discovery.k8s.io"]
     resources: ["endpointslices"]
