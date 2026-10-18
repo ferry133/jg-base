@@ -25,25 +25,19 @@ spec:
           type: RuntimeDefault
       containers:
         - name: admin
-          image: ghcr.io/ferry133/linebot:fb26922
+          image: ghcr.io/ferry133/linebot:95c26fa
           imagePullPolicy: Always
           command: ["python", "/app/agents/admin_server.py"]
           envFrom:
             - secretRef:
                 name: linebot-secret
           env:
-            - name: ADMIN_USER
-              valueFrom:
-                secretKeyRef:
-                  name: linebot-secret
-                  key: ADMIN_USER
-                  optional: true
-            - name: ADMIN_PASS
-              valueFrom:
-                secretKeyRef:
-                  name: linebot-secret
-                  key: ADMIN_PASS
-                  optional: true
+            # Login allowlist — THIS is the gate; Auth0 only proves identity.
+            # Empty ⇒ nobody can log in (fail-closed). Literal, not a secret, so
+            # who can get in is readable here. (ADMIN_USER/ADMIN_PASS removed:
+            # they were never set, and the old image fell back to admin/changeme.)
+            - name: ADMIN_ALLOWED_EMAILS
+              value: "jiahdadm@gmail.com,ferry133@gmail.com"
           ports:
             - containerPort: 8081
           resources:
