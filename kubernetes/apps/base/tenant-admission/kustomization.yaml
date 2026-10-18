@@ -1,5 +1,6 @@
 ---
-# Admission policies that bound tenants (ferry133/jg-base#191, and #192 next).
+# Admission policies that bound tenants (ferry133/jg-base#191 hostnames,
+# #192 LoadBalancer Services).
 #
 # A directory of its own, NOT under flux-system/: that kustomization sets
 # `namespace: flux-system`, and kustomize v5.7.1 does not know
@@ -11,3 +12,4 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
   - ./hostname-policy.yaml
+  - ./loadbalancer-policy.yaml

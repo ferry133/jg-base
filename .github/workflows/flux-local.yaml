@@ -496,6 +496,11 @@ jobs:
       # built (kustomize stamped a namespace onto the cluster-scoped VAP).
       - name: tenant HTTPRoute hostnames bounded, as built
         run: bash scripts/check-tenant-hostname-policy.sh && bash scripts/check-tenant-hostname-policy.sh --self-test
+      # #192: a tenant LoadBalancer Service never takes a platform address --
+      # every static pool and both lan-address pools exclude `jg.tenant`, and
+      # the admission policy makes that label trustworthy.
+      - name: tenant LoadBalancer Services kept off the shared pools
+        run: bash scripts/check-tenant-lb-policy.sh && bash scripts/check-tenant-lb-policy.sh --self-test
       # #124: offsite-backup used to `apk add` its whole toolchain on every
       # schedule -- over 11 minutes of a 13m27s Job on the slow appliance,
       # against a backup body of seconds. Image layers are cached by

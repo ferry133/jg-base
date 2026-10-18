@@ -1,0 +1,79 @@
+---
+# A Service in a tenant namespace may be `type: LoadBalancer` only when the
+# tenant holds the LAN-IP grant, and only when it says which tenant it is
+# (ferry133/jg-base#192; fleet-ops root `standalone-app-repos` D9 option (B);
+# sub-change tenant-isolation-baseline §3b, D-f).
+#
+# Why the label matters: pools select on Service labels (Cilium does not match
+# namespace labels — measured on jg-jcc2, root 3b.1). The shared pool takes
+# every Service WITHOUT `jg.tenant` (networks.yaml, lan-address); a tenant's
+# own pool takes `jg.tenant=<name>` AND a Service namespace in that tenant's
+# list. So:
+#   - no label: the Service would fall into the shared pool and take a
+#     platform address — refused here;
+#   - another tenant's label: no pool would match (wrong namespace), so it
+#     would sit pending forever — refused here, loudly;
+#   - no grant: quota is already services.loadbalancers: 0, refused here too,
+#     with a message that says why.
+# CREATE and UPDATE: otherwise a ClusterIP Service is changed to
+# LoadBalancer, or the label is removed, after it was admitted.
+#
+# Both labels it reads come from the platform: `jg.tenant` and
+# `jg.tenant-lan-ip` on the Namespace are rendered by jg-cluster-template, and
+# tenant-admin has no verbs on Namespace.
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: tenant-loadbalancer-services
+  labels:
+    app.kubernetes.io/part-of: tenant-isolation
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: [v1]
+        operations: [CREATE, UPDATE]
+        resources: [services]
+  matchConditions:
+    - name: is-loadbalancer
+      expression: has(object.spec.type) && object.spec.type == 'LoadBalancer'
+  variables:
+    - name: tenant
+      expression: namespaceObject.metadata.labels['jg.tenant']
+    - name: nsLabels
+      expression: namespaceObject.metadata.labels
+    - name: svcLabels
+      expression: 'has(object.metadata.labels) ? object.metadata.labels : {}'
+  validations:
+    - expression: >-
+        'jg.tenant-lan-ip' in variables.nsLabels &&
+        variables.nsLabels['jg.tenant-lan-ip'] == 'granted'
+      messageExpression: >-
+        'tenant "' + variables.tenant + '" has no LAN-IP grant (lan_ip in
+        cluster.yaml), so it may not create a LoadBalancer Service'
+      reason: Forbidden
+    - expression: >-
+        'jg.tenant' in variables.svcLabels &&
+        variables.svcLabels['jg.tenant'] == variables.tenant
+      messageExpression: >-
+        'a tenant LoadBalancer Service must carry the label jg.tenant: "' +
+        variables.tenant + '" (it selects the pool of this tenant; without it the
+        Service would take a platform address)'
+      reason: Forbidden
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: tenant-loadbalancer-services
+  labels:
+    app.kubernetes.io/part-of: tenant-isolation
+spec:
+  policyName: tenant-loadbalancer-services
+  validationActions: [Deny]
+  # Tenant namespaces only: no platform Service is ever evaluated.
+  matchResources:
+    namespaceSelector:
+      matchExpressions:
+        - key: jg.tenant
+          operator: Exists
