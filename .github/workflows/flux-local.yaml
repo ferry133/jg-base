@@ -491,6 +491,11 @@ jobs:
       # whose mutations (the three #190 names first) must each fail.
       - name: tenant-admin grants nothing that leaves the namespace
         run: bash scripts/check-tenant-admin-role.sh && bash scripts/check-tenant-admin-role.sh --self-test
+      # #191: a tenant HTTPRoute may only claim <tenant>.<domain>. Read from
+      # `flux build`, because the first draft was right in source and wrong as
+      # built (kustomize stamped a namespace onto the cluster-scoped VAP).
+      - name: tenant HTTPRoute hostnames bounded, as built
+        run: bash scripts/check-tenant-hostname-policy.sh && bash scripts/check-tenant-hostname-policy.sh --self-test
       # #124: offsite-backup used to `apk add` its whole toolchain on every
       # schedule -- over 11 minutes of a 13m27s Job on the slow appliance,
       # against a backup body of seconds. Image layers are cached by

@@ -1,0 +1,13 @@
+---
+# Admission policies that bound tenants (ferry133/jg-base#191, and #192 next).
+#
+# A directory of its own, NOT under flux-system/: that kustomization sets
+# `namespace: flux-system`, and kustomize v5.7.1 does not know
+# ValidatingAdmissionPolicy(Binding) are cluster-scoped, so it stamps the
+# namespace onto them (measured: ClusterRole stays namespace-less, both VAP
+# kinds come out with `namespace: flux-system`). No namespace transformer
+# here; the one namespaced object names its namespace itself.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ./hostname-policy.yaml

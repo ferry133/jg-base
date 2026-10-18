@@ -1,0 +1,86 @@
+---
+# An HTTPRoute in a tenant namespace may only claim hostnames under
+# `<tenant>.<domain>` (ferry133/jg-base#191; fleet-ops root
+# `standalone-app-repos` D4; sub-change tenant-isolation-baseline §3, D-d).
+#
+# The gateways are NOT narrowed: their https listeners have always been
+# `allowedRoutes.namespaces.from: All`, routes live in seven namespaces, and
+# Gateway API does not partition hostnames by namespace anyway. The hole is
+# capture, not admission: a tenant could attach `im.<domain>` and take the
+# base im. So this bounds the hostname, and nothing else.
+#
+# - The tenant's name comes from its Namespace's `jg.tenant` label, which
+#   jg-cluster-template renders and tenant-admin cannot write.
+# - CREATE and UPDATE: with CREATE alone, a compliant route edited to
+#   `im.<domain>` afterwards would pass.
+# - No hostnames at all is refused: a route without hostnames matches every
+#   hostname on the listener.
+# - The domain is a parameter (tenant-hostname-params below), not a literal,
+#   so one policy serves every cluster.
+# Measured as a prototype on jg-jcc2, 2026-10-18 00:3x (fleet-ops-77
+# [af719f], fleet-ops routing-log): six cells as expected.
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: tenant-httproute-hostnames
+  labels:
+    app.kubernetes.io/part-of: tenant-isolation
+spec:
+  failurePolicy: Fail
+  paramKind:
+    apiVersion: v1
+    kind: ConfigMap
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [gateway.networking.k8s.io]
+        apiVersions: ["*"]
+        operations: [CREATE, UPDATE]
+        resources: [httproutes]
+  variables:
+    - name: suffix
+      expression: >-
+        '.' + namespaceObject.metadata.labels['jg.tenant'] + '.' + params.data.domain
+  validations:
+    - expression: >-
+        has(object.spec.hostnames) && size(object.spec.hostnames) > 0 &&
+        object.spec.hostnames.all(h, h.endsWith(variables.suffix))
+      messageExpression: >-
+        'tenant HTTPRoute hostnames must all end in "' + variables.suffix +
+        '" (and there must be at least one); got ' +
+        (has(object.spec.hostnames) ? object.spec.hostnames.join(', ') : 'none')
+      reason: Forbidden
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: tenant-httproute-hostnames
+  labels:
+    app.kubernetes.io/part-of: tenant-isolation
+spec:
+  policyName: tenant-httproute-hostnames
+  validationActions: [Deny]
+  # Tenant namespaces only. Every other namespace's routes are never
+  # evaluated, so nothing that exists today can be refused by this.
+  matchResources:
+    namespaceSelector:
+      matchExpressions:
+        - key: jg.tenant
+          operator: Exists
+  paramRef:
+    name: tenant-hostname-params
+    namespace: flux-system
+    # No parameter, no admission: unmeasurable means refused, not allowed.
+    parameterNotFoundAction: Deny
+---
+# The policy's one parameter. ${SECRET_DOMAIN} is substituted by the
+# Kustomization that applies flux-system/ (cluster-apps-base, whose postBuild
+# reads cluster-secrets), so jg-cluster-template renders nothing for this.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: tenant-hostname-params
+  namespace: flux-system
+  labels:
+    app.kubernetes.io/part-of: tenant-isolation
+data:
+  domain: "${SECRET_DOMAIN}"
