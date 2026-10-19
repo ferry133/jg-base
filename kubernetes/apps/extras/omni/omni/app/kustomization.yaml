@@ -5,6 +5,7 @@ resources:
   - ./local-pvc.yaml
   - ./secret.yaml
   - ./helmrepository.yaml
+  - ./ocirepository.yaml
   - ./helmrelease.yaml
   - ./helmrelease1.yaml
   - ./ingress.yaml
