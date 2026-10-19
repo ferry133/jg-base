@@ -489,6 +489,10 @@ jobs:
       # block, kubectl stubbed to the four reads it makes.
       - name: daily-check tenant isolation row
         run: bash scripts/check-tenant-isolation-row.sh
+      # #199: row 29 reads each Envoy proxy's connected_state gauge; every
+      # verdict from the real block, kubectl/curl/sleep stubbed to what it asks.
+      - name: daily-check Envoy xDS row
+        run: bash scripts/check-envoy-xds-row.sh
       # #190: ClusterRole tenant-admin is the only thing a tenant SA is bound
       # to. Its deny list -- Flux/cilium/storage/cluster-scoped kinds,
       # escalate/bind/impersonate, any `*`, writable quota -- and a self-test
