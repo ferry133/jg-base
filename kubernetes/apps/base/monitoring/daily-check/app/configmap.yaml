@@ -1988,6 +1988,91 @@ data:
       fi
     fi
 
+    # 29. Envoy proxies connected to xDS (ferry133/jg-base#199, from #193).
+    #
+    # A proxy that loses its xDS stream keeps serving the last configuration it
+    # had — so it reads healthy until a backend pod changes, and then that route
+    # sends traffic to an address nobody holds. On jg-jiahd every proxy older
+    # than a 2026-10-15 control-plane restart stopped getting a fresh projected
+    # token (Talos v1.13.2, siderolabs/talos#13352), failed xDS auth from
+    # 2026-10-17 09:46Z, and nothing said so for ~27 h — until a linebot rollout
+    # broke `linebot.jiahd.cc` (#193).
+    #
+    # The reading is Envoy's own gauge, `envoy_control_plane_connected_state`,
+    # from each proxy's Prometheus port (the container port named `metrics`;
+    # 19001 on Envoy Gateway today), over the pod IP. The admin port (19000)
+    # listens on loopback only, and the envoy image has no curl/wget to exec.
+    # Measured on 2026-10-19 against jg-jiahd: 0 on the four stuck proxies, 1 on
+    # the rest — the same values the admin /stats reported.
+    #
+    # The population is every pod labelled
+    # app.kubernetes.io/managed-by=envoy-gateway in any namespace (jg-jiahd has
+    # them in `network` and `mqtt`, jcom also in `omni`), not a list of gateway
+    # names: #193 found the two mqtt proxies stuck that the issue never named.
+    #
+    # A 0 must hold across two reads ~10 s apart: a proxy reconnecting at the
+    # moment of the read is not an outage. Verdicts: any proxy held at 0 → fail;
+    # any proxy unreadable → skip naming it, unless another already failed (red
+    # outranks "could not measure"); no proxies → skip.
+    evx_read() {  # $1 pod IP, $2 metrics port → 0 | 1 | UNMEASURED|<reason>
+      local body val
+      if ! body=$(curl -s -m 5 "http://$1:$2/stats/prometheus" 2>/dev/null) || [[ -z "$body" ]]; then
+        echo "UNMEASURED|metrics port $2 did not answer"
+        return
+      fi
+      val=$(awk '$1 == "envoy_control_plane_connected_state" || $1 == "envoy_control_plane_connected_state{}" { print $2; exit }' <<< "$body")
+      case "$val" in
+        0|1) echo "$val" ;;
+        "")  echo "UNMEASURED|no envoy_control_plane_connected_state in /stats/prometheus" ;;
+        *)   echo "UNMEASURED|envoy_control_plane_connected_state is '${val}', neither 0 nor 1" ;;
+      esac
+    }
+    if ! EVX_JSON=$(kubectl get pods -A -l app.kubernetes.io/managed-by=envoy-gateway -o json 2>/dev/null); then
+      record skip "Envoy xDS connection" "pods labelled app.kubernetes.io/managed-by=envoy-gateway could not be listed"
+    else
+      # ns/name ip port — port is "-" when the pod declares no `metrics` port.
+      EVX_PODS=$(jq -r '.items[] | select(.status.phase == "Running" and (.status.podIP // "") != "")
+        | "\(.metadata.namespace)/\(.metadata.name) \(.status.podIP) \(([.spec.containers[].ports // [] | .[] | select(.name == "metrics") | .containerPort] | first) // "-")"' <<< "$EVX_JSON")
+      if [[ -z "$EVX_PODS" ]]; then
+        record skip "Envoy xDS connection" "no running Envoy Gateway proxy pods"
+      else
+        EVX_DOWN=(); EVX_SKIP=(); EVX_UP=0; EVX_RECHECK=""
+        while read -r EVX_POD EVX_IP EVX_PORT; do
+          if [[ "$EVX_PORT" == "-" ]]; then
+            EVX_SKIP+=("${EVX_POD}: declares no container port named metrics")
+            continue
+          fi
+          EVX_V=$(evx_read "$EVX_IP" "$EVX_PORT")
+          case "$EVX_V" in
+            1) ((EVX_UP++)) ;;
+            0) EVX_RECHECK="${EVX_RECHECK}${EVX_POD} ${EVX_IP} ${EVX_PORT}"$'\n' ;;
+            *) EVX_SKIP+=("${EVX_POD}: ${EVX_V#UNMEASURED|}") ;;
+          esac
+        done <<< "$EVX_PODS"
+        if [[ -n "$EVX_RECHECK" ]]; then
+          sleep 10
+          while read -r EVX_POD EVX_IP EVX_PORT; do
+            [[ -n "$EVX_POD" ]] || continue
+            EVX_V=$(evx_read "$EVX_IP" "$EVX_PORT")
+            case "$EVX_V" in
+              1) ((EVX_UP++)) ;;
+              0) EVX_DOWN+=("$EVX_POD") ;;
+              *) EVX_SKIP+=("${EVX_POD}: read 0, then ${EVX_V#UNMEASURED|}") ;;
+            esac
+          done <<< "$EVX_RECHECK"
+        fi
+        EVX_ALSO=""
+        [[ ${#EVX_SKIP[@]} -gt 0 ]] && EVX_ALSO=" | not measured: $(printf '%s; ' "${EVX_SKIP[@]}")"
+        if [[ ${#EVX_DOWN[@]} -gt 0 ]]; then
+          record fail "Envoy xDS connection" "proxies disconnected from Envoy Gateway (serving frozen config; restart them, then find why — #193): ${EVX_DOWN[*]}${EVX_ALSO}"
+        elif [[ ${#EVX_SKIP[@]} -gt 0 ]]; then
+          record skip "Envoy xDS connection" "${EVX_UP} connected, could not read the rest${EVX_ALSO}"
+        else
+          record ok "Envoy xDS connection" "${EVX_UP} proxy pod(s) connected"
+        fi
+      fi
+    fi
+
     if [[ $FAIL_COUNT -gt 0 ]]; then
       STATUS_TAG="❌ ${FAIL_COUNT} FAIL"
       [[ $WARN_COUNT -gt 0 ]] && STATUS_TAG="${STATUS_TAG}, ${WARN_COUNT} WARN"
