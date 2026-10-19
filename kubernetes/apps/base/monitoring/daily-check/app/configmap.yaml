@@ -1914,6 +1914,80 @@ data:
       fi
     fi
 
+    # 28. Tenant isolation invariants (ferry133/jg-base#192 follow-on; fleet-ops
+    # root `standalone-app-repos` 2.3, sub-change tenant-isolation-baseline §4).
+    #
+    # A tenant is a namespace labelled `jg.tenant` whose objects Flux applies as
+    # ServiceAccount `flux-system/tenant-<name>`, bound to ClusterRole
+    # `tenant-admin` there and nowhere else. Admission and RBAC enforce that at
+    # write time; this row re-reads the result every day, because the things
+    # that would undo it are written by the platform side, not the tenant (a
+    # hand-applied binding, a relabelled namespace) and nothing else re-reads
+    # them.
+    #
+    # STRUCTURE, not impersonation (decision D-b): `kubectl auth can-i --as`
+    # answers about the caller under Omni's proxy (measured 2026-09), and giving
+    # this Job `impersonate` would itself be the escalation it looks for. Four
+    # kinds are read: ClusterRoleBindings, RoleBindings, Namespaces, PVCs.
+    #
+    #   fail  a ClusterRoleBinding names a tenant SA; a RoleBinding naming a
+    #         tenant SA points anywhere but tenant-admin; a tenant namespace
+    #         binds admin/edit/cluster-admin; a tenant namespace has no PSA
+    #         enforce label; or is `privileged` WITHOUT jg.tenant-privileged=
+    #         granted (a host_network grant renders both; the tenant cannot write
+    #         either, so one without the other is drift).
+    #   warn  a tenant namespace holds PVCs: tenant data is outside the off-site
+    #         backup by design (D-c) — visible, not red every day.
+    #   ok    lists the tenants, and names those privileged BY GRANT, every day,
+    #         without raising anything (D-e: a check that fires daily is muted).
+    #   skip  no tenant namespaces; or a read this row needs was refused — an
+    #         unreadable answer is not an `ok` (no RBAC read permission).
+    TEN_NS_JSON=$(kubectl get namespaces -l jg.tenant -o json 2>/dev/null) || TEN_NS_JSON=""
+    if [[ -z "$TEN_NS_JSON" ]]; then
+      record skip "Tenant isolation" "namespaces could not be listed"
+    elif [[ $(echo "$TEN_NS_JSON" | jq '.items | length') -eq 0 ]]; then
+      record skip "Tenant isolation" "no tenants declared (no namespace labelled jg.tenant)"
+    elif ! TEN_CRB=$(kubectl get clusterrolebindings -o json 2>/dev/null) \
+      || ! TEN_RB=$(kubectl get rolebindings -A -o json 2>/dev/null); then
+      record skip "Tenant isolation" "no RBAC read permission (clusterrolebindings/rolebindings could not be listed) — not measured, which is not the same as clean"
+    elif ! TEN_PVC=$(kubectl get persistentvolumeclaims -A -o json 2>/dev/null); then
+      record skip "Tenant isolation" "persistentvolumeclaims could not be listed"
+    else
+      # Space-joined with no trailing space; the membership tests below wrap it
+      # in spaces and bind the object's namespace FIRST (`as $n`): inside
+      # `$ns | contains(...)` the dot is already $ns, and the first version
+      # compared the list with itself, so no tenant namespace ever matched.
+      # No ${x% } trimming: this file is `substitute: disabled`, but
+      # a row that only parses while that annotation is present is a trap (26).
+      TEN_NAMES=$(echo "$TEN_NS_JSON" | jq -r '[.items[].metadata.name] | sort | join(" ")')
+      TEN_FAIL=()
+      # Subjects that are tenant ServiceAccounts: flux-system/tenant-*.
+      TEN_IS_SA='(.subjects // []) | map(select(.kind == "ServiceAccount" and .namespace == "flux-system" and (.name | startswith("tenant-")))) | length > 0'
+      while IFS= read -r l; do [[ -n "$l" ]] && TEN_FAIL+=("$l"); done < <(
+        echo "$TEN_CRB" | jq -r ".items[] | select($TEN_IS_SA) | \"ClusterRoleBinding \(.metadata.name) names a tenant ServiceAccount\"")
+      while IFS= read -r l; do [[ -n "$l" ]] && TEN_FAIL+=("$l"); done < <(
+        echo "$TEN_RB" | jq -r ".items[] | select($TEN_IS_SA) | select(.roleRef.kind != \"ClusterRole\" or .roleRef.name != \"tenant-admin\") | \"RoleBinding \(.metadata.namespace)/\(.metadata.name) binds a tenant ServiceAccount to \(.roleRef.kind) \(.roleRef.name), not tenant-admin\"")
+      while IFS= read -r l; do [[ -n "$l" ]] && TEN_FAIL+=("$l"); done < <(
+        echo "$TEN_RB" | jq -r --arg ns " $TEN_NAMES " '.items[] | .metadata.namespace as $n | select($ns | contains(" " + $n + " ")) | select(.roleRef.kind == "ClusterRole" and (.roleRef.name == "admin" or .roleRef.name == "edit" or .roleRef.name == "cluster-admin")) | "RoleBinding \(.metadata.namespace)/\(.metadata.name) binds ClusterRole \(.roleRef.name) in a tenant namespace"')
+      while IFS= read -r l; do [[ -n "$l" ]] && TEN_FAIL+=("$l"); done < <(
+        echo "$TEN_NS_JSON" | jq -r '.items[] | .metadata as $m | ($m.labels["pod-security.kubernetes.io/enforce"] // "") as $lvl |
+          if $lvl == "" then "namespace \($m.name) has no pod-security enforce label"
+          elif $lvl == "privileged" and ($m.labels["jg.tenant-privileged"] // "") != "granted" then "namespace \($m.name) is privileged without jg.tenant-privileged=granted"
+          else empty end')
+      TEN_GRANTED=$(echo "$TEN_NS_JSON" | jq -r '[.items[] | select(.metadata.labels["pod-security.kubernetes.io/enforce"] == "privileged" and .metadata.labels["jg.tenant-privileged"] == "granted") | .metadata.name] | join(", ")')
+      TEN_PVCS=$(echo "$TEN_PVC" | jq -r --arg ns " $TEN_NAMES " '[.items[] | .metadata.namespace as $n | select($ns | contains(" " + $n + " ")) | "\(.metadata.namespace)/\(.metadata.name)"] | join(", ")')
+      TEN_COUNT=$(echo "$TEN_NS_JSON" | jq '.items | length')
+      TEN_PRIV=""
+      [[ -n "$TEN_GRANTED" ]] && TEN_PRIV="; privileged by grant: ${TEN_GRANTED}"
+      if [[ ${#TEN_FAIL[@]} -gt 0 ]]; then
+        record fail "Tenant isolation" "$(printf '%s; ' "${TEN_FAIL[@]}")${TEN_COUNT} tenant namespace(s): ${TEN_NAMES}"
+      elif [[ -n "$TEN_PVCS" ]]; then
+        record warn "Tenant isolation" "tenant PVCs are not in the off-site backup: ${TEN_PVCS}${TEN_PRIV}"
+      else
+        record ok "Tenant isolation" "${TEN_COUNT} tenant namespace(s): ${TEN_NAMES}; bindings only to tenant-admin, PSA labelled${TEN_PRIV}"
+      fi
+    fi
+
     if [[ $FAIL_COUNT -gt 0 ]]; then
       STATUS_TAG="❌ ${FAIL_COUNT} FAIL"
       [[ $WARN_COUNT -gt 0 ]] && STATUS_TAG="${STATUS_TAG}, ${WARN_COUNT} WARN"
