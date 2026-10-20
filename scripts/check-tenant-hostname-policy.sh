@@ -20,6 +20,12 @@
 #   - the CEL refuses empty hostnames and checks every hostname's suffix built
 #     from the namespace's jg.tenant label and params.data.domain
 #   - neither cluster-scoped kind carries a namespace
+#   - (#205) daily-check-dry-run-only: daily-check row 30 holds `create` on
+#     httproutes, and this policy is what keeps that grant to dry-runs. It
+#     must match that account by exact username, every httproutes write
+#     operation, refuse unless request.dryRun, Fail/Deny, no paramKind (the
+#     #205 failure was the ConfigMap param informer), and its binding must
+#     not narrow it to some namespaces
 #
 # Usage: scripts/check-tenant-hostname-policy.sh [--self-test]
 #   exit 0 pass, 1 fail, 2 cannot measure here
@@ -89,13 +95,36 @@ check() {
     jq -e '.data.domain == "${SECRET_DOMAIN}"' <<<"$cm" >/dev/null || say "param ConfigMap domain is not \${SECRET_DOMAIN}"
     [[ "$pns" == "flux-system" ]] || say "param ConfigMap is in $pns, not flux-system"
   fi
+
+  local g gb
+  g="$(jq -c 'select(.kind=="ValidatingAdmissionPolicy" and .metadata.name=="daily-check-dry-run-only")' "$f")"
+  gb="$(jq -c 'select(.kind=="ValidatingAdmissionPolicyBinding" and .spec.policyName=="daily-check-dry-run-only")' "$f")"
+  if [[ -z "$g" || -z "$gb" ]]; then
+    say "daily-check-dry-run-only policy or its binding is missing — daily-check's httproutes create grant is unbounded"
+  else
+    jq -e '.metadata.namespace == null' <<<"$g" >/dev/null || say "daily-check-dry-run-only carries metadata.namespace"
+    jq -e '.metadata.namespace == null' <<<"$gb" >/dev/null || say "daily-check-dry-run-only binding carries metadata.namespace"
+    jq -e '.spec.failurePolicy == "Fail"' <<<"$g" >/dev/null || say "daily-check-dry-run-only failurePolicy is not Fail"
+    jq -e '.spec.paramKind == null' <<<"$g" >/dev/null || say "daily-check-dry-run-only has a paramKind (it must not share the #205 param informer)"
+    for op in CREATE UPDATE DELETE; do
+      jq -e --arg op "$op" '[.spec.matchConstraints.resourceRules[] | select((.apiGroups|index("gateway.networking.k8s.io")) and (.resources|index("httproutes"))) | .operations[]] | index($op)' <<<"$g" >/dev/null \
+        || say "daily-check-dry-run-only does not match httproutes operation $op"
+    done
+    jq -e '[.spec.matchConditions[]?.expression | gsub("\\s+"; " ")] == ["request.userInfo.username == '"'"'system:serviceaccount:monitoring:daily-check'"'"'"]' <<<"$g" >/dev/null \
+      || say "daily-check-dry-run-only does not match exactly the monitoring/daily-check ServiceAccount"
+    jq -e '[.spec.validations[]?.expression] == ["request.dryRun == true"]' <<<"$g" >/dev/null \
+      || say "daily-check-dry-run-only does not refuse exactly the writes that are not dry-runs"
+    jq -e '.spec.validationActions == ["Deny"]' <<<"$gb" >/dev/null || say "daily-check-dry-run-only binding validationActions is not exactly [Deny]"
+    jq -e '.spec.matchResources == null and .spec.paramRef == null' <<<"$gb" >/dev/null \
+      || say "daily-check-dry-run-only binding narrows matchResources or names a param"
+  fi
   return $bad
 }
 
 if [[ "${1:-}" != "--self-test" ]]; then
   out="$(check "$WORK/built.json")"; rc=$?
   [[ -n "$out" ]] && echo "$out"
-  [[ $rc -eq 0 ]] && echo "ok — tenant HTTPRoute hostname policy, as built: CREATE+UPDATE, Fail/Deny, jg.tenant namespaces only, param \${SECRET_DOMAIN} in flux-system with Deny when absent, no namespace on the cluster-scoped kinds"
+  [[ $rc -eq 0 ]] && echo "ok — tenant HTTPRoute hostname policy, as built: CREATE+UPDATE, Fail/Deny, jg.tenant namespaces only, param \${SECRET_DOMAIN} in flux-system with Deny when absent, no namespace on the cluster-scoped kinds; daily-check-dry-run-only bounds daily-check's httproutes writes to dry-runs"
   exit $rc
 fi
 
@@ -107,6 +136,8 @@ if out="$(check "$WORK/built.json")"; then echo "PASS  0 unmutated build passes"
 P='(.kind=="ValidatingAdmissionPolicy" and .metadata.name=="tenant-httproute-hostnames")'
 B='(.kind=="ValidatingAdmissionPolicyBinding" and .spec.policyName=="tenant-httproute-hostnames")'
 C='(.kind=="ConfigMap" and .metadata.name=="tenant-hostname-params")'
+G='(.kind=="ValidatingAdmissionPolicy" and .metadata.name=="daily-check-dry-run-only")'
+GB='(.kind=="ValidatingAdmissionPolicyBinding" and .spec.policyName=="daily-check-dry-run-only")'
 CASES=(
   "1 CREATE only :: if $P then .spec.matchConstraints.resourceRules[0].operations = [\"CREATE\"] else . end :: does not match operation UPDATE"
   "2 failurePolicy Ignore :: if $P then .spec.failurePolicy = \"Ignore\" else . end :: failurePolicy is not Fail"
@@ -119,6 +150,12 @@ CASES=(
   "9 namespace on policy :: if $P then .metadata.namespace = \"flux-system\" else . end :: the policy carries metadata.namespace"
   "10 namespace on binding :: if $B then .metadata.namespace = \"flux-system\" else . end :: the binding carries metadata.namespace"
   "11 suffix not from label :: if $P then .spec.variables[0].expression = \"'.' + params.data.domain\" else . end :: not built from the namespace's jg.tenant label"
+  "12 dry-run guard gone :: if $G then empty else . end :: daily-check-dry-run-only policy or its binding is missing"
+  "13 dry-run guard allows real writes :: if $G then .spec.validations[0].expression = \"true\" else . end :: does not refuse exactly the writes that are not dry-runs"
+  "14 dry-run guard CREATE only :: if $G then .spec.matchConstraints.resourceRules[0].operations = [\"CREATE\"] else . end :: does not match httproutes operation UPDATE"
+  "15 dry-run guard matches another account :: if $G then .spec.matchConditions[0].expression = \"request.userInfo.username.startsWith('system:serviceaccount:monitoring:')\" else . end :: does not match exactly the monitoring/daily-check ServiceAccount"
+  "16 dry-run guard Ignore :: if $G then .spec.failurePolicy = \"Ignore\" else . end :: daily-check-dry-run-only failurePolicy is not Fail"
+  "17 dry-run guard binding narrowed :: if $GB then .spec.matchResources = {\"namespaceSelector\":{\"matchLabels\":{\"jg.tenant\":\"x\"}}} else . end :: binding narrows matchResources"
 )
 rc=0
 for c in "${CASES[@]}"; do

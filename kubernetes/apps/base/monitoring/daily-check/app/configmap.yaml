@@ -2073,6 +2073,74 @@ data:
       fi
     fi
 
+    # 30. Tenant route admission, by behaviour (ferry133/jg-base#205).
+    #
+    # Row 28 reads the tenant bounds as structure; it cannot see whether the
+    # hostname policy (#191, tenant-admission/hostname-policy.yaml) still ADMITS.
+    # On jg-jcc2 (2026-10-21, fleet-ops-96) kube-apiserver's param informer for
+    # the ConfigMap paramKind stopped resolving: every tenant HTTPRoute was
+    # refused, compliant ones included, with "failed to configure binding: no
+    # params found", while the param ConfigMap was there all along. That is
+    # fail-closed for every tenant route, and only a write shows it.
+    #
+    # So this row writes, server-side dry-run only, as one tenant namespace
+    # (the first by name):
+    #   compliant  probe.<tenant>.<domain>   must be ACCEPTED
+    #   outside    probe.<domain>            must be REFUSED by this policy
+    # The second is the control: an accepted compliant probe also reads the same
+    # when the policy is absent or not evaluating, and that is a fail too.
+    # The create grant is bounded to dry-run by the daily-check-dry-run-only
+    # policy (tenant-admission/), since RBAC cannot express "dry-run only".
+    #
+    #   fail  the compliant probe was refused by the policy ("no params found":
+    #         restart kube-apiserver on EVERY control-plane node — recreating
+    #         the policy, binding or ConfigMap was measured not to help); or the
+    #         outside probe was admitted (the bound is not enforced).
+    #   skip  no tenants; SECRET_DOMAIN unset; the create was refused by RBAC or
+    #         failed for another reason (an error is not an `ok`).
+    #   ok    both probes answered as expected; names the tenant probed.
+    TRA_NAME="Tenant route admission"
+    TRA_NS_JSON=$(kubectl get namespaces -l jg.tenant -o json 2>/dev/null) || TRA_NS_JSON=""
+    if [[ -z "$TRA_NS_JSON" ]]; then
+      record skip "$TRA_NAME" "namespaces could not be listed"
+    elif [[ $(echo "$TRA_NS_JSON" | jq '.items | length') -eq 0 ]]; then
+      record skip "$TRA_NAME" "no tenants declared (no namespace labelled jg.tenant)"
+    elif [[ -z "${SECRET_DOMAIN:-}" ]]; then
+      record skip "$TRA_NAME" "SECRET_DOMAIN is unset, so no compliant hostname can be built"
+    else
+      # Two jq reads, not one string split by a trimming expansion: row 28 says why this
+      # file avoids trimming expansions (scripts/check-envsubst-parses.sh).
+      TRA_FIRST='[.items[]] | sort_by(.metadata.name) | .[0]'
+      TRA_NS=$(echo "$TRA_NS_JSON" | jq -r "$TRA_FIRST | .metadata.name")
+      TRA_TENANT=$(echo "$TRA_NS_JSON" | jq -r "$TRA_FIRST | .metadata.labels[\"jg.tenant\"]")
+      # $1 hostname. Prints kubectl's combined output; returns its exit code.
+      tra_probe() {
+        printf '{"apiVersion":"gateway.networking.k8s.io/v1","kind":"HTTPRoute","metadata":{"generateName":"daily-check-probe-","namespace":"%s"},"spec":{"hostnames":["%s"]}}' "$TRA_NS" "$1" \
+          | kubectl create --dry-run=server -o name -f - 2>&1
+      }
+      TRA_GOOD_HOST="probe.${TRA_TENANT}.${SECRET_DOMAIN}"
+      TRA_BAD_HOST="probe.${SECRET_DOMAIN}"
+      TRA_GOOD=$(tra_probe "$TRA_GOOD_HOST"); TRA_GOOD_RC=$?
+      TRA_BAD=$(tra_probe "$TRA_BAD_HOST"); TRA_BAD_RC=$?
+      TRA_GOOD_LINE=$(echo "$TRA_GOOD" | head -1)
+      TRA_BAD_LINE=$(echo "$TRA_BAD" | head -1)
+      if [[ $TRA_GOOD_RC -ne 0 ]] && grep -q "no params found" <<<"$TRA_GOOD"; then
+        record fail "$TRA_NAME" "a compliant route ($TRA_GOOD_HOST in $TRA_NS) was refused: the hostname policy cannot resolve its parameter, so EVERY tenant route is refused. Recovery: restart kube-apiserver on every control-plane node; do not recreate the policy (#205). Server said: $TRA_GOOD_LINE"
+      elif [[ $TRA_GOOD_RC -ne 0 ]] && grep -q "tenant-httproute-hostnames" <<<"$TRA_GOOD"; then
+        record fail "$TRA_NAME" "a compliant route ($TRA_GOOD_HOST in $TRA_NS) was refused by the hostname policy: $TRA_GOOD_LINE"
+      elif [[ $TRA_GOOD_RC -ne 0 ]] && grep -q "cannot create resource" <<<"$TRA_GOOD"; then
+        record skip "$TRA_NAME" "no RBAC permission to dry-run create httproutes in $TRA_NS — not measured, which is not the same as clean"
+      elif [[ $TRA_GOOD_RC -ne 0 ]]; then
+        record skip "$TRA_NAME" "the compliant probe failed for a reason that is not the policy: $TRA_GOOD_LINE"
+      elif [[ $TRA_BAD_RC -eq 0 ]]; then
+        record fail "$TRA_NAME" "a route outside the tenant's suffix ($TRA_BAD_HOST in $TRA_NS) was admitted: the hostname policy is not enforcing"
+      elif ! grep -q "tenant-httproute-hostnames" <<<"$TRA_BAD"; then
+        record skip "$TRA_NAME" "compliant probe accepted, but the outside probe failed for a reason that is not the policy, so enforcement was not shown: $TRA_BAD_LINE"
+      else
+        record ok "$TRA_NAME" "in $TRA_NS: $TRA_GOOD_HOST accepted, $TRA_BAD_HOST refused by the hostname policy (server dry-run)"
+      fi
+    fi
+
     if [[ $FAIL_COUNT -gt 0 ]]; then
       STATUS_TAG="❌ ${FAIL_COUNT} FAIL"
       [[ $WARN_COUNT -gt 0 ]] && STATUS_TAG="${STATUS_TAG}, ${WARN_COUNT} WARN"

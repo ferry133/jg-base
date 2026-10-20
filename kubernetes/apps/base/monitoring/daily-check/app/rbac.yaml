@@ -28,6 +28,14 @@ rules:
   - apiGroups: ["rbac.authorization.k8s.io"]
     resources: ["clusterrolebindings", "rolebindings"]
     verbs: ["list"]
+  # Row 30 dry-runs one compliant and one outside HTTPRoute in a tenant
+  # namespace (#205): only a write shows whether the hostname policy admits.
+  # RBAC cannot say "dry-run only", so ValidatingAdmissionPolicy
+  # daily-check-dry-run-only (tenant-admission/) refuses this account any
+  # httproutes write that is not a dry-run. create only: no get/update/delete.
+  - apiGroups: ["gateway.networking.k8s.io"]
+    resources: ["httproutes"]
+    verbs: ["create"]
   # Row 27 compares each Cilium agent's backends with the API's ready endpoints.
   - apiGroups: ["discovery.k8s.io"]
     resources: ["endpointslices"]

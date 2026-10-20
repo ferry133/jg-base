@@ -90,8 +90,13 @@ jobs:
       - name: Verify no path placeholder survived the stub
         run: python3 .github/scripts/stub-kustomization-path-vars.py --check kubernetes
 
+      # v8.4.0, not v8.1.0 (all three uses below): before 8.3.0
+      # (allenporter/flux-local#1103) an OCIRepository pinned by `ref.digest`
+      # reached helm as `--version sha256:...`, which helm refuses ("improper
+      # constraint"), so a digest-pinned chart could not pass this job (#202).
+      # 8.2.0 also moved the image to helm v4.
       - name: Run flux-local test (base)
-        uses: docker://ghcr.io/allenporter/flux-local:v8.1.0
+        uses: docker://ghcr.io/allenporter/flux-local:v8.4.0
         with:
           args: test --enable-helm --all-namespaces --path /github/workspace/kubernetes/flux/cluster -v
 
@@ -108,7 +113,7 @@ jobs:
       # present, HelmReleases rendered. And it can fail — a bad resource ref in
       # extras/factory exits 4, not 0.
       - name: Run flux-local test (extras)
-        uses: docker://ghcr.io/allenporter/flux-local:v8.1.0
+        uses: docker://ghcr.io/allenporter/flux-local:v8.4.0
         with:
           args: test --enable-helm --all-namespaces --path /github/workspace/kubernetes/apps/extras -v
 
@@ -493,6 +498,11 @@ jobs:
       # verdict from the real block, kubectl/curl/sleep stubbed to what it asks.
       - name: daily-check Envoy xDS row
         run: bash scripts/check-envoy-xds-row.sh
+      # #205: row 30 dry-runs a compliant and an outside HTTPRoute in a tenant
+      # namespace; every verdict from the real block, kubectl stubbed to the
+      # namespace list and the dry-run create (it checks the object it is sent).
+      - name: daily-check tenant route admission row
+        run: bash scripts/check-tenant-route-admission-row.sh
       # #190: ClusterRole tenant-admin is the only thing a tenant SA is bound
       # to. Its deny list -- Flux/cilium/storage/cluster-scoped kinds,
       # escalate/bind/impersonate, any `*`, writable quota -- and a self-test
@@ -557,7 +567,7 @@ jobs:
           python3 pull/.github/scripts/stub-secret-data-placeholders.py --check pull/kubernetes default/kubernetes
 
       - name: Run flux-local diff
-        uses: docker://ghcr.io/allenporter/flux-local:v8.1.0
+        uses: docker://ghcr.io/allenporter/flux-local:v8.4.0
         with:
           args: >-
             diff ${{ matrix.resources }}

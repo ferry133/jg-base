@@ -19,6 +19,17 @@
 #   so one policy serves every cluster.
 # Measured as a prototype on jg-jcc2, 2026-10-18 00:3x (fleet-ops-77
 # [af719f], fleet-ops routing-log): six cells as expected.
+#
+# ⚠️ RECOVERY when every tenant route is refused with "failed to configure
+# binding: no params found ... Deny" while tenant-hostname-params exists
+# (ferry133/jg-base#205; jg-jcc2, 2026-10-21, fleet-ops-96): kube-apiserver's
+# param informer for the ConfigMap paramKind has stopped resolving. Restart
+# kube-apiserver on EVERY control-plane node (each runs its own informer).
+# Do NOT delete and recreate this policy, its binding or the ConfigMap, or
+# change paramRef: each was measured on jg-jcc2 not to help. Daily-check row
+# 30 dry-runs a compliant route every day and fails in this state.
+# Not yet measured: that the restart clears it, and which Talos restart is
+# enough; fleet-ops records both on #205 once ferry133 approves the restart.
 apiVersion: admissionregistration.k8s.io/v1
 kind: ValidatingAdmissionPolicy
 metadata:
