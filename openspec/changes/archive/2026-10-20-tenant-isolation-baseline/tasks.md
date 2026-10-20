@@ -5,7 +5,7 @@
 ## 1. 量現狀（root 任務 1.3／1.4 的 jg-base 半邊）
 
 - [x] 1.1 gateway：`network/envoy-gateway/app/envoy.yaml` 兩座 Gateway https `allowedRoutes.namespaces.from: All`、http `Same`；HTTPRoute 分佈 7 個 namespace（2026-10-17，jg-base-0a 與 fleet-ops-77 各量一次，`6f3c454`）。結論：gateway 不動，hostname 用 VAP 圈。
-- [ ] 1.2 沒有 `serviceAccountName` 的 HelmRelease 數、跨 namespace 的 `sourceRef`／`chartRef` 數（只量不改）——寫回 root design 的 Open Questions。
+- [x] 1.2 （2026-10-20 08:0x，jg-base-0a [4e5e8d]，唯讀量活的物件；讀數交 fleet-ops 寫回 root design）**jg-jiahd：HelmRelease 17 支全部沒有 `serviceAccountName`，跨 namespace 的 `sourceRef`／`chartRef` 0；Kustomization 41 支全部沒有，跨 namespace 0。jcom：HelmRelease 20／20 沒有、跨 namespace 0；Kustomization 42／42 沒有、0。** 正對照：jcom 有 6 支 HelmRelease 的 ref 明寫 namespace（全部同 namespace，例 `omni/omni → omni/my-helm-repo`），捏造的跨 namespace 物件會被同一個判斷式抓到。沒有 `serviceAccountName` 的 HelmRelease 數、跨 namespace 的 `sourceRef`／`chartRef` 數（只量不改）——寫回 root design 的 Open Questions。
 
 ## 2. tenant-admin
 
@@ -29,10 +29,10 @@
 
 - [x] 4.1 （第 28 列；本 PR）`configmap.yaml` 新列、取下一個空號（結構斷言；`skip`／`ok`／`warn`／`fail` 四種；`privileged` 有 `jg.tenant-privileged=granted` → `ok` 列名、無 → `fail`；缺讀權 → `skip` 附訊息）；`README.md` 圖例；`rbac.yaml` 讀權。
 - [x] 4.2 （`check-row-numbers-resolve.sh` 綠；專列守衛 `check-tenant-isolation-row.sh`，15 格；本 PR）`check-row-numbers-resolve.sh` 綠；若有專列守衛慣例（如第 27 列的 `check-cilium-backend-row.sh`）照做一支。
-- [ ] 4.3 拋棄式叢集上四種結果各出現一次（順序：無 tenant → 合規 tenant → 加 PVC → 加一個綁 `admin` 的 RoleBinding），再一組：namespace `privileged`＋granted 標籤 → `ok` 列名；手動拿掉標籤 → `fail`。原始輸出貼 PR。
-- [ ] 4.4 排程讀數：合併後隔日 `00:00Z` 在 jg-jiahd／jcom 的這一列是 `skip`（沒有 tenant），不是 `ok`——這一格不能提前觸發取讀數。
+- [x] 4.3 （fleet-ops-96 [cde990] 在 jg-jcc2，#198 留言 6253415218：A 無 tenant→skip、B 合規＋`t2` privileged granted→ok 列名、C 加 PVC→warn、D 綁 `admin`→fail、E 拿掉 granted→fail）拋棄式叢集上四種結果各出現一次（順序：無 tenant → 合規 tenant → 加 PVC → 加一個綁 `admin` 的 RoleBinding），再一組：namespace `privileged`＋granted 標籤 → `ok` 列名；手動拿掉標籤 → `fail`。原始輸出貼 PR。
+- [x] 4.4 （2026-10-20 00:00Z Job `daily-check-29874240`，jg-base-0a 讀 log：兩座第 28 列都是 `➖ Tenant isolation — no tenants declared (no namespace labelled jg.tenant)`，`FAIL_COUNT=0`；讀數貼在 #199）排程讀數：合併後隔日 `00:00Z` 在 jg-jiahd／jcom 的這一列是 `skip`（沒有 tenant），不是 `ok`——這一格不能提前觸發取讀數。
 
 ## 5. 收尾
 
-- [ ] 5.1 PR 內文署名、開單者驗收在 merge 之前；merge 後在 PR 留一行署名。
-- [ ] 5.2 歸檔本 sub-change，回更新 root 的 Sub-changes 表與 tasks §2。
+- [x] 5.1 （#198：內文署名、fleet-ops-96 在 `e3224dc` accept、merge 前後署名留言，merge `a7e38bc`）PR 內文署名、開單者驗收在 merge 之前；merge 後在 PR 留一行署名。
+- [x] 5.2 （本 PR 歸檔；root 的 Sub-changes 表與 tasks §2 由 jg-base-0a 在合併後更新——`~/.claude/openspec-orchestration.md`：sub-change 的作者更新 root）歸檔本 sub-change，回更新 root 的 Sub-changes 表與 tasks §2。
