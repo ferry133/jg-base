@@ -37,7 +37,7 @@ spec:
             # who can get in is readable here. (ADMIN_USER/ADMIN_PASS removed:
             # they were never set, and the old image fell back to admin/changeme.)
             - name: ADMIN_ALLOWED_EMAILS
-              value: "jiahdadm@gmail.com,ferry133@gmail.com"
+              value: "jiahdadm@gmail.com,ferry133@gmail.com,jiahd.oper@gmail.com"
           ports:
             - containerPort: 8081
           resources:
