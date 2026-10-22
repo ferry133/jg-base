@@ -530,6 +530,13 @@ jobs:
       # call that was not declared when the image was pinned.
       - name: offsite-backup runs the pre-baked image
         run: bash scripts/check-backup-runs-prebaked.sh
+      # #208: Longhorn makes its own PDB (minAvailable 1) for csi-attacher and
+      # csi-provisioner. At 1 replica the node holding the pod can never be
+      # drained, and Omni v1.12.4 drains before every Talos upgrade: jg-jiahd's
+      # dk0-t6p sat cordoned ~22.8h. The cases that must keep failing: either
+      # count back at 1, or 0.
+      - name: Longhorn CSI attacher/provisioner can be drained
+        run: bash scripts/check-longhorn-csi-drainable.sh && bash scripts/check-longhorn-csi-drainable.sh --self-test
 
   diff:
     name: Flux Local Diff
