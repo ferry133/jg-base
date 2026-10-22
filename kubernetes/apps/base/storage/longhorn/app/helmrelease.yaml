@@ -77,7 +77,27 @@ spec:
     longhornUI:
       replicas: 1
     csi:
-      attacherReplicaCount: 1
-      provisionerReplicaCount: 1
+      # Two, not one (ferry133/jg-base#208). longhorn-manager creates its own
+      # PodDisruptionBudget, minAvailable 1, for csi-attacher and csi-provisioner
+      # whenever any volume is attached (controller/kubernetes_pdb_controller.go
+      # in v1.12.0; no setting turns it off). With one replica that PDB allows 0
+      # disruptions, so the node holding the pod can never be drained: Omni
+      # v1.12.4 drains before a Talos upgrade and respects PDBs, and jg-jiahd's
+      # dk0-t6p sat cordoned ~22.8h on 2026-10-21. Omni v1.8.1 never drained,
+      # which is why 1 looked fine until then.
+      #
+      # ⚠️ Changing this does NOT resize an existing cluster's Deployments.
+      # The driver deployer recreates them only when the Longhorn version, the
+      # image or the anti-affinity changes (csi/deployment_util.go deploy()),
+      # not the replica count. An existing cluster needs a one-time
+      # `kubectl -n longhorn-system scale deploy csi-attacher csi-provisioner
+      # --replicas=2`, after which nothing scales them back.
+      #
+      # Resizer and snapshotter get no PDB, so a drain evicts them freely; 1 is
+      # enough there. On a single-node cluster this does not help (the evicted
+      # replica has nowhere to go), but replicated storage on one node is not a
+      # configuration this repo ships: Longhorn is suspended on jcom and jg-jcc2.
+      attacherReplicaCount: 2
+      provisionerReplicaCount: 2
       resizerReplicaCount: 1
       snapshotterReplicaCount: 1
