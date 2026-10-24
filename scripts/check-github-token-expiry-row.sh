@@ -228,57 +228,12 @@ if [[ "$(echo "${OUTS[healthy]}" | head -1)" != "[ok]"* ]]; then
 fi
 
 # ── the contract no case can see: every PAT holder carries the annotation ──
-python3 - "$ROOT" "$ANN" <<'PY' || FAILED=$((FAILED + 1))
-import re, sys
-from pathlib import Path
-root, ann = Path(sys.argv[1]), sys.argv[2]
-files = sorted(root.glob("kubernetes/**/*.yaml"))
-# Which Secret keys hold a GitHub PAT, derived from the variable that fills
-# them. `*_GITHUB_TOKEN` only: GITHUB_WEBHOOK_TOKEN is flux-instance's webhook
-# HMAC, not a PAT, and has no expiry to record — excluded deliberately, not
-# missed.
-held = {}
-for f in files:
-    for doc in re.split(r"^---\s*$", f.read_text(), flags=re.M):
-        if not re.search(r"^kind:\s*Secret\s*$", doc, re.M):
-            continue
-        name = re.search(r"^metadata:\s*\n(?:\s+.*\n)*?\s+name:\s*(\S+)", doc, re.M)
-        for m in re.finditer(r'^\s+([A-Za-z0-9_]+):\s*"?\$\{([A-Z0-9_]*_GITHUB_TOKEN)(?::-[^}]*)?\}"?\s*$', doc, re.M):
-            held[(name.group(1) if name else "?", m.group(1))] = m.group(2)
-if not held:
-    sys.exit("CANNOT MEASURE: no Secret key is filled from a *_GITHUB_TOKEN variable; "
-             "factory-credentials/githubToken is one, so the derivation is broken")
-bad, consumers = [], []
-for f in files:
-    text = f.read_text()
-    for (secret, key), var in held.items():
-        if re.search(rf"name:\s*{re.escape(secret)}\s*\n\s+key:\s*{re.escape(key)}\b", text):
-            rel = f.relative_to(root)
-            consumers.append(f"{rel} ({secret}/{key})")
-            # Assert the PROPERTY (this consumer carries the expiry
-            # annotation for the key it mounts), not the spelling. The old
-            # literal match encoded the quoting and the empty default, so
-            # jg-base#103's fix -- changing `:-` to `:-""` -- read as the
-            # annotation having been deleted. A guard that fails when a line
-            # is corrected is worse than no guard: the next person deletes it.
-            want = f'{ann}: ${{{var}_EXPIRES}} (any quoting/default form)'
-            want_re = re.compile(
-                re.escape(f'{ann}:') + r'\s*"?\$\{' + re.escape(f'{var}_EXPIRES')
-                + r'(?::[-=][^}]*)?\}"?')
-            if not want_re.search(text):
-                bad.append(f"{rel}: mounts {secret}/{key} but lacks  {want}")
-print(f"PAT holders derived from Secrets: {', '.join(f'{s}/{k}' for s, k in sorted(held))}")
-for c in consumers:
-    print(f"  consumer: {c}")
-if not consumers:
-    sys.exit("CANNOT MEASURE: no workload mounts the PAT; factory does, so the match is broken")
-if bad:
-    print("FAIL  a workload holds a GitHub PAT but check 25 cannot see its expiry:")
-    for b in bad:
-        print("  " + b)
-    sys.exit(1)
-print("PASS  every PAT consumer carries the expiry annotation")
-PY
+# Lives in ferry133/jg-extras since split-extras 5.3
+# (scripts/check-expiry-annotations.sh). Its only holder,
+# factory-credentials/githubToken, moved there with factory; this tree holds
+# no PAT, so a derivation here would have nothing to find and nothing to
+# anchor on -- a check that cannot tell "none" from "broken" is no check.
+# If a PAT holder is ever added here, bring the derivation back with it.
 
 if (( FAILED )); then
   echo "$FAILED check(s) failed."

@@ -112,6 +112,9 @@ spec:
 ---
 
 # ── Extras — uncomment as needed ──────────────────────────────────────────────
+# Extras live in ferry133/jg-extras since 2026-10-24 (split-extras 5.3), so these
+# need a GitRepository named "jg-extras" (url https://github.com/ferry133/jg-extras)
+# next to the jg-base one above. jg-base no longer has kubernetes/apps/extras.
 
 # extras/mqtt — Mosquitto MQTT broker for agent inter-communication
 # apiVersion: kustomize.toolkit.fluxcd.io/v1
@@ -127,7 +130,7 @@ spec:
 #   prune: true
 #   sourceRef:
 #     kind: GitRepository
-#     name: jg-base
+#     name: jg-extras
 #     namespace: flux-system
 #   postBuild:
 #     substituteFrom:
@@ -150,7 +153,7 @@ spec:
 #   prune: true
 #   sourceRef:
 #     kind: GitRepository
-#     name: jg-base
+#     name: jg-extras
 #     namespace: flux-system
 #   postBuild:
 #     substituteFrom:
@@ -173,7 +176,7 @@ spec:
 #   prune: true
 #   sourceRef:
 #     kind: GitRepository
-#     name: jg-base
+#     name: jg-extras
 #     namespace: flux-system
 #   postBuild:
 #     substituteFrom:
@@ -196,7 +199,7 @@ spec:
 #   prune: true
 #   sourceRef:
 #     kind: GitRepository
-#     name: jg-base
+#     name: jg-extras
 #     namespace: flux-system
 #   postBuild:
 #     substituteFrom:
@@ -219,7 +222,7 @@ spec:
 #   prune: true
 #   sourceRef:
 #     kind: GitRepository
-#     name: jg-base
+#     name: jg-extras
 #     namespace: flux-system
 #   postBuild:
 #     substituteFrom:

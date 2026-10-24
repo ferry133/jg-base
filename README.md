@@ -35,32 +35,21 @@ kubernetes/
         daily-check/    ← daily health-check CronJob → email + healthchecks.io
       network/          ← cloudflare-dns, cloudflare-tunnel, envoy-gateway, k8s-gateway
       storage/          ← local-path-provisioner (always) + nfs-subdir (only with a NAS)
-    extras/             ← opt-in per user (selected via cluster.yaml)
-      claudecode/
-        postgres/       ← dedicated PostgreSQL for claude-code
-      default/
-        homebridge/
-        mariadb/
-        mqtt/
-        postgres/
-        synophoto/
-        trello-notifier/
-      freepbx/
-        freepbx/
-      ingress-nginx/
-        ingress-nginx/
-      network/
-        cloudflare-tunnel-lan/
-      omni/
-        omni/           ← Sidero Omni
+    (extras/ moved to ferry133/jg-extras, same paths — split-extras 5.3, 2026-10-24)
   components/
     sops/               ← cluster-secrets Flux component
   flux/
-    cluster/            ← Flux entry point (→ apps/base/ + extras/)
+    cluster/            ← Flux entry point (→ apps/base/)
 ```
 
 ## Available Extras
 
+> **The extras manifests live in [`ferry133/jg-extras`](https://github.com/ferry133/jg-extras)**
+> since 2026-10-24 (split-extras 5.3), under the same `kubernetes/apps/extras/<ns>/<app>`
+> paths; each per-user repo's `extras-*` Kustomizations point at the `jg-extras`
+> GitRepository. CI here is red if anything is tracked under `kubernetes/apps/extras`
+> again (`.github/scripts/check-extras-frozen.sh`). The table below is the catalogue.
+>
 > `claudecode/claude-code` is **not** an extra any more — it is a base app installed on
 > every cluster (one instance at `im.<domain>` by default, renamed via `claude_instances`).
 > Only its optional dedicated database is still opt-in.
