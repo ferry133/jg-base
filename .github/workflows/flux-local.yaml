@@ -90,7 +90,7 @@ jobs:
       - name: Verify no path placeholder survived the stub
         run: python3 .github/scripts/stub-kustomization-path-vars.py --check kubernetes
 
-      # v8.4.0, not v8.1.0 (all three uses below): before 8.3.0
+      # v8.4.0, not v8.1.0 (both uses below): before 8.3.0
       # (allenporter/flux-local#1103) an OCIRepository pinned by `ref.digest`
       # reached helm as `--version sha256:...`, which helm refuses ("improper
       # constraint"), so a digest-pinned chart could not pass this job (#202).
@@ -99,23 +99,8 @@ jobs:
         uses: docker://ghcr.io/allenporter/flux-local:v8.4.0
         with:
           args: test --enable-helm --all-namespaces --path /github/workspace/kubernetes/flux/cluster -v
-
-      # apps/extras/** is unreachable from the cluster entry point by design —
-      # extras are selected by each per-user repo, not by this one — so the run
-      # above walks base/ only and reported success on PRs that changed nothing
-      # but extras (#37, measured on PR #30). Pointing flux-local straight at
-      # the directory makes it collect every extras Kustomization it finds, so
-      # there is no second list of "which extras exist" to drift.
-      #
-      # Verified locally before landing: 20 Kustomizations collected, factory /
-      # omni / freepbx / linebot / postgres / synophoto / homebridge / mariadb /
-      # mqtt / trello-notifier / ingress-nginx / cloudflare-tunnel-lan all
-      # present, HelmReleases rendered. And it can fail — a bad resource ref in
-      # extras/factory exits 4, not 0.
-      - name: Run flux-local test (extras)
-        uses: docker://ghcr.io/allenporter/flux-local:v8.4.0
-        with:
-          args: test --enable-helm --all-namespaces --path /github/workspace/kubernetes/apps/extras -v
+      # The extras run that used to follow lives in ferry133/jg-extras since
+      # split-extras 5.3 (the directory is gone from here).
 
   scripts:
     name: Repo Script Tests
@@ -214,15 +199,6 @@ jobs:
       # its output, not only in a comment.
       - name: daily-check GitHub token expiry row
         run: bash scripts/check-github-token-expiry-row.sh
-
-      # Found 2026-09-12 while the key was being issued: three places said
-      # factory holds an Omni ADMIN account while credentials-secret.yaml had
-      # said "Operator, not Admin" since 2026-08-23, and Operator is what was
-      # issued. An inventory that overstates the role invites the next reissue
-      # to match it. This asserts the claims rather than the absence of a
-      # phrase — the correction note quotes the old wording.
-      - name: factory Omni role consistency
-        run: bash scripts/check-factory-omni-role.sh
 
       # #70: a container-runtime ${VAR} that postBuild rewrote to "" locked
       # every terminal out behind green signals. Every ${X} under kubernetes/
@@ -615,19 +591,17 @@ jobs:
             ${{ steps.diff.outputs.diff }}
             ```
 
-  # split-extras 5.1 (#211): extras live in ferry133/jg-extras now; this is red
-  # on any change under kubernetes/apps/extras/** since the pinned freeze. It
-  # does not hang off pre-job on purpose: it is cheap, and a freeze that a
-  # wrong "nothing changed" could skip is no freeze. The escape hatch is
-  # written at the top of the script.
+  # split-extras 5.3: kubernetes/apps/extras is gone from here and lives in
+  # ferry133/jg-extras; this is red if anything is tracked under it again
+  # (5.1, #211/#213, had frozen it first). It does not hang off pre-job on
+  # purpose: it is cheap, and a check that a wrong "nothing changed" could
+  # skip is no check.
   frozen:
-    name: Extras frozen here (moved to jg-extras)
+    name: Extras absent here (moved to jg-extras)
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          fetch-depth: 0  # the check diffs against the pinned freeze commit
       - name: Check, then prove the check can fail
         run: bash .github/scripts/check-extras-frozen.sh && bash .github/scripts/check-extras-frozen.sh --self-test
 
@@ -689,12 +663,12 @@ jobs:
           echo "::error::Repo Script Tests did not run on main (result: ${{ needs.scripts.result }})"
           exit 1
 
-      # `frozen` never depends on pre-job, so on both events the only right
+      # `frozen` (the extras-absent check) never depends on pre-job, so on both events the only right
       # result is success; skipped or cancelled would read as green below.
-      - name: Did the extras freeze actually run?
+      - name: Did the extras-absent check actually run?
         if: ${{ needs.frozen.result != 'success' }}
         run: |
-          echo "::error::Extras freeze check did not pass (result: ${{ needs.frozen.result }})"
+          echo "::error::Extras absent check did not pass (result: ${{ needs.frozen.result }})"
           exit 1
 
       - name: All jobs passed or skipped?

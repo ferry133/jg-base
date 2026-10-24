@@ -30,9 +30,11 @@ All deployments are operated by ferry133; end users only specify requirements.
 > 任何 bug fix 或功能變更都應套用回這兩個 repo，而非只改 per-user repo（如 jgu2）。
 > Per-user repo 只存放 `cluster-secrets.sops.yaml`（per-cluster 機密）與 `ks.yaml`（extras 選擇），不應包含 manifest 邏輯。
 
-## ⚠️ 在此 repo 新增 Extra App 時，必須同步更新另外兩個 repo
+## ⚠️ 新增 Extra App 時，必須同步更新另外兩個 repo
 
-**此 repo（jg-base）異動**：`kubernetes/apps/extras/<ns>/<app>/` 新增 manifests
+**extras 自 2026-10-24 起住在 `ferry133/jg-extras`**（split-extras 5.3；路徑不變）。此 repo 的 `kubernetes/apps/extras/` 已刪除，CI 在它重新出現時變紅（`.github/scripts/check-extras-frozen.sh`）。
+
+**`jg-extras` 異動**：`kubernetes/apps/extras/<ns>/<app>/` 新增 manifests
 
 **`jg-cluster-template` 必須同步**（否則新叢集無法使用此 app）：
 - `.taskfiles/template/resources/cluster.schema.cue` → 加 optional 欄位
@@ -52,7 +54,7 @@ All deployments are operated by ferry133; end users only specify requirements.
 kubernetes/apps/
   base/     ← installed on every cluster (cert-manager, kube-system, network, flux-system,
               storage, claudecode, monitoring)
-  extras/   ← optional per-user selection (trello-notifier, freepbx, omni, ...)
+  extras/   ← moved to ferry133/jg-extras (2026-10-24, split-extras 5.3)
 ```
 
 **`base/claudecode/claude-code` is a base app** — every cluster ships one Claude Code
