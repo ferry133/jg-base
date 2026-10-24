@@ -48,6 +48,8 @@ VOCAB_N=$(grep -vcE '^\s*(#|$)' "$VOCAB")
 declare -A SAMPLE_ONLY_OK=(
   [CLUSTER_API_ADDR]="rendered by jg-cluster-template and declared in its cluster.schema.cue; no jg-base manifest substitutes it"
   [NAS_CODING_PATH]="rendered by jg-cluster-template; declared in its cluster.schema.cue"
+  [NAS_BACKUP]="rendered by jg-cluster-template; read by jg-extras manifests (postgres backup path) since split-extras 5.3"
+  [POSTGRES_PASSWORD]="rendered by jg-cluster-template; read by jg-extras manifests (default/postgres) since split-extras 5.3"
 )
 UNKNOWN=()
 while IFS= read -r k; do
