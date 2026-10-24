@@ -308,8 +308,13 @@ for f in files:
         name = re.search(r"^metadata:\s*\n(?:\s+.*\n)*?\s+name:\s*(\S+)", doc, re.M)
         for m in re.finditer(r'^\s+([A-Za-z0-9_]+):\s*"?\$\{([A-Z0-9_]*_SA_KEY)(?::-[^}]*)?\}"?\s*$', doc, re.M):
             held[(name.group(1) if name else "?", m.group(1))] = m.group(2)
-if len(held) < 2:
-    sys.exit(f"CANNOT MEASURE: found {len(held)} Secret key(s) filled from *_SA_KEY; expected at least talos-mcp-secret/saKey and factory-credentials/omniServiceAccountKey — the derivation is broken, not the repo clean")
+# The anchor names the holder that must be found, not a count: factory's
+# factory-credentials/omniServiceAccountKey moved to ferry133/jg-extras with
+# split-extras 5.3, and jg-extras checks its annotation there. A count of 2
+# would now be red on a correct tree; a count of 1 would accept a derivation
+# that found the wrong Secret.
+if ("talos-mcp-secret", "saKey") not in held:
+    sys.exit(f"CANNOT MEASURE: talos-mcp-secret/saKey not among the {len(held)} Secret key(s) filled from *_SA_KEY ({sorted(held)}) — the derivation is broken, not the repo clean")
 # 2. Every file that mounts one of them must carry the annotation for it.
 bad, consumers = [], []
 for f in files:
@@ -333,8 +338,8 @@ for f in files:
 print(f"holders derived from Secrets: {', '.join(f'{s}/{k}' for s, k in sorted(held))}")
 for c in consumers:
     print(f"  consumer: {c}")
-if len(consumers) < 2:
-    sys.exit("CANNOT MEASURE: fewer than two consumers found — im and factory both mount one; the match is broken")
+if not any("talos-mcp-secret/saKey" in c for c in consumers):
+    sys.exit("CANNOT MEASURE: no consumer of talos-mcp-secret/saKey found — im mounts it; the match is broken (factory's consumer lives in jg-extras since split-extras 5.3)")
 if bad:
     print("FAIL  a workload holds an Omni SA key but check 24 cannot see its expiry:")
     for b in bad:
