@@ -615,6 +615,22 @@ jobs:
             ${{ steps.diff.outputs.diff }}
             ```
 
+  # split-extras 5.1 (#211): extras live in ferry133/jg-extras now; this is red
+  # on any change under kubernetes/apps/extras/** since the pinned freeze. It
+  # does not hang off pre-job on purpose: it is cheap, and a freeze that a
+  # wrong "nothing changed" could skip is no freeze. The escape hatch is
+  # written at the top of the script.
+  frozen:
+    name: Extras frozen here (moved to jg-extras)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0  # the check diffs against the pinned freeze commit
+      - name: Check, then prove the check can fail
+        run: bash .github/scripts/check-extras-frozen.sh && bash .github/scripts/check-extras-frozen.sh --self-test
+
   flux-local-status:
     name: Flux Local Success
     # `pre-job` belongs in `needs` (#25). Without it, a failed pre-job left
@@ -624,7 +640,7 @@ jobs:
     # whole run went red either way, but branch protection gates on this check,
     # not on the run. On push pre-job is `skipped`, not `failure`, so this does
     # not affect main.
-    needs: ["pre-job", "test", "diff", "scripts"]
+    needs: ["pre-job", "test", "diff", "scripts", "frozen"]
     runs-on: ubuntu-latest
     if: ${{ always() }}
     steps:
@@ -671,6 +687,14 @@ jobs:
         if: ${{ github.event_name == 'push' && needs.scripts.result != 'success' }}
         run: |
           echo "::error::Repo Script Tests did not run on main (result: ${{ needs.scripts.result }})"
+          exit 1
+
+      # `frozen` never depends on pre-job, so on both events the only right
+      # result is success; skipped or cancelled would read as green below.
+      - name: Did the extras freeze actually run?
+        if: ${{ needs.frozen.result != 'success' }}
+        run: |
+          echo "::error::Extras freeze check did not pass (result: ${{ needs.frozen.result }})"
           exit 1
 
       - name: All jobs passed or skipped?
