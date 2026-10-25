@@ -1,0 +1,170 @@
+---
+# multus-cni v4.3.1, thick plugin (image built for the v4.3.1 release,
+# 2026-09-08), pinned by tag@digest for the reason generic-device-plugin gives.
+# Derived from upstream deployments/multus-daemonset-thick.yml at v4.3.1. Changes:
+#   - images pinned; namespace from the Kustomization's targetNamespace;
+#     system-node-critical, like the other node-level CNI pieces;
+#   - memory 150Mi instead of 50Mi: the Talos guide reports the primary CNI
+#     plugin, which runs inside this container, OOM-killed at 50Mi;
+#   - one more initContainer, install-reference-plugins (below).
+#
+# Talos v1.13 needs no other change: the guide reports the unpatched upstream
+# manifest working on v1.13.7 (/var/run is a symlink to /run there, so the
+# /run/netns mount resolves). Not measured on this fleet until jg-jcc2.
+#
+# The node's /opt/cni/bin has no macvlan and no static IPAM (read on jg-jiahd
+# and jcom by fleet-ops-65, #187, 2026-10-25: bridge, cilium-cni, firewall,
+# flannel, host-local, loopback, portmap). install-reference-plugins copies
+# exactly those two from Rancher's build of containernetworking/plugins. It
+# copies an allow-list, not the image's whole /opt/cni/bin: the image's own
+# script copies everything and would overwrite the bridge, host-local,
+# loopback and portmap binaries Talos ships with its own versions.
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: kube-multus-ds
+  labels:
+    tier: node
+    app: multus
+    name: multus
+spec:
+  selector:
+    matchLabels:
+      name: multus
+  updateStrategy:
+    type: RollingUpdate
+  template:
+    metadata:
+      labels:
+        tier: node
+        app: multus
+        name: multus
+    spec:
+      hostNetwork: true
+      hostPID: true
+      priorityClassName: system-node-critical
+      tolerations:
+        - operator: Exists
+          effect: NoSchedule
+        - operator: Exists
+          effect: NoExecute
+      serviceAccountName: multus
+      containers:
+        - name: kube-multus
+          image: ghcr.io/k8snetworkplumbingwg/multus-cni:v4.3.1-thick@sha256:a357a79359b80ddd5f4699117946cacf3b54f5baecf7944535594863e875fc25
+          command: ["/usr/src/multus-cni/bin/multus-daemon"]
+          resources:
+            requests:
+              cpu: 100m
+              memory: 100Mi
+            limits:
+              memory: 150Mi
+          securityContext:
+            privileged: true
+          terminationMessagePolicy: FallbackToLogsOnError
+          volumeMounts:
+            - name: cni
+              mountPath: /host/etc/cni/net.d
+            # multus-daemon expects the cni bin path to be identical in the
+            # pod and on the host.
+            - name: cnibin
+              mountPath: /opt/cni/bin
+            - name: host-run
+              mountPath: /host/run
+            - name: host-var-lib-cni-multus
+              mountPath: /var/lib/cni/multus
+            - name: host-var-lib-kubelet
+              mountPath: /var/lib/kubelet
+              mountPropagation: HostToContainer
+            - name: host-run-k8s-cni-cncf-io
+              mountPath: /run/k8s.cni.cncf.io
+            - name: host-run-netns
+              mountPath: /run/netns
+              mountPropagation: HostToContainer
+            - name: multus-daemon-config
+              mountPath: /etc/cni/net.d/multus.d
+              readOnly: true
+            - name: hostroot
+              mountPath: /hostroot
+              mountPropagation: HostToContainer
+            - name: multus-conf-dir
+              mountPath: /etc/cni/multus/net.d
+          env:
+            - name: MULTUS_NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+      initContainers:
+        - name: install-multus-binary
+          image: ghcr.io/k8snetworkplumbingwg/multus-cni:v4.3.1-thick@sha256:a357a79359b80ddd5f4699117946cacf3b54f5baecf7944535594863e875fc25
+          command: ["/usr/src/multus-cni/bin/install_multus", "-d", "/host/opt/cni/bin", "-t", "thick"]
+          resources:
+            requests:
+              cpu: 10m
+              memory: 15Mi
+          securityContext:
+            privileged: true
+          terminationMessagePolicy: FallbackToLogsOnError
+          volumeMounts:
+            - name: cnibin
+              mountPath: /host/opt/cni/bin
+              mountPropagation: Bidirectional
+        # rancher/hardened-cni-plugins v1.9.1-build20261008 (2026-10-08):
+        # containernetworking/plugins v1.9.1, static binaries. Copy to a temp
+        # name and rename, so a node never runs a half-written plugin.
+        - name: install-reference-plugins
+          image: docker.io/rancher/hardened-cni-plugins:v1.9.1-build20261008@sha256:4cd43ff259270dbde38ea64dfd4860c9d83a8558adbd8386f024edda54a74c4c
+          command:
+            - sh
+            - -ec
+            - |
+              for p in macvlan static; do
+                cp /opt/cni/bin/$p /host/opt/cni/bin/$p.tmp
+                mv /host/opt/cni/bin/$p.tmp /host/opt/cni/bin/$p
+                echo "installed $p"
+              done
+          resources:
+            requests:
+              cpu: 10m
+              memory: 15Mi
+          securityContext:
+            privileged: true
+          terminationMessagePolicy: FallbackToLogsOnError
+          volumeMounts:
+            - name: cnibin
+              mountPath: /host/opt/cni/bin
+      terminationGracePeriodSeconds: 30
+      volumes:
+        - name: cni
+          hostPath:
+            path: /etc/cni/net.d
+        - name: cnibin
+          hostPath:
+            path: /opt/cni/bin
+        - name: hostroot
+          hostPath:
+            path: /
+        - name: multus-daemon-config
+          configMap:
+            name: multus-daemon-config
+            items:
+              - key: daemon-config.json
+                path: daemon-config.json
+        - name: host-run
+          hostPath:
+            path: /run
+        - name: host-var-lib-cni-multus
+          hostPath:
+            path: /var/lib/cni/multus
+        - name: host-var-lib-kubelet
+          hostPath:
+            path: /var/lib/kubelet
+        - name: host-run-k8s-cni-cncf-io
+          hostPath:
+            path: /run/k8s.cni.cncf.io
+        - name: host-run-netns
+          hostPath:
+            path: /run/netns/
+        - name: multus-conf-dir
+          hostPath:
+            path: /etc/cni/multus/net.d
