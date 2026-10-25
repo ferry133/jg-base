@@ -244,6 +244,12 @@ jobs:
       - name: daily-check Flux rows when the list cannot be read
         run: bash scripts/check-flux-rows-unmeasured.sh
 
+      # #217: the same shape in rows 3, 4, 5, 8, 9, 10, 13, 14 and 16 (row 13
+      # emitted no row at all). Rows 5 and 9 are held the other way too: an
+      # empty answer there is real and must stay ok.
+      - name: daily-check nine more rows when kubectl fails
+        run: bash scripts/check-nine-rows-unmeasured.sh
+
       # #85: the row's subject used to be a `*-backup` NAME, which is a
       # convention and not a contract -- a backup called `pg-dump-nightly` was
       # invisible and the count line would simply have been one smaller. The

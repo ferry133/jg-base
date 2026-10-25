@@ -206,6 +206,34 @@ data:
       rm -f "$err"
     }
 
+    # The same "could not measure" outcome for nine more rows (#217): 3, 4, 5,
+    # 8, 9, 10, 13, 14, 16 each ran `kubectl ... 2>/dev/null`, never read the
+    # exit status, and judged only whether the bad list was empty — so a query
+    # that failed printed ✅.
+    #
+    # kget runs `kubectl "$@"` into KGET_OUT; on a non-zero exit KGET_WHY says
+    # so, with stderr's first line. kget_items also requires `-o json` output
+    # to be an object with an `.items` array. Each row then adds the one thing
+    # every cluster is known to have, where there is such a thing — not
+    # in flux_list's single helper, because the anchor differs per row and
+    # some rows have none (an empty PVC or event list is a real answer).
+    kget() {
+      local err rc=0
+      KGET_WHY=""
+      err=$(mktemp)
+      KGET_OUT=$(kubectl "$@" 2>"$err") || rc=$?
+      if (( rc != 0 )); then
+        KGET_WHY="could not run kubectl $* (rc=$rc: $(head -n1 "$err"))"
+      fi
+      rm -f "$err"
+    }
+    kget_items() {
+      kget "$@"
+      if [[ -z "$KGET_WHY" ]] && ! echo "$KGET_OUT" | jq -e '.items | type == "array"' >/dev/null 2>&1; then
+        KGET_WHY="kubectl $* returned no item list"
+      fi
+    }
+
     # 2. Flux Kustomizations
     #
     # Split by `spec.suspend`, because the two are not the same finding and one
@@ -246,18 +274,33 @@ data:
     fi
 
     # 3. HelmReleases
-    BAD_HR=$(kubectl get hr -A -o json 2>/dev/null | \
-      jq -r '.items[] | select(.status.conditions[]? | select(.type=="Ready" and .status!="True")) | "\(.metadata.namespace)/\(.metadata.name)"')
-    if [[ -z "$BAD_HR" ]]; then
+    # flux-system/flux-instance is a base HelmRelease (measured on jg-jiahd and
+    # jcom 2026-10-25), so a list without it is not this cluster's (#217).
+    kget_items get hr -A -o json
+    if [[ -z "$KGET_WHY" ]] && ! echo "$KGET_OUT" | jq -e 'any(.items[]; .metadata.namespace == "flux-system" and .metadata.name == "flux-instance")' >/dev/null; then
+      KGET_WHY="the HelmRelease list has no flux-system/flux-instance, which every cluster has, so it is not this cluster's list"
+    fi
+    BAD_HR=$(echo "$KGET_OUT" | \
+      jq -r '.items[]? | select(.status.conditions[]? | select(.type=="Ready" and .status!="True")) | "\(.metadata.namespace)/\(.metadata.name)"' 2>/dev/null)
+    if [[ -n "$KGET_WHY" ]]; then
+      record warn "HelmReleases" "${KGET_WHY} — this row measured nothing"
+    elif [[ -z "$BAD_HR" ]]; then
       record ok "HelmReleases all Ready"
     else
       record fail "HelmReleases" "Not Ready: $(echo "$BAD_HR" | tr '\n' ' ')"
     fi
 
     # 4. Pod restarts (>5 in last 24h) and abnormal pods
-    ABNORMAL_PODS=$(kubectl get pods -A --no-headers 2>/dev/null | \
+    # Every cluster runs pods in kube-system (#217).
+    kget get pods -A --no-headers
+    if [[ -z "$KGET_WHY" ]] && ! awk '$1 == "kube-system" {found=1} END {exit !found}' <<<"$KGET_OUT"; then
+      KGET_WHY="the pod list has no pod in kube-system, which every cluster has, so it is not this cluster's list"
+    fi
+    ABNORMAL_PODS=$(printf '%s' "$KGET_OUT" | \
       awk '$4 != "Running" && $4 != "Completed" && $4 != "Succeeded" {print $1"/"$2" ("$4")"}' | head -20)
-    if [[ -z "$ABNORMAL_PODS" ]]; then
+    if [[ -n "$KGET_WHY" ]]; then
+      record warn "Pods" "${KGET_WHY} — this row measured nothing"
+    elif [[ -z "$ABNORMAL_PODS" ]]; then
       record ok "Pods all healthy"
     else
       record fail "Pods abnormal" "$(echo "$ABNORMAL_PODS" | head -10 | tr '\n' '; ')"
@@ -267,7 +310,11 @@ data:
     # k8s only exposes cumulative .restartCount, so a long-lived-but-stable pod would
     # trip a ">N lifetime" check forever. Gate on the most recent restart time
     # (lastState.terminated.finishedAt) so this reflects *current* instability.
-    RECENT_RESTART=$(kubectl get pods -A -o json 2>/dev/null | jq -r '
+    kget_items get pods -A -o json
+    if [[ -z "$KGET_WHY" ]] && ! echo "$KGET_OUT" | jq -e 'any(.items[]; .metadata.namespace == "kube-system")' >/dev/null; then
+      KGET_WHY="the pod list has no pod in kube-system, which every cluster has, so it is not this cluster's list"
+    fi
+    RECENT_RESTART=$(echo "$KGET_OUT" | jq -r '
       .items[] |
       select(.status.containerStatuses != null) |
       . as $p |
@@ -275,16 +322,24 @@ data:
       ([ $p.status.containerStatuses[] | .lastState.terminated.finishedAt // empty ]
         | map(fromdateiso8601) | max // 0) as $last |
       select($total > 0 and $last > (now - 86400)) |
-      "\($p.metadata.namespace)/\($p.metadata.name): \($total) total, last \(((now - $last)/3600)|floor)h ago"' | head -10)
-    if [[ -z "$RECENT_RESTART" ]]; then
+      "\($p.metadata.namespace)/\($p.metadata.name): \($total) total, last \(((now - $last)/3600)|floor)h ago"' 2>/dev/null | head -10)
+    if [[ -n "$KGET_WHY" ]]; then
+      record warn "Pod restarts" "${KGET_WHY} — this row measured nothing"
+    elif [[ -z "$RECENT_RESTART" ]]; then
       record ok "No pods restarted in last 24h"
     else
       record warn "Pods restarted in last 24h" "$(echo "$RECENT_RESTART" | tr '\n' '; ')"
     fi
 
     # 5. PVCs all Bound
-    BAD_PVC=$(kubectl get pvc -A --no-headers 2>/dev/null | awk '$3 != "Bound" {print $1"/"$2" ("$3")"}')
-    if [[ -z "$BAD_PVC" ]]; then
+    # Exit status only: a cluster with no PVC at all is a real answer (#217).
+    # The text rows feed awk with `printf '%s'`, not echo: echo of an empty
+    # string is one empty line, which awk reads as a PVC that is not Bound.
+    kget get pvc -A --no-headers
+    BAD_PVC=$(printf '%s' "$KGET_OUT" | awk '$3 != "Bound" {print $1"/"$2" ("$3")"}')
+    if [[ -n "$KGET_WHY" ]]; then
+      record warn "PVCs" "${KGET_WHY} — this row measured nothing"
+    elif [[ -z "$BAD_PVC" ]]; then
       record ok "PVCs all Bound"
     else
       record fail "PVCs" "$(echo "$BAD_PVC" | tr '\n' '; ')"
@@ -420,34 +475,52 @@ data:
     fi
 
     # 8. TLS certificates nearing expiry (14 days)
-    CERT_ISSUES=$(kubectl get certificate -A -o json 2>/dev/null | jq -r '
+    # Exit status and list shape only: no one certificate name is fleet-wide (#217).
+    kget_items get certificate -A -o json
+    CERT_ISSUES=$(echo "$KGET_OUT" | jq -r '
       .items[] |
       select(.status.notAfter != null) |
       .status.notAfter as $exp |
       ($exp | fromdate) as $expEpoch |
       (now + (14 * 86400)) as $threshold |
       select($expEpoch < $threshold) |
-      "\(.metadata.namespace)/\(.metadata.name) expires \($exp)"')
-    if [[ -z "$CERT_ISSUES" ]]; then
+      "\(.metadata.namespace)/\(.metadata.name) expires \($exp)"' 2>/dev/null)
+    if [[ -n "$KGET_WHY" ]]; then
+      record warn "TLS certificates" "${KGET_WHY} — this row measured nothing"
+    elif [[ -z "$CERT_ISSUES" ]]; then
       record ok "TLS certificates (>14d remaining)"
     else
       record warn "TLS certificates nearing expiry" "$(echo "$CERT_ISSUES" | tr '\n' '; ')"
     fi
 
     # 9. Warning events in last 1h (limited window since events default TTL is 1h)
-    WARN_EVENTS=$(kubectl get events -A --field-selector type=Warning --no-headers 2>/dev/null | wc -l)
-    if [[ "$WARN_EVENTS" -le 20 ]]; then
+    # Exit status only: zero Warning events is a real answer (#217). Counted
+    # with grep -c, not wc -l: an empty output is one empty line to wc.
+    kget get events -A --field-selector type=Warning --no-headers
+    WARN_EVENTS=$(grep -c . <<<"$KGET_OUT")
+    if [[ -n "$KGET_WHY" ]]; then
+      record warn "Warning events" "${KGET_WHY} — this row measured nothing"
+    elif [[ "$WARN_EVENTS" -le 20 ]]; then
       record ok "Warning events in last hour: ${WARN_EVENTS}"
     else
-      TOP_WARNS=$(kubectl get events -A --field-selector type=Warning --no-headers 2>/dev/null | \
+      TOP_WARNS=$(printf '%s' "$KGET_OUT" | \
         awk '{print $4}' | sort | uniq -c | sort -rn | head -5 | tr '\n' '; ')
       record warn "Warning events spiked (${WARN_EVENTS})" "Top reasons: ${TOP_WARNS}"
     fi
 
     # 10. Cloudflare tunnel pods
-    TUNNEL_BAD=$(kubectl get pod -A -l app.kubernetes.io/name=cloudflare-tunnel --no-headers 2>/dev/null | \
+    # cloudflare-tunnel is a base app, so at least one pod carries the label
+    # (one each on jg-jiahd and jcom, 2026-10-25). Zero is not "all Running":
+    # it is the label or the app gone, and this row pointing at nothing (#217).
+    kget get pod -A -l app.kubernetes.io/name=cloudflare-tunnel --no-headers
+    if [[ -z "$KGET_WHY" && -z "$KGET_OUT" ]]; then
+      KGET_WHY="no pod carries app.kubernetes.io/name=cloudflare-tunnel, and every cluster runs the tunnel"
+    fi
+    TUNNEL_BAD=$(printf '%s' "$KGET_OUT" | \
       awk '$4 != "Running" {print $1"/"$2" ("$4")"}')
-    if [[ -z "$TUNNEL_BAD" ]]; then
+    if [[ -n "$KGET_WHY" ]]; then
+      record warn "Cloudflare tunnel pods" "${KGET_WHY} — this row measured nothing"
+    elif [[ -z "$TUNNEL_BAD" ]]; then
       record ok "Cloudflare tunnel pods Running"
     else
       record fail "Cloudflare tunnel pods" "$(echo "$TUNNEL_BAD" | tr '\n' '; ')"
@@ -636,24 +709,39 @@ data:
 
     # 13. Node resource usage
     if kubectl top nodes >/dev/null 2>&1; then
-      NODE_PRESSURE=$(kubectl top nodes --no-headers 2>/dev/null | \
+      kget top nodes --no-headers
+      NODE_PRESSURE=$(printf '%s' "$KGET_OUT" | \
         awk '{
           cpu = $3+0; mem = $5+0;
           if (cpu > 80) printf "%s CPU=%s%% ", $1, $3;
           if (mem > 85) printf "%s MEM=%s%% ", $1, $5;
         }')
-      if [[ -z "$NODE_PRESSURE" ]]; then
+      if [[ -n "$KGET_WHY" || -z "$KGET_OUT" ]]; then
+        record warn "Node resource pressure" "${KGET_WHY:-kubectl top nodes printed no node} — this row measured nothing"
+      elif [[ -z "$NODE_PRESSURE" ]]; then
         record ok "Node resource pressure normal"
       else
         record warn "Node resource pressure" "$NODE_PRESSURE"
       fi
+    else
+      # This used to emit no row at all, which reads exactly like a row that
+      # passed (#217). No metrics API is a cluster without metrics-server, not
+      # an unhealthy one, so skip and not warn.
+      record skip "Node resource pressure" "the metrics API did not answer kubectl top nodes, so CPU and memory were not read"
     fi
 
     # 14. Node disk pressure (via Conditions)
-    DISK_PRESSURE=$(kubectl get nodes -o json 2>/dev/null | jq -r '
+    # A cluster has at least one node; an empty list is not this cluster's (#217).
+    kget_items get nodes -o json
+    if [[ -z "$KGET_WHY" ]] && ! echo "$KGET_OUT" | jq -e '.items | length > 0' >/dev/null; then
+      KGET_WHY="the node list is empty"
+    fi
+    DISK_PRESSURE=$(echo "$KGET_OUT" | jq -r '
       .items[] | .metadata.name as $n |
-      .status.conditions[] | select(.type=="DiskPressure" and .status=="True") | $n')
-    if [[ -z "$DISK_PRESSURE" ]]; then
+      .status.conditions[] | select(.type=="DiskPressure" and .status=="True") | $n' 2>/dev/null)
+    if [[ -n "$KGET_WHY" ]]; then
+      record warn "Node disk pressure" "${KGET_WHY} — this row measured nothing"
+    elif [[ -z "$DISK_PRESSURE" ]]; then
       record ok "Node disk pressure clear"
     else
       record fail "Node DiskPressure" "$(echo "$DISK_PRESSURE" | tr '\n' ' ')"
@@ -681,13 +769,20 @@ data:
     # already claimed that port on that address. Under the single-address LAN
     # design those two causes are indistinguishable from the message alone, so
     # the explanation has to come from here.
-    UNSATISFIED=$(kubectl get svc -A -o json 2>/dev/null | jq -r '
+    # default/kubernetes exists on every cluster (#217).
+    kget_items get svc -A -o json
+    if [[ -z "$KGET_WHY" ]] && ! echo "$KGET_OUT" | jq -e 'any(.items[]; .metadata.namespace == "default" and .metadata.name == "kubernetes")' >/dev/null; then
+      KGET_WHY="the Service list has no default/kubernetes, which every cluster has, so it is not this cluster's list"
+    fi
+    UNSATISFIED=$(echo "$KGET_OUT" | jq -r '
       .items[]
       | select(.spec.type=="LoadBalancer")
       | select(.status.conditions[]? | select(.type=="cilium.io/IPAMRequestSatisfied" and .status!="True"))
       | "\(.metadata.namespace)/\(.metadata.name)=\(
-          [.status.conditions[]? | select(.type=="cilium.io/IPAMRequestSatisfied") | .reason][0] // "unknown")"')
-    if [[ -z "$UNSATISFIED" ]]; then
+          [.status.conditions[]? | select(.type=="cilium.io/IPAMRequestSatisfied") | .reason][0] // "unknown")"' 2>/dev/null)
+    if [[ -n "$KGET_WHY" ]]; then
+      record warn "LoadBalancer addresses" "${KGET_WHY} — this row measured nothing"
+    elif [[ -z "$UNSATISFIED" ]]; then
       record ok "LoadBalancer addresses assigned"
     else
       HINT=""
