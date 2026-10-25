@@ -237,6 +237,13 @@ jobs:
       - name: daily-check backup CronJob row
         run: bash scripts/check-backup-cronjob-row.sh
 
+      # #215: rows 2 and 15 discarded kubectl's stderr and exit status, so a
+      # list that could not be read was an empty not-Ready list, i.e. ✅. The
+      # cases that must keep holding are the unreadable ones never rendering ok;
+      # healthy and not-Ready are there so a row that warns at everything fails.
+      - name: daily-check Flux rows when the list cannot be read
+        run: bash scripts/check-flux-rows-unmeasured.sh
+
       # #85: the row's subject used to be a `*-backup` NAME, which is a
       # convention and not a contract -- a backup called `pg-dump-nightly` was
       # invisible and the count line would simply have been one smaller. The
