@@ -1,0 +1,106 @@
+---
+# A pod in a tenant namespace may attach a secondary network only when the
+# tenant holds the l2 grant, and only one defined in its own namespace
+# (ferry133/jg-base#187; fleet-ops root `standalone-app-repos` D9, task 8.1).
+#
+# Why this and not Multus's namespaceIsolation alone: with isolation on, Multus
+# still lets any pod attach a NetworkAttachmentDefinition in `default`
+# (multus-cni docs/configuration.md, "Namespace Isolation"). This policy
+# refuses every cross-namespace reference, `default/` included, and it does so
+# in the apiserver — a different place from the CNI on the node, so neither
+# defence rests on the other.
+#
+# What it reads, all from pod metadata, since that is all Multus reads:
+#   - `k8s.v1.cni.cncf.io/networks`: only the comma-separated form
+#     (`name`, `ns/name`, `name@iface`). The JSON-list form is refused: CEL
+#     here cannot parse JSON, and a form this policy cannot read is a form it
+#     cannot bound. The JSON form is also the one that carries `ips`, `mac`
+#     and `namespace` keys a tenant could use to choose its own address.
+#   - `v1.multus-cni.io/default-network`: refused outright. It replaces the
+#     pod's cluster network, which is the platform's, not the tenant's.
+#
+# CREATE only, as tenant-device-requests: Multus reads the annotations when
+# the sandbox is created and never again, and matching UPDATE would deny
+# metadata updates (finalizer removal) on pods whose grant was revoked.
+#
+# Both labels it reads come from the platform (jg-cluster-template renders
+# `jg.tenant` and `jg.tenant-l2`; tenant-admin has no verbs on Namespace).
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: tenant-l2-networks
+  labels:
+    app.kubernetes.io/part-of: tenant-isolation
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: [v1]
+        operations: [CREATE]
+        resources: [pods]
+  variables:
+    - name: annotations
+      expression: >-
+        has(object.metadata.annotations) ? object.metadata.annotations : {}
+    - name: networks
+      expression: >-
+        'k8s.v1.cni.cncf.io/networks' in variables.annotations
+          ? variables.annotations['k8s.v1.cni.cncf.io/networks'] : ''
+    - name: refs
+      expression: >-
+        variables.networks.split(',').map(e, e.trim())
+    - name: nsLabels
+      expression: namespaceObject.metadata.labels
+  matchConditions:
+    - name: asks-for-a-network
+      expression: >-
+        has(object.metadata.annotations) &&
+        ('k8s.v1.cni.cncf.io/networks' in object.metadata.annotations ||
+         'v1.multus-cni.io/default-network' in object.metadata.annotations)
+  validations:
+    - expression: >-
+        !('v1.multus-cni.io/default-network' in variables.annotations)
+      messageExpression: >-
+        'tenant "' + variables.nsLabels['jg.tenant'] + '" may not replace the
+        cluster network (v1.multus-cni.io/default-network)'
+      reason: Forbidden
+    - expression: >-
+        variables.networks == '' ||
+        ('jg.tenant-l2' in variables.nsLabels && variables.nsLabels['jg.tenant-l2'] == 'granted')
+      messageExpression: >-
+        'tenant "' + variables.nsLabels['jg.tenant'] + '" has no l2 grant
+        (l2 in cluster.yaml), so this pod may not attach ' + variables.networks
+      reason: Forbidden
+    - expression: >-
+        variables.networks == '' || variables.refs.all(r,
+          r.matches('^([a-z0-9]([-a-z0-9]*[a-z0-9])?/)?[a-z0-9]([-a-z0-9.]*[a-z0-9])?(@[A-Za-z0-9_.-]+)?$'))
+      messageExpression: >-
+        'tenant "' + variables.nsLabels['jg.tenant'] + '": write
+        k8s.v1.cni.cncf.io/networks as comma-separated names (name, name@iface);
+        the JSON form is not accepted. Got: ' + variables.networks
+      reason: Forbidden
+    - expression: >-
+        variables.networks == '' || variables.refs.all(r,
+          !r.contains('/') || r.split('/')[0] == request.namespace)
+      messageExpression: >-
+        'tenant "' + variables.nsLabels['jg.tenant'] + '" may attach only
+        networks defined in its own namespace "' + request.namespace + '". Got: '
+        + variables.networks
+      reason: Forbidden
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: tenant-l2-networks
+  labels:
+    app.kubernetes.io/part-of: tenant-isolation
+spec:
+  policyName: tenant-l2-networks
+  validationActions: [Deny]
+  # Tenant namespaces only: no platform pod is ever evaluated.
+  matchResources:
+    namespaceSelector:
+      matchExpressions:
+        - key: jg.tenant
+          operator: Exists

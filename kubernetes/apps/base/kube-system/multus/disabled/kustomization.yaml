@@ -1,0 +1,5 @@
+---
+# Off after being on: an empty directory, so Flux prunes Multus. See ../ks.yaml.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources: []

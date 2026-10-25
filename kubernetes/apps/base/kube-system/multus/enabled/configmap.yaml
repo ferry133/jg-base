@@ -1,0 +1,31 @@
+---
+# Upstream multus-cni v4.3.1 daemon config plus one key: namespaceIsolation.
+#
+# With it, a pod may attach only NetworkAttachmentDefinitions in its own
+# namespace — EXCEPT those in `default`, which Multus always treats as global
+# (docs/configuration.md, "Namespace Isolation"). So this is not the boundary
+# on its own. tenant-admission/l2-policy.yaml is: it refuses any cross-
+# namespace reference from a tenant pod, `default/` included, at admission.
+# The two do not share a premise — one runs in the CNI on the node, the other
+# in the apiserver — so either alone still stops a tenant reaching another
+# namespace's NAD outside `default`.
+kind: ConfigMap
+apiVersion: v1
+metadata:
+  name: multus-daemon-config
+  labels:
+    tier: node
+    app: multus
+data:
+  daemon-config.json: |
+    {
+        "chrootDir": "/hostroot",
+        "cniVersion": "0.3.1",
+        "logLevel": "verbose",
+        "logToStderr": true,
+        "cniConfigDir": "/host/etc/cni/net.d",
+        "multusAutoconfigDir": "/host/etc/cni/net.d",
+        "multusConfigFile": "auto",
+        "socketDir": "/host/run/multus/",
+        "namespaceIsolation": true
+    }

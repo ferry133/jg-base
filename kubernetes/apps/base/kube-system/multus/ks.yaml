@@ -1,0 +1,57 @@
+---
+# Multus + macvlan: L2 presence on the customer LAN for tenant pods without
+# hostNetwork (ferry133/jg-base#187; fleet-ops root `standalone-app-repos` D9,
+# task 8.1). ferry133 chose this over an mDNS reflector on 2026-10-26: a
+# reflector copies records that name the pod IP, which nothing on the LAN can
+# reach, so discovery would work and the connection would not (#187).
+#
+# What it gives a tenant: a second interface (macvlan on the node's NIC) with
+# a LAN address from a range jg-cluster-template renders, through a
+# NetworkAttachmentDefinition jgct puts in the tenant's namespace. The tenant
+# can only reference it — tenant-admin has no verbs on k8s.cni.cncf.io — and
+# tenant-admission/l2-policy.yaml decides whether a pod may reference anything.
+#
+# A cost to know before turning it on: with macvlan, the node cannot reach its
+# own macvlan children on the same NIC. LAN clients can; a probe or health
+# check from that node cannot. That is macvlan, not a fault.
+#
+# Turning it on changes the host CNI config of every node: multus-daemon
+# writes /etc/cni/net.d/00-multus.conf in front of Cilium's, and
+# install-reference-plugins adds macvlan and static to /opt/cni/bin. Cilium
+# keeps them (`cni.exclusive: false`, cilium/app/helmrelease.yaml). On a
+# graceful stop the daemon deletes 00-multus.conf again (multus-cni v4.3.1
+# pkg/server/config/manager.go), so "off" below returns the nodes to
+# Cilium-only. A daemon killed without SIGTERM leaves the file behind, and
+# every new pod on that node then waits for a daemon that is gone.
+#
+# Three states, same switch as claude-code-im (claudecode/claude-code/im-ks.yaml
+# carries the full reasoning):
+#
+#   default   `suspend: true` below. Nothing is applied. No cluster changes
+#             when this file merges.
+#   on        jg-cluster-template patches `suspend: false` (path stays
+#             .../enabled) when any tenant in cluster.yaml holds `l2`.
+#   off after `suspend: false` and `path: .../disabled` — the empty directory,
+#   being on  so Flux prunes the DaemonSet (and the NAD CRD, with every NAD).
+#             A return to `suspend: true` would strand it running.
+#
+# Why the gate is a jgct patch and not `${...}` in this path: see
+# generic-device-plugin/ks.yaml.
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: multus
+  namespace: flux-system
+spec:
+  suspend: true
+  dependsOn:
+    - name: cilium
+  interval: 1h
+  path: ./kubernetes/apps/base/kube-system/multus/enabled
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: jg-base
+    namespace: flux-system
+  targetNamespace: kube-system
+  wait: false

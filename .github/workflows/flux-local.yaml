@@ -524,6 +524,15 @@ jobs:
           tar -xzf /tmp/envtest.tar.gz -C /tmp
           export KUBEBUILDER_ASSETS=/tmp/controller-tools/envtest
           bash scripts/check-tenant-device-policy.sh && bash scripts/check-tenant-device-policy.sh --self-test
+      # #187: secondary networks (Multus) need the l2 grant and stay in the
+      # tenant's own namespace. Same envtest binaries, unpacked by the step
+      # above; if they are missing the script exits 2 and this step is red.
+      # The self-test starts ten apiservers.
+      - name: tenant secondary networks need the l2 grant
+        run: |
+          set -euo pipefail
+          export KUBEBUILDER_ASSETS=/tmp/controller-tools/envtest
+          bash scripts/check-tenant-l2-policy.sh && bash scripts/check-tenant-l2-policy.sh --self-test
       # #124: offsite-backup used to `apk add` its whole toolchain on every
       # schedule -- over 11 minutes of a 13m27s Job on the slow appliance,
       # against a backup body of seconds. Image layers are cached by
