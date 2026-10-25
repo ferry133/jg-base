@@ -508,6 +508,22 @@ jobs:
       # the admission policy makes that label trustworthy.
       - name: tenant LoadBalancer Services kept off the shared pools
         run: bash scripts/check-tenant-lb-policy.sh && bash scripts/check-tenant-lb-policy.sh --self-test
+      # #188: the device-request policy is judged by a real kube-apiserver,
+      # not by reading its CEL — the envtest binaries (etcd, kube-apiserver,
+      # kubectl), at the fleet's Kubernetes minor, pinned by version and
+      # sha512 like flux above. The self-test starts seven apiservers.
+      - name: tenant device requests need the devices grant
+        env:
+          ENVTEST_VERSION: 1.36.0
+          ENVTEST_SHA512: 302d6a4c3b7d79b8a6168cd9fd5f18e718048211d25012d969d320e06b39672d17338bcd008c29adf98b41048a6f7d80c90ab0165b4b861497ef74c7bc6c1531
+        run: |
+          set -euo pipefail
+          curl -fsSL -o /tmp/envtest.tar.gz \
+            "https://github.com/kubernetes-sigs/controller-tools/releases/download/envtest-v${ENVTEST_VERSION}/envtest-v${ENVTEST_VERSION}-linux-amd64.tar.gz"
+          echo "${ENVTEST_SHA512}  /tmp/envtest.tar.gz" | sha512sum -c -
+          tar -xzf /tmp/envtest.tar.gz -C /tmp
+          export KUBEBUILDER_ASSETS=/tmp/controller-tools/envtest
+          bash scripts/check-tenant-device-policy.sh && bash scripts/check-tenant-device-policy.sh --self-test
       # #124: offsite-backup used to `apk add` its whole toolchain on every
       # schedule -- over 11 minutes of a 13m27s Job on the slow appliance,
       # against a backup body of seconds. Image layers are cached by

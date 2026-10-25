@@ -1,6 +1,7 @@
 ---
 # Admission policies that bound tenants (ferry133/jg-base#191 hostnames,
-# #192 LoadBalancer Services, #205 daily-check's dry-run-only probe grant).
+# #192 LoadBalancer Services, #205 daily-check's dry-run-only probe grant,
+# #188 device requests).
 #
 # A directory of its own, NOT under flux-system/: that kustomization sets
 # `namespace: flux-system`, and kustomize v5.7.1 does not know
@@ -13,4 +14,5 @@ kind: Kustomization
 resources:
   - ./hostname-policy.yaml
   - ./loadbalancer-policy.yaml
+  - ./devices-policy.yaml
   - ./daily-check-dry-run-only.yaml

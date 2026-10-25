@@ -1,0 +1,9 @@
+---
+# Deliberately empty — the "turned off after being on" position of the switch
+# in ../ks.yaml. An empty path keeps the Kustomization reconciling with an
+# empty inventory, so Flux prunes the DaemonSet; a suspend would leave it
+# running with nothing reporting on it. Same shape as
+# claudecode/claude-code/im/disabled.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources: []
