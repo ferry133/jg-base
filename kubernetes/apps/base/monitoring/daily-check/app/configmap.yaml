@@ -178,6 +178,34 @@ data:
       record fail "Nodes Ready" "Not Ready: $(echo "$NOT_READY" | tr '\n' ' ')"
     fi
 
+    # Lists one Flux kind cluster-wide into FLUX_JSON for rows 2 and 15, or
+    # says in FLUX_WHY why that list cannot be read as this cluster's (#215).
+    # Three ways to fail, and each used to render as "all Ready":
+    #   - kubectl exits non-zero (RBAC, API error): stdout is empty;
+    #   - it exits 0 but the output is not an object with an `.items` array;
+    #   - the list lacks flux-system/flux-system. FluxInstance creates that
+    #     Kustomization and GitRepository on every cluster (measured on
+    #     jg-jiahd and jcom 2026-10-25, both Ready), so a list without it is
+    #     not this cluster's list, whatever else is in it. An empty list is
+    #     the commonest case of this.
+    # The level is warn, as in row 6's "could not list CronJobs": skip would
+    # say "does not apply here", and fail would page about the watcher rather
+    # than the cluster.
+    flux_list() {
+      local err rc=0
+      FLUX_WHY=""
+      err=$(mktemp)
+      FLUX_JSON=$(kubectl get "$1" -A -o json 2>"$err") || rc=$?
+      if (( rc != 0 )); then
+        FLUX_WHY="could not list $1 cluster-wide (kubectl rc=$rc: $(head -n1 "$err"))"
+      elif ! echo "$FLUX_JSON" | jq -e '.items | type == "array"' >/dev/null 2>&1; then
+        FLUX_WHY="kubectl get $1 returned no item list"
+      elif ! echo "$FLUX_JSON" | jq -e 'any(.items[]; .metadata.namespace == "flux-system" and .metadata.name == "flux-system")' >/dev/null; then
+        FLUX_WHY="the $1 list has no flux-system/flux-system, which every cluster has ($(echo "$FLUX_JSON" | jq '.items | length') items), so it is not this cluster's list"
+      fi
+      rm -f "$err"
+    }
+
     # 2. Flux Kustomizations
     #
     # Split by `spec.suspend`, because the two are not the same finding and one
@@ -194,12 +222,22 @@ data:
     # conditions, produces zero rows here, and is counted as neither. That is
     # what lets a new Kustomization ship suspended to every cluster (see
     # storage/longhorn/backup-ks.yaml) without turning this check red.
-    KS_JSON=$(kubectl get kustomization -A -o json 2>/dev/null)
+    #
+    # Could not measure is its own outcome (#215). This used to read
+    # `KS_JSON=$(kubectl ... 2>/dev/null)` and judge only whether the not-Ready
+    # list was empty — so a failed query (RBAC lost, API down) produced an
+    # empty list and printed the same ✅ as "all Ready". split-extras 5.4 used
+    # this row as its gate, and its green could not be taken as a reading.
+    # flux_list is shared with row 15, which had the same shape.
+    flux_list kustomization
+    KS_JSON="$FLUX_JSON"
     BAD_KS=$(echo "$KS_JSON" | \
       jq -r '.items[] | select(.spec.suspend != true) | select(.status.conditions[]? | select(.type=="Ready" and .status!="True")) | "\(.metadata.namespace)/\(.metadata.name)"')
     STALE_KS=$(echo "$KS_JSON" | \
       jq -r '.items[] | select(.spec.suspend == true) | select(.status.conditions[]? | select(.type=="Ready" and .status!="True")) | "\(.metadata.namespace)/\(.metadata.name)"')
-    if [[ -n "$BAD_KS" ]]; then
+    if [[ -n "$FLUX_WHY" ]]; then
+      record warn "Flux Kustomizations" "${FLUX_WHY} — this row measured nothing"
+    elif [[ -n "$BAD_KS" ]]; then
       record fail "Flux Kustomizations" "Not Ready: $(echo "$BAD_KS" | tr '\n' ' ')"
     elif [[ -n "$STALE_KS" ]]; then
       record warn "Flux Kustomizations" "suspended while not Ready, so this status is frozen and will not clear itself: $(echo "$STALE_KS" | tr '\n' ' ')"
@@ -622,9 +660,13 @@ data:
     fi
 
     # 15. GitRepository sources
-    BAD_GIT=$(kubectl get gitrepository -A -o json 2>/dev/null | \
-      jq -r '.items[] | select(.status.conditions[]? | select(.type=="Ready" and .status!="True")) | "\(.metadata.namespace)/\(.metadata.name)"')
-    if [[ -z "$BAD_GIT" ]]; then
+    # The same empty-list-reads-as-ok shape as row 2 (#215); see flux_list.
+    flux_list gitrepository
+    BAD_GIT=$(echo "$FLUX_JSON" | \
+      jq -r '.items[]? | select(.status.conditions[]? | select(.type=="Ready" and .status!="True")) | "\(.metadata.namespace)/\(.metadata.name)"')
+    if [[ -n "$FLUX_WHY" ]]; then
+      record warn "Flux GitRepository sources" "${FLUX_WHY} — this row measured nothing"
+    elif [[ -z "$BAD_GIT" ]]; then
       record ok "Flux GitRepository sources Ready"
     else
       record fail "Flux GitRepository sources" "$(echo "$BAD_GIT" | tr '\n' ' ')"
