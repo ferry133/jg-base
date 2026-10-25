@@ -119,7 +119,10 @@ run() {
 
   local got; got="$(printf '%s\n' "${ROWS[@]:-<no row>}")"
   SEEN["$row/$label"]="$got"
-  if [[ "$got" == "$want" ]]; then
+  # Runs of spaces are squeezed on both sides before comparing: row 9 carries
+  # `uniq -c` output, whose padding differs between GNU (CI), BSD (macOS) and
+  # busybox (the alpine image the Job runs in). Width is not under test here.
+  if [[ "$(tr -s ' ' <<<"$got")" == "$(tr -s ' ' <<<"$want")" ]]; then
     printf 'PASS  row %-2s %-14s -> %s\n' "$row" "$label" "$(echo "$got" | head -1 | cut -c1-72)"
   else
     printf 'FAIL  row %-2s %-14s\n  got:\n%s\n  want:\n%s\n' "$row" "$label" "$got" "$want"
@@ -188,7 +191,7 @@ run 9 none ok "" "" \
 "[ok] Warning events in last hour: 0"
 SPIKE="$(for i in $(seq 25); do echo "default   1m   Warning   BackOff   pod/x   msg"; done)"
 run 9 spiked ok "$SPIKE" "" \
-"[warn] Warning events spiked (25) — Top reasons:   25 BackOff;"
+"[warn] Warning events spiked (25) — Top reasons: 25 BackOff;"
 run 9 rbac-lost err "" "" \
 "[warn] Warning events — could not run kubectl get events -A --field-selector type=Warning --no-headers (rc=1: Error from server (Forbidden): events is forbidden)$U"
 
