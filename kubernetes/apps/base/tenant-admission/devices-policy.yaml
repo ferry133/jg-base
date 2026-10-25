@@ -3,13 +3,13 @@
 # the devices grant (ferry133/jg-base#188; fleet-ops root
 # `standalone-app-repos` D9, task 8.2).
 #
-# "A device" is ANY extended resource, not just `squat.ai/serial`: the test is
+# "A device" is ANY extended resource, not just `devic.es/serial`: the test is
 # "a resource name other than cpu, memory, ephemeral-storage or hugepages-*".
 # Default-deny on purpose — a device plugin added later (another domain, a
 # GPU) is covered without anyone remembering to come back here, and a
 # too-narrow policy fails open while a too-broad one fails loudly.
 # How MANY devices a granted tenant may take is its ResourceQuota
-# (`requests.squat.ai/serial`), rendered by jg-cluster-template.
+# (`requests.devic.es/serial`), rendered by jg-cluster-template.
 #
 # Only `requests` is read, and that covers limits: an extended resource must
 # have a limit, and the apiserver defaults its request from that limit BEFORE

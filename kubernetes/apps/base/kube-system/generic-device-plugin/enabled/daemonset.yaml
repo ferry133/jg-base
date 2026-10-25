@@ -10,8 +10,13 @@
 #
 # A class matches on whichever nodes carry the device; a node without one
 # advertises zero and the pod is never scheduled there. Which nodes a tenant's
-# pod may land on, and how many devices it may take (`requests.squat.ai/serial`
+# pod may land on, and how many devices it may take (`requests.devic.es/serial`
 # in its ResourceQuota), are jg-cluster-template's to render.
+#
+# The resource is `devic.es/<name>`: 0.2.0's default `--domain` is devic.es,
+# not squat.ai as this file first said. Read on jg-jcc2 (#188, 2026-10-26):
+# node allocatable `devic.es/serial: 0`, and the plugin log names
+# "devic.es/serial-test" for a test class added there.
 apiVersion: apps/v1
 kind: DaemonSet
 metadata:
