@@ -140,7 +140,7 @@ CANARY
   ns notquite jg.tenant=notquite jg.tenant-devices=yes pod-security.kubernetes.io/enforce=restricted
   ns platform
 
-  local SER='{"requests":{"squat.ai/serial":"1"},"limits":{"squat.ai/serial":"1"}}'
+  local SER='{"requests":{"devic.es/serial":"1"},"limits":{"devic.es/serial":"1"}}'
   denied() {  # label ns name res [init] -- wants a denial naming the resource
     out=$(pod "$2" "$3" "$4" "${5:-}")
     # The pod must not exist. Matching the policy name and message alone also
@@ -155,11 +155,11 @@ CANARY
     out=$(pod "$2" "$3" "$4" "${5:-}")
     if grep -q "pod/$3 created" <<<"$out"; then echo "ok    $1 — admitted"; else say "$1: expected admission, got: $out"; fi
   }
-  denied   "no grant, request+limit"        plain    p1 "$SER" "" "squat.ai/serial"
-  denied   "no grant, limit only"           plain    p2 '{"limits":{"squat.ai/serial":"1"}}' "" "squat.ai/serial"
-  denied   "no grant, init container"       plain    p3 "$SER" init "squat.ai/serial"
+  denied   "no grant, request+limit"        plain    p1 "$SER" "" "devic.es/serial"
+  denied   "no grant, limit only"           plain    p2 '{"limits":{"devic.es/serial":"1"}}' "" "devic.es/serial"
+  denied   "no grant, init container"       plain    p3 "$SER" init "devic.es/serial"
   denied   "no grant, another domain"       plain    p4 '{"limits":{"example.com/gpu":"1"}}' "" "example.com/gpu"
-  denied   "grant label not 'granted'"      notquite p5 "$SER" "" "squat.ai/serial"
+  denied   "grant label not 'granted'"      notquite p5 "$SER" "" "devic.es/serial"
   admitted "no grant, native resources"     plain    p6 '{"requests":{"cpu":"10m","memory":"8Mi","ephemeral-storage":"1Mi"},"limits":{"memory":"8Mi","hugepages-2Mi":"2Mi"}}'
   admitted "no grant, no resources"         plain    p7 '{}'
   admitted "granted, restricted PSA"        granted  p8 "$SER"
@@ -186,7 +186,7 @@ CASES=(
   # limit-only cell below proves that is enough (defaulting fills requests).
   "1 requests ignored :: if $P then .spec.matchConditions[0].expression = \"$CONTAINERS.exists(c, false)\" else . end :: no grant, limit only"
   "2 init containers ignored :: if $P then .spec.matchConditions[0].expression |= sub(\"\\\\+\\\\s*\\\\(has\\\\(object.spec.initContainers\\\\)[^)]*\\\\)\"; \"\") else . end :: no grant, init container"
-  "3 only squat.ai :: if $P then .spec.matchConditions[0].expression |= gsub(\"!\\\\(k in \\\\[[^]]*\\\\]\\\\) && !k.startsWith\\\\('hugepages-'\\\\)\"; \"k.startsWith('squat.ai/')\") else . end :: no grant, another domain"
+  "3 only devic.es :: if $P then .spec.matchConditions[0].expression |= gsub(\"!\\\\(k in \\\\[[^]]*\\\\]\\\\) && !k.startsWith\\\\('hugepages-'\\\\)\"; \"k.startsWith('devic.es/')\") else . end :: no grant, another domain"
   "4 Warn not Deny :: if $B then .spec.validationActions = [\"Warn\"] else . end :: no grant, request+limit"
   "5 grant label presence only :: if $P then .spec.validations[0].expression = \"'jg.tenant-devices' in variables.nsLabels\" else . end :: grant label not 'granted'"
   "6 every namespace :: if $B then del(.spec.matchResources) else . end :: platform namespace"

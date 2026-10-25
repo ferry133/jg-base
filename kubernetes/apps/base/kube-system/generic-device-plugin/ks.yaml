@@ -6,7 +6,7 @@
 # hostPath /dev in the vendor's own pod. Here the privilege stays with the
 # platform: this DaemonSet is the only thing that touches /dev, and it
 # advertises each matching device node as the extended resource
-# `squat.ai/serial`. A `restricted` pod requests one like CPU and the kubelet
+# `devic.es/serial`. A `restricted` pod requests one like CPU and the kubelet
 # adds just that node to its container.
 #
 # Two other pieces make that safe and usable; neither lives in this directory:
