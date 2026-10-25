@@ -1,0 +1,53 @@
+---
+# USB / serial devices for tenants without privileged (ferry133/jg-base#188;
+# fleet-ops root `standalone-app-repos` D9, task 8.2).
+#
+# A Zigbee/Z-Wave stick or a serial adapter used to mean `privileged: true` +
+# hostPath /dev in the vendor's own pod. Here the privilege stays with the
+# platform: this DaemonSet is the only thing that touches /dev, and it
+# advertises each matching device node as the extended resource
+# `squat.ai/serial`. A `restricted` pod requests one like CPU and the kubelet
+# adds just that node to its container.
+#
+# Two other pieces make that safe and usable; neither lives in this directory:
+#   - tenant-admission/devices-policy.yaml: a pod in a tenant namespace may
+#     request ANY extended resource only with `jg.tenant-devices: granted` on
+#     the namespace (rendered by jg-cluster-template from the `devices` grant).
+#   - containerd `device_ownership_from_security_context = true` on the node,
+#     so the device node in the container is owned by the pod's runAsUser —
+#     without it a non-root pod gets the node but cannot open it. jgct's Talos
+#     patch sets it; Omni-managed clusters do not apply that patch, so it must
+#     be present as an Omni config patch there (#188, unmeasured per node).
+#
+# Three states, same switch as claude-code-im (claudecode/claude-code/im-ks.yaml
+# carries the full reasoning):
+#
+#   default   `suspend: true` below. Nothing is applied. No cluster changes
+#             when this file merges.
+#   on        jg-cluster-template patches `suspend: false` (path stays
+#             .../enabled) when any tenant in cluster.yaml holds `devices`.
+#   off after `suspend: false` and `path: .../disabled` — the empty directory,
+#   being on  so Flux prunes the DaemonSet. A return to `suspend: true` would
+#             strand it running. Reconcile the jg-base source before pushing
+#             the user repo, for the reason im-ks.yaml measured.
+#
+# Why the gate is a jgct patch and not `${...}` in this path: flux-local
+# collects every Kustomization under ./kubernetes/apps/base without
+# substitution, and a `${VAR}` in a path aborts the suite (storage/longhorn/
+# backup-ks.yaml).
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: generic-device-plugin
+  namespace: flux-system
+spec:
+  suspend: true
+  interval: 1h
+  path: ./kubernetes/apps/base/kube-system/generic-device-plugin/enabled
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: jg-base
+    namespace: flux-system
+  targetNamespace: kube-system
+  wait: false

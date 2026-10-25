@@ -1,0 +1,76 @@
+---
+# squat/generic-device-plugin 0.2.0 (image built 2026-04-14, revision
+# a3d6f47), pinned by tag@digest (the `im` rule from #66: a mutable tag on a
+# spegel cluster resolves to whatever a node cached first). Nothing here
+# enforces that: no guard reads images outside `im`, and removing this digest
+# turns nothing red (measured 2026-10-25). Derived from
+# upstream manifests/generic-device-plugin.yaml with only the serial class:
+# video, fuse, audio and capture are not something any tenant has asked for,
+# and every class here is a resource some pod can be granted.
+#
+# A class matches on whichever nodes carry the device; a node without one
+# advertises zero and the pod is never scheduled there. Which nodes a tenant's
+# pod may land on, and how many devices it may take (`requests.squat.ai/serial`
+# in its ResourceQuota), are jg-cluster-template's to render.
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: generic-device-plugin
+  labels:
+    app.kubernetes.io/name: generic-device-plugin
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: generic-device-plugin
+  updateStrategy:
+    type: RollingUpdate
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: generic-device-plugin
+    spec:
+      priorityClassName: system-node-critical
+      tolerations:
+        - operator: Exists
+          effect: NoExecute
+        - operator: Exists
+          effect: NoSchedule
+      automountServiceAccountToken: false
+      containers:
+        - name: generic-device-plugin
+          image: ghcr.io/squat/generic-device-plugin:0.2.0@sha256:66c8d5c270eb2b721f1064c549b9b7898152a6d2f0163380a5d37dc7636c20ff
+          args:
+            - --device
+            - |
+              name: serial
+              groups:
+                - paths:
+                    - path: /dev/ttyUSB*
+                - paths:
+                    - path: /dev/ttyACM*
+          ports:
+            - containerPort: 8080
+              name: http
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+            limits:
+              memory: 32Mi
+          # Privileged is the point: the platform holds this privilege so the
+          # tenant's pod does not have to. It needs /dev (to find and hand out
+          # device nodes) and the kubelet's device-plugin socket directory.
+          securityContext:
+            privileged: true
+          volumeMounts:
+            - name: device-plugin
+              mountPath: /var/lib/kubelet/device-plugins
+            - name: dev
+              mountPath: /dev
+      volumes:
+        - name: device-plugin
+          hostPath:
+            path: /var/lib/kubelet/device-plugins
+        - name: dev
+          hostPath:
+            path: /dev
