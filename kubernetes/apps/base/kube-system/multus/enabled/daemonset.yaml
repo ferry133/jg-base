@@ -4,8 +4,17 @@
 # Derived from upstream deployments/multus-daemonset-thick.yml at v4.3.1. Changes:
 #   - images pinned; namespace from the Kustomization's targetNamespace;
 #     system-node-critical, like the other node-level CNI pieces;
-#   - memory 150Mi instead of 50Mi: the Talos guide reports the primary CNI
-#     plugin, which runs inside this container, OOM-killed at 50Mi;
+#   - memory: request 100Mi and NO limit (upstream: 50Mi limit). The primary
+#     CNI plugin (cilium-cni) runs inside this container, one copy per CNI ADD
+#     in flight, so the peak grows with the pods a node starts at once. The
+#     Talos guide reports it OOM-killed at 50Mi. #224 shipped 150Mi, and on
+#     jg-jcc2 (2026-10-26, #226) a reboot sent ~30 ADDs at once: OOMKilled,
+#     every sandbox failed with `CmdAdd (shim): ... EOF`, and the node did not
+#     recover in 5 minutes; a hand-set 512Mi brought it back in 15 s, and
+#     150Mi held fine in steady state. A limit is not raised to 512Mi because
+#     that number was measured at 30 pods and jg-jiahd runs ~88: too low a
+#     limit takes down EVERY pod on the node with no self-recovery, which is
+#     worse than leaving memory pressure to the node's own OOM handling;
 #   - one more initContainer, install-reference-plugins (below).
 #
 # Talos v1.13 needs no other change: the guide reports the unpatched upstream
@@ -54,11 +63,10 @@ spec:
           image: ghcr.io/k8snetworkplumbingwg/multus-cni:v4.3.1-thick@sha256:a357a79359b80ddd5f4699117946cacf3b54f5baecf7944535594863e875fc25
           command: ["/usr/src/multus-cni/bin/multus-daemon"]
           resources:
+            # No limit, deliberately: see the header (#226).
             requests:
               cpu: 100m
               memory: 100Mi
-            limits:
-              memory: 150Mi
           securityContext:
             privileged: true
           terminationMessagePolicy: FallbackToLogsOnError
