@@ -405,6 +405,19 @@ jobs:
       - name: operator credential stays in the sidecar
         run: bash scripts/check-operator-credential-isolation.sh && bash scripts/check-operator-credential-isolation.sh --self-test
 
+      # #222: im/netdev is the claude-code-im position jg-cluster-template
+      # selects on a cluster with a UniFi console. No Kustomization in this
+      # repo points at it, so flux-local never builds it and the envsubst
+      # check never scans it -- without this step it is a directory no job
+      # reads. The guard renders it with flux build (already installed above)
+      # and holds: additions only versus im/enabled, the sidecar on the app
+      # container's pin (a replacement, because bump PRs rewrite one file),
+      # one port across URL and probes, the reader Secret mounted by the
+      # sidecar alone and optional, no insecure-http flag, envsubst parses.
+      # --self-test runs one mutation per assertion against a scratch copy.
+      - name: netdev overlay adds the sidecar and nothing else
+        run: bash scripts/check-netdev-overlay.sh && bash scripts/check-netdev-overlay.sh --self-test
+
       # #145: the claudecode state archive mounts PVCs directly, because
       # `kubectl exec` needs a RUNNING pod and a scaled-to-0 instance has
       # none -- its content never reached off-site storage. Mounting removes

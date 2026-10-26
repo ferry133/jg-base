@@ -1,0 +1,111 @@
+---
+# Merged into im/enabled's HelmRelease by ./kustomization.yaml. Everything
+# here is an ADDITION (a new container, a new volume, one new app env);
+# scripts/check-netdev-overlay.sh fails if a key that already exists in
+# im/enabled is changed instead.
+#
+# Applied through the same claude-code-im Kustomization, so this file is Flux
+# postBuild-substituted too, comments included: write no dollar-brace in prose.
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: im
+  namespace: claudecode
+spec:
+  values:
+    controllers:
+      im:
+        containers:
+          app:
+            env:
+              # Registers the sidecar below as a remote MCP server
+              # (claude-session in k8scc). Loopback only -- this pod is
+              # hostNetwork, so 127.0.0.1 is the only address that is not the
+              # node's LAN address. Same shape as TALOS_MCP_URL.
+              NETDEV_MCP_URL: http://127.0.0.1:8766/sse
+          netdev-mcp:
+            # Own container, own credential mount: the reader key is visible
+            # here and nowhere else (the app container is the customer's root
+            # shell). image.tag is filled by the replacement in
+            # ./kustomization.yaml from the app container's pin.
+            image:
+              repository: ghcr.io/ferry133/claude-code
+            command: ["python3", "/usr/local/bin/netdev_mcp_server.py"]
+            env:
+              # A single-line, non-secret value, so it travels as a Flux
+              # substitution from cluster-secrets (k8scc-c7 on #222). Empty
+              # default: the server reads "" as unset and every tool answers
+              # "not configured", which is the honest state for a cluster put on
+              # this path before its console address was recorded.
+              UNIFI_CONTROLLER_URL: "${UNIFI_CONTROLLER_URL:=}"
+              UNIFI_SITE: "${UNIFI_SITE:=default}"
+              # PATHS into the unifi-reader mount below. The PEM is multi-line,
+              # which postBuild substitution would flatten, so the credential
+              # files come from a Secret that jg-cluster-template renders into
+              # the user repo as a sops file -- never from a substitution.
+              # TLS to the console is always verified; there is no switch to
+              # turn that off, and the test-only insecure-http flag is
+              # deliberately absent (the guard refuses it).
+              UNIFI_CA_FILE: /etc/netdev-mcp/reader/ca.crt
+              UNIFI_READER_KEY_FILE: /etc/netdev-mcp/reader/reader-key
+            securityContext:
+              allowPrivilegeEscalation: false
+              capabilities: { drop: ["ALL"] }
+            probes:
+              # Binds 127.0.0.1:8766 only; kubelet's tcpSocket probe would dial
+              # the node IP on this hostNetwork pod. Same reason as talos-mcp.
+              liveness:
+                enabled: true
+                custom: true
+                spec:
+                  exec:
+                    command: ["bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/8766"]
+                  initialDelaySeconds: 10
+                  periodSeconds: 30
+                  timeoutSeconds: 5
+                  failureThreshold: 3
+              readiness:
+                enabled: true
+                custom: true
+                spec:
+                  exec:
+                    command: ["bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/8766"]
+                  initialDelaySeconds: 10
+                  periodSeconds: 30
+                  timeoutSeconds: 5
+                  failureThreshold: 3
+            resources:
+              requests:
+                cpu: 10m
+                memory: 32Mi
+              limits:
+                memory: 128Mi
+    persistence:
+      # Secret `unifi-reader` (keys `ca.crt`, `reader-key`), rendered by
+      # jg-cluster-template into the user repo. A directory mount, not subPath:
+      # a subPath mount never sees a rotated key.
+      #
+      # optional: true on purpose. This is the rescue terminal's pod; a Secret
+      # that has not landed yet (ordering between the user repo's
+      # Kustomizations, a first render) must not stop im from starting. The
+      # server reads a missing file as `reader credential: missing`, which is
+      # a visible state, not a silent one. `type: secret` in app-template 4.6.2
+      # cannot say optional (see im-apps-key in im/enabled), hence `custom`.
+      # 256 = 0400, root-owned; the pod runs as uid 0.
+      #
+      # The operator account, the ticket token and the snapshot PVC belong to
+      # the write release and are NOT here: this image does not read them
+      # (k8scc-c7, #222, 2026-10-26), and mounting credentials nothing reads is
+      # exposure with no function.
+      unifi-reader:
+        type: custom
+        volumeSpec:
+          secret:
+            secretName: unifi-reader
+            optional: true
+            defaultMode: 256
+        advancedMounts:
+          im:
+            netdev-mcp:
+              - path: /etc/netdev-mcp/reader
+                readOnly: true
