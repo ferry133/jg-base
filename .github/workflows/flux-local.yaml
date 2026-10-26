@@ -412,8 +412,11 @@ jobs:
       # reads. The guard renders it with flux build (already installed above)
       # and holds: additions only versus im/enabled, the sidecar on the app
       # container's pin (a replacement, because bump PRs rewrite one file),
-      # one port across URL and probes, the reader Secret mounted by the
-      # sidecar alone and optional, no insecure-http flag, envsubst parses.
+      # one port across URL and probes, every credential path inside its own
+      # Secret's mount, the three Secrets and the snapshot claim mounted by
+      # the sidecar alone (Secrets optional), the snapshot dir on the claim
+      # and the archive not mounting it, POD_IP from the downward API, no
+      # test-only env, envsubst parses.
       # --self-test runs one mutation per assertion against a scratch copy.
       - name: netdev overlay adds the sidecar and nothing else
         run: bash scripts/check-netdev-overlay.sh && bash scripts/check-netdev-overlay.sh --self-test

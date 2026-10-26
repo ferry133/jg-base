@@ -48,6 +48,39 @@ spec:
               # deliberately absent (the guard refuses it).
               UNIFI_CA_FILE: /etc/netdev-mcp/reader/ca.crt
               UNIFI_READER_KEY_FILE: /etc/netdev-mcp/reader/reader-key
+              # ---- the write release (k8scc#45, contract on #222 2026-10-26
+              # 20:29). Write tools register only when EVERY input below is
+              # usable; with any one missing the server stays a reader and its
+              # startup line names what is missing. So each Secret is optional
+              # and each value defaults to empty: a cluster on this path with no
+              # operator account is a reader, never a crash and never a
+              # registered-but-refusing writer.
+              #
+              # The restricted local admin, two lines (user, password).
+              UNIFI_OPERATOR_FILE: /etc/netdev-mcp/operator/operator
+              # The private im-to-FAC ticket repo (owner/repo) and a token that
+              # can only open, comment on and close issues there -- as a file,
+              # never env.
+              IM_FAC_TICKET_REPO: "${IM_FAC_TICKET_REPO:=}"
+              IM_FAC_TICKET_TOKEN_FILE: /etc/netdev-mcp/fac/token
+              # Exactly three, comma-separated, on three different paths (root
+              # D3: GitHub API, company MinIO, public DNS). Which three is
+              # jg-cluster-template's call; empty keeps the writer off.
+              NETDEV_OUTSIDE_PROBES: "${NETDEV_OUTSIDE_PROBES:=}"
+              # Ticket title and body.
+              CLUSTER_NAME: "${CLUSTER_NAME}"
+              # hostNetwork, so this is the node's address (class A check).
+              # Same as talos-mcp.
+              POD_IP:
+                valueFrom:
+                  fieldRef:
+                    fieldPath: status.podIP
+              # The netdev-snapshots claim below. Not an emptyDir: snapshots
+              # are the material for a revert after a sidecar restart.
+              NETDEV_SNAPSHOT_DIR: /var/lib/netdev-mcp/snapshots
+              # Deliberately NOT set (the guard refuses them): the ticket API
+              # override and the insecure-http flag exist for the controls'
+              # fakes, and CLAUDE_USER_ID stays unset as on talos-mcp.
             securityContext:
               allowPrivilegeEscalation: false
               capabilities: { drop: ["ALL"] }
@@ -92,11 +125,6 @@ spec:
       # a visible state, not a silent one. `type: secret` in app-template 4.6.2
       # cannot say optional (see im-apps-key in im/enabled), hence `custom`.
       # 256 = 0400, root-owned; the pod runs as uid 0.
-      #
-      # The operator account, the ticket token and the snapshot PVC belong to
-      # the write release and are NOT here: this image does not read them
-      # (k8scc-c7, #222, 2026-10-26), and mounting credentials nothing reads is
-      # exposure with no function.
       unifi-reader:
         type: custom
         volumeSpec:
@@ -109,3 +137,60 @@ spec:
             netdev-mcp:
               - path: /etc/netdev-mcp/reader
                 readOnly: true
+      # The write release's two credentials, same shape and same reasons as
+      # unifi-reader: rendered by jg-cluster-template, optional (absent =
+      # reader-only, which is the state every cluster starts in -- the root
+      # gates turning the operator on per cluster), directory mounts, 0400,
+      # on this container only.
+      #   unifi-operator  key `operator`: user and password, two lines
+      #   im-fac-ticket   key `token`: the ticket repo token
+      unifi-operator:
+        type: custom
+        volumeSpec:
+          secret:
+            secretName: unifi-operator
+            optional: true
+            defaultMode: 256
+        advancedMounts:
+          im:
+            netdev-mcp:
+              - path: /etc/netdev-mcp/operator
+                readOnly: true
+      im-fac-ticket:
+        type: custom
+        volumeSpec:
+          secret:
+            secretName: im-fac-ticket
+            optional: true
+            defaultMode: 256
+        advancedMounts:
+          im:
+            netdev-mcp:
+              - path: /etc/netdev-mcp/fac
+                readOnly: true
+      # Snapshots of router objects taken before each write. They hold
+      # UNSTRIPPED secrets (Wi-Fi PSKs and the like), so:
+      #   - mounted on netdev-mcp only -- never app, never the workspace;
+      #   - NOT in the claudecode state archive: that CronJob mounts the
+      #     claims it names (im/enabled/state-archive.yaml), and this one is
+      #     deliberately not named -- root D5 keeps it out of off-site
+      #     storage. The
+      #     archive guard reads im/enabled's release, which does not declare
+      #     this claim, so it stays green; check-netdev-overlay.sh asserts
+      #     the archive does not mount it.
+      #   - no `retain`: switching a cluster back to im/enabled deletes it,
+      #     which for a pile of secrets is the right default.
+      # The newest 50 are kept, one object's JSON each: 128Mi is generous.
+      # The config tier's class, which every cluster carries (#136 measured
+      # the key on all of them); it shares that tier's move-wedge risk, and a
+      # wedge here blocks only this claim's release the same way it would
+      # block claude-config's.
+      netdev-snapshots:
+        type: persistentVolumeClaim
+        storageClass: ${CLAUDECODE_CONFIG_STORAGE_CLASS}
+        accessMode: ReadWriteOnce
+        size: 128Mi
+        advancedMounts:
+          im:
+            netdev-mcp:
+              - path: /var/lib/netdev-mcp/snapshots

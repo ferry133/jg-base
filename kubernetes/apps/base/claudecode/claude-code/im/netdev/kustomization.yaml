@@ -2,8 +2,10 @@
 # The "this cluster has a UniFi console" position of the claude-code-im switch
 # (ferry133/jg-base#222, fleet-ops im-unifi-management sub-change
 # netdev-mcp-sidecar). It is im/enabled plus ONE addition: a third container,
-# netdev-mcp, the read-only network-device MCP server from k8scc (contract:
-# jg-base#222, k8scc CLAUDE.md "Netdev MCP Sidecar").
+# netdev-mcp, the network-device MCP server from k8scc (contract: jg-base#222,
+# k8scc CLAUDE.md "Netdev MCP Sidecar"), with its own credential mounts and
+# snapshot claim. It is a reader unless every write input is present; see
+# netdev-mcp.yaml.
 #
 # Why an overlay and not a values patch rendered by jg-cluster-template: a
 # patch rendered into each user repo becomes structure that drifts with that
