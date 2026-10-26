@@ -1,4 +1,11 @@
 ---
+# jg-cluster-template patches EVERY Certificate in this Kustomization by kind
+# (not by name -- before substitution the name below is still a variable
+# expression, which a kustomize target cannot match), adding
+# `*.<tenant>.<domain>` per app_repos entry so tenant HTTPRoutes pass
+# TLS (ferry133/jg-base#229, jgct#248). A second Certificate added here would
+# silently gain those dnsNames too: give it its own Kustomization, or change
+# that patch to tell them apart first.
 apiVersion: cert-manager.io/v1
 kind: Certificate
 metadata:
