@@ -169,6 +169,21 @@ spec:
               # ~/.ssh/config, so ~/.ssh cannot be a read-only Secret volume,
               # and a subPath mount never sees a rotated key.
               IM_APPS_KEY: /etc/im-apps/identity
+              # Home Assistant's MCP endpoint (fleet-ops im-home-automation D3,
+              # ferry133/jg-base#221): https://ha.<tenant>.<domain>/api/mcp
+              # where the cluster has an HA tenant, rendered into
+              # cluster-secrets by jg-cluster-template. Through the public
+              # HTTPRoute, not the pod IP: im reaches tenants only that way
+              # (jgct#245 ruling A), and the TLS for that name exists since
+              # jg-base#229. Everywhere else the default leaves it "", which
+              # claude-session treats as unset -- nothing registered (same rule
+              # as IM_APPS_REPO).
+              HA_MCP_URL: "${HA_MCP_URL:=}"
+              # The long-lived HA token, as a FILE from the `ha-mcp-token`
+              # volume below -- never an env value (D3): env is readable by
+              # anything that can list the process, and this is the customer's
+              # root shell.
+              HA_MCP_TOKEN_FILE: /etc/ha-mcp/token
             probes:
               # ttyd binds loopback, unreachable from kubelet's tcpSocket
               # probe (hostNetwork pod IP) -- check from inside the pod.
@@ -565,6 +580,24 @@ spec:
           im:
             app:
               - path: /etc/im-apps
+                readOnly: true
+      # Secret `ha-im-token` (key `token`) exists only where the cluster has
+      # an HA tenant; jg-cluster-template renders it into the user repo.
+      # Optional for the same reason as im-apps-key above: absent on most
+      # clusters, and im must start without it. claude-session reads a missing
+      # file with a set HA_MCP_URL as a one-line warning, not a crash.
+      # A directory mount, so a rotated token is seen without a restart.
+      ha-mcp-token:
+        type: custom
+        volumeSpec:
+          secret:
+            secretName: ha-im-token
+            optional: true
+            defaultMode: 256
+        advancedMounts:
+          im:
+            app:
+              - path: /etc/ha-mcp
                 readOnly: true
       talos-mcp-config:
         type: secret
