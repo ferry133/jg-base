@@ -1,0 +1,48 @@
+---
+# The "this cluster has a UniFi console" position of the claude-code-im switch
+# (ferry133/jg-base#222, fleet-ops im-unifi-management sub-change
+# netdev-mcp-sidecar). It is im/enabled plus ONE addition: a third container,
+# netdev-mcp, the read-only network-device MCP server from k8scc (contract:
+# jg-base#222, k8scc CLAUDE.md "Netdev MCP Sidecar").
+#
+# Why an overlay and not a values patch rendered by jg-cluster-template: a
+# patch rendered into each user repo becomes structure that drifts with that
+# repo's copy of the templates (an upstream fix never reaches it). Here the
+# whole shape stays in jg-base; jg-cluster-template only picks the path --
+# im/enabled or im/netdev -- the way it already picks im/enabled or
+# im/disabled.
+#
+# What this costs a cluster WITHOUT a console: nothing. No file under
+# im/enabled changes, so its render is byte-identical; and
+# scripts/check-netdev-overlay.sh holds the converse -- that this render minus
+# the netdev additions IS the im/enabled render -- so the overlay cannot quietly
+# start changing the default terminal either.
+#
+# The image is NOT written here. The replacement below copies the app
+# container's pinned tag, because the pin-bump PRs from k8scc's CI rewrite only
+# im/enabled/helmrelease.yaml: a second copy of the pin in this directory would
+# be left behind on the first bump, with a server and a terminal from two
+# different builds and every signal green.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../enabled
+patches:
+  - path: ./netdev-mcp.yaml
+    target:
+      group: helm.toolkit.fluxcd.io
+      kind: HelmRelease
+      name: im
+replacements:
+  - source:
+      kind: HelmRelease
+      name: im
+      fieldPath: spec.values.controllers.im.containers.app.image.tag
+    targets:
+      - select:
+          kind: HelmRelease
+          name: im
+        fieldPaths:
+          - spec.values.controllers.im.containers.netdev-mcp.image.tag
+        options:
+          create: true

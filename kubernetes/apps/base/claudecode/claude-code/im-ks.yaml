@@ -6,7 +6,8 @@
 # runtime via postBuild from cluster-secrets; there is no template-time
 # structure left in it — that is what allows it to live here.
 #
-# Three states, same switch as longhorn's backup-ks.yaml (#7, #29):
+# Three states (the third with two paths), same switch as longhorn's
+# backup-ks.yaml (#7, #29):
 #
 #   never re-rendered  jg-base's default below: `suspend: true`. Nothing is
 #                      applied, the object never reconciles, so it has no
@@ -48,6 +49,13 @@
 #                      source to `40cb10b` pruned immediately. So:
 #                      `flux reconcile source git jg-base` BEFORE pushing the
 #                      user repo. jcom was done in that order and stayed clean.
+#
+#   on, with a UniFi   `path: .../im/netdev` -- im/enabled plus the netdev-mcp
+#   console            sidecar (#222), an overlay over the same HelmRelease, so
+#                      switching between enabled and netdev is an upgrade of
+#                      one release, not a prune. jg-cluster-template picks it
+#                      where the cluster records a console; everything else
+#                      about the "on" state above applies unchanged.
 #
 # Why the gate is a jgct patch and not `${...}` in this path: `cluster-apps`
 # walks ./kubernetes/apps/base, flux-local collects every Kustomization under

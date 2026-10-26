@@ -11,6 +11,7 @@ support path that does not depend on Omni/SideroLink being up.
 | namespace, `cluster-admin` SA/RBAC, chart `OCIRepository`, secrets | `app/` (Kustomization `claude-code`) | shared by every instance |
 | the default `im` instance | `im/enabled/` (Kustomization `claude-code-im`) | static since 2026-09-06 — every per-cluster difference is a Flux `${VAR}` from cluster-secrets, so no template-time structure remains |
 | opt-out position | `im/disabled/` (empty) | prune-not-suspend; see `im-ks.yaml` for the three states |
+| UniFi console position | `im/netdev/` (overlay of `im/enabled/`) | adds only the `netdev-mcp` sidecar and its reader Secret mount (#222); `scripts/check-netdev-overlay.sh` holds "adds, changes nothing" |
 | extra instances (`cc.jiahd.cc`, per-client shells, basic-auth fallback) | per-user repos, rendered from jg-cluster-template `claude_instances` | instance names and sidecar presence are still template-time structure |
 
 `claude-code-im` ships `suspend: true` here and is switched on by a
