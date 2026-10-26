@@ -24,7 +24,13 @@
 # The node's /opt/cni/bin has no macvlan and no static IPAM (read on jg-jiahd
 # and jcom by fleet-ops-65, #187, 2026-10-25: bridge, cilium-cni, firewall,
 # flannel, host-local, loopback, portmap). install-reference-plugins copies
-# exactly those two from Rancher's build of containernetworking/plugins. It
+# exactly those two, plus `sbr`, from Rancher's build of
+# containernetworking/plugins. sbr (source-based routing) is chained after
+# macvlan in the tenant NADs jgct renders: without it the NAD's subnet route
+# on net1 catches the kubelet's probe replies to the node address, and a
+# macvlan child cannot reach its own parent, so every tcpSocket/httpGet probe
+# times out (jgct#244, measured on jg-jcc2 2026-10-26; sbr read present in
+# this image's /opt/cni/bin the same day). It
 # copies an allow-list, not the image's whole /opt/cni/bin: the image's own
 # script copies everything and would overwrite the bridge, host-local,
 # loopback and portmap binaries Talos ships with its own versions.
@@ -126,7 +132,7 @@ spec:
             - sh
             - -ec
             - |
-              for p in macvlan static; do
+              for p in macvlan static sbr; do
                 cp /opt/cni/bin/$p /host/opt/cni/bin/$p.tmp
                 mv /host/opt/cni/bin/$p.tmp /host/opt/cni/bin/$p
                 echo "installed $p"
