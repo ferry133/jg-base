@@ -1,0 +1,87 @@
+---
+# An HTTPRoute in a tenant namespace may attach only to network/envoy-internal,
+# and to network/envoy-external as well only when the company granted it
+# (ferry133/jg-base#235; fleet-ops root `standalone-app-repos` D9, task 8.6;
+# ferry133 2026-10-26: "grants.public, internal by default").
+#
+# Both gateways' https listeners are `allowedRoutes.namespaces.from: All`, so
+# without this a tenant decides by itself whether its pages face the internet.
+# tenant-httproute-hostnames (hostname-policy.yaml) bounds the name, not the
+# gateway; this bounds the gateway, not the name.
+#
+# - An allow-list: a gateway added later is refused until it is named here.
+# - Every parentRef is resolved the way Gateway API resolves it: `group`
+#   defaults to gateway.networking.k8s.io, `kind` to Gateway (the CRD defaults
+#   both, v1.4.1; written out here anyway so the policy does not rest on the
+#   CRD), and `namespace` to the route's own namespace, which is never
+#   `network` for a tenant. `sectionName` and `port` are not bounded: every
+#   listener on an allowed gateway is the platform's.
+# - A route with no parentRefs attaches to nothing and is admitted.
+# - CREATE and UPDATE: with CREATE alone, an envoy-internal route edited to
+#   envoy-external afterwards would pass.
+# - No paramKind: the #205 failure was the ConfigMap param informer, and this
+#   policy must not share it. The gateway names are the same on every cluster.
+# - The grant is read from the Namespace label `jg.tenant-public=granted`,
+#   which jg-cluster-template renders from `grants.public` (jgct#250) and
+#   tenant-admin cannot write. Only httproutes: tenant-admin grants nothing
+#   else in gateway.networking.k8s.io (measured on jg-jcc2, #235). If that
+#   role ever widens, this policy has to widen with it.
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: tenant-httproute-parents
+  labels:
+    app.kubernetes.io/part-of: tenant-isolation
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [gateway.networking.k8s.io]
+        apiVersions: ["*"]
+        operations: [CREATE, UPDATE]
+        resources: [httproutes]
+  variables:
+    - name: nsLabels
+      expression: namespaceObject.metadata.labels
+    - name: public
+      expression: >-
+        'jg.tenant-public' in variables.nsLabels &&
+        variables.nsLabels['jg.tenant-public'] == 'granted'
+    - name: allowed
+      expression: >-
+        variables.public ? ['envoy-internal', 'envoy-external'] : ['envoy-internal']
+    - name: parents
+      expression: >-
+        has(object.spec.parentRefs) ? object.spec.parentRefs : []
+  validations:
+    - expression: >-
+        variables.parents.all(p,
+          (has(p.group) ? p.group : 'gateway.networking.k8s.io') == 'gateway.networking.k8s.io' &&
+          (has(p.kind) ? p.kind : 'Gateway') == 'Gateway' &&
+          (has(p.namespace) ? p.namespace : object.metadata.namespace) == 'network' &&
+          p.name in variables.allowed)
+      messageExpression: >-
+        'tenant "' + variables.nsLabels['jg.tenant'] + '" may attach HTTPRoutes only
+        to Gateway network/' + variables.allowed.join(' or network/') +
+        (variables.public ? '' : ' (envoy-external needs the public grant in
+        cluster.yaml)') + '; got ' + variables.parents.map(p,
+          (has(p.namespace) ? p.namespace : object.metadata.namespace) + '/' +
+          (has(p.kind) ? p.kind : 'Gateway') + '/' + p.name).join(', ')
+      reason: Forbidden
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: tenant-httproute-parents
+  labels:
+    app.kubernetes.io/part-of: tenant-isolation
+spec:
+  policyName: tenant-httproute-parents
+  validationActions: [Deny]
+  # Tenant namespaces only: claudecode/im, echo and flux-system keep their
+  # envoy-external routes, because their namespaces are never evaluated.
+  matchResources:
+    namespaceSelector:
+      matchExpressions:
+        - key: jg.tenant
+          operator: Exists
