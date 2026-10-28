@@ -122,3 +122,30 @@ subjects:
   - kind: ServiceAccount
     name: daily-check
     namespace: monitoring
+---
+# Row 31's baseline (state.yaml): read and overwrite that one ConfigMap and no
+# other. `create` is not granted (it cannot be limited by name); Flux creates it.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: daily-check-state
+  namespace: monitoring
+rules:
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    resourceNames: ["daily-check-state"]
+    verbs: ["get", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: daily-check-state
+  namespace: monitoring
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: daily-check-state
+subjects:
+  - kind: ServiceAccount
+    name: daily-check
+    namespace: monitoring

@@ -1,0 +1,15 @@
+---
+# What daily-check remembers between runs (ferry133/jg-base#222): today only
+# row 31's last seen UniFi controller version, the baseline a change is judged
+# against. The row writes it with `kubectl patch --field-manager=daily-check`.
+#
+# `ssa: IfNotPresent`: Flux creates this once and never applies it again, so a
+# reconcile does not wipe what the row wrote. Deleting it resets the baseline;
+# the next run records the current version as the first reading (ok, not warn).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: daily-check-state
+  namespace: monitoring
+  annotations:
+    kustomize.toolkit.fluxcd.io/ssa: IfNotPresent

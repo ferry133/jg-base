@@ -2278,6 +2278,114 @@ data:
       fi
     fi
 
+    # 31. netdev-mcp sidecar (ferry133/jg-base#222; fleet-ops root
+    # `im-unifi-management` D4, D6).
+    #
+    # The sidecar exists only where im runs the im/netdev overlay (a UniFi
+    # console is recorded). It prints its readings ONCE, at start, to stderr, each
+    # line prefixed `netdev-mcp: `; stdout is only the audit stream, one JSON line
+    # per write phase. `kubectl logs` interleaves both. Strings are k8scc's, read
+    # from netdev_mcp_server.py `_startup_readings` / `_audit` at k8scc f5861a2.
+    #
+    # So everything here except the audit counts is as of the container's START,
+    # and the row says when that was. The 24 h audit window is only as long as
+    # the current container has lived: an earlier container's lines are gone, and
+    # the row says so rather than reporting zero.
+    #
+    # Controller version change: the sidecar reads it once per start, so a change
+    # can only show after a restart. The last version seen is kept in ConfigMap
+    # monitoring/daily-check-state (the row's only write; see rbac.yaml). A change
+    # is warned ONCE, on the run that first sees it, and becomes the new baseline.
+    #
+    #   fail  sidecar declared but not running; reader credential missing; the
+    #         controller version unreadable (the reader cannot reach it, D4);
+    #         any `revert-failed` audit line in the window (D6).
+    #   warn  controller version changed or not reported; baseline unreadable or
+    #         unwritable (then the change was not judged).
+    #   skip  no im; no netdev-mcp container (no console here); logs unreadable;
+    #         startup readings no longer in the log.
+    #   ok    names the version, the operator state (an absent operator is
+    #         reader-only, which is a legitimate state), whether write tools are
+    #         registered, the window's phase counts, and how many tokens went
+    #         ahead with fac_witness unmeasured.
+    ND_NAME="netdev-mcp sidecar"
+    ND_DEPLOY=$(kubectl -n claudecode get deploy im -o json 2>/dev/null) || ND_DEPLOY=""
+    if [[ -z "$ND_DEPLOY" ]]; then
+      record skip "$ND_NAME" "no im deployment — nothing measured"
+    elif ! echo "$ND_DEPLOY" | jq -e '.spec.template.spec.containers[] | select(.name == "netdev-mcp")' >/dev/null 2>&1; then
+      record skip "$ND_NAME" "im has no netdev-mcp container (no UniFi console recorded for this cluster)"
+    else
+      ND_SEL=$(echo "$ND_DEPLOY" | jq -r '.spec.selector.matchLabels | to_entries | map("\(.key)=\(.value)") | join(",")')
+      ND_PODS=$(kubectl -n claudecode get pods -l "$ND_SEL" -o json 2>/dev/null) || ND_PODS=""
+      # The newest pod whose netdev-mcp container is running.
+      ND_RUN='[.items[] | {pod: .metadata.name, c: ((.status.containerStatuses // [])[] | select(.name == "netdev-mcp" and .state.running != null))}] | sort_by(.c.state.running.startedAt) | last'
+      ND_POD=$(echo "$ND_PODS" | jq -r "($ND_RUN) // {} | .pod // empty" 2>/dev/null)
+      ND_STARTED=$(echo "$ND_PODS" | jq -r "($ND_RUN) // {} | .c.state.running.startedAt // empty" 2>/dev/null)
+      if [[ -z "$ND_PODS" ]]; then
+        record skip "$ND_NAME" "im pods could not be listed"
+      elif [[ -z "$ND_POD" ]]; then
+        record fail "$ND_NAME" "im declares a netdev-mcp container but none is running — the UniFi reader is down"
+      elif ! ND_LOG=$(kubectl -n claudecode logs "$ND_POD" -c netdev-mcp 2>&1); then
+        if grep -qi "forbidden" <<<"$ND_LOG"; then
+          record skip "$ND_NAME" "no RBAC permission to read pods/log in claudecode — not measured, which is not the same as clean"
+        else
+          record skip "$ND_NAME" "logs of ${ND_POD}/netdev-mcp unreadable: $(echo "$ND_LOG" | head -1)"
+        fi
+      elif ! grep -q '^netdev-mcp: reader credential: ' <<<"$ND_LOG"; then
+        record skip "$ND_NAME" "${ND_POD}/netdev-mcp started ${ND_STARTED}, and its startup readings are no longer in the log (rotated) — not measured"
+      else
+        nd_reading() { sed -n "s/^netdev-mcp: $1: //p" <<<"$ND_LOG" | tail -1; }
+        ND_READER=$(nd_reading "reader credential")
+        ND_VERSION=$(nd_reading "controller version")
+        ND_OPERATOR=$(nd_reading "operator credential")
+        ND_WRITES=$(nd_reading "write tools")
+        ND_NOW=$(date -u +%s)
+        # `-d @epoch` is the spelling busybox and GNU share. If it fails the
+        # cutoff is empty, every line compares >= "", and the window is the
+        # whole log: said below, never passed off as 24 h.
+        ND_CUTOFF=$(date -u -d "@$(( ND_NOW - 86400 ))" +%Y-%m-%dT%H:%M:%S+00:00 2>/dev/null) || ND_CUTOFF=""
+        ND_AUDIT=$(grep '^{' <<<"$ND_LOG" | jq -c --arg c "$ND_CUTOFF" 'select(type == "object" and (.phase | type) == "string" and (.ts | type) == "string" and .ts >= $c)' 2>/dev/null)
+        ND_PHASES=$(echo "$ND_AUDIT" | jq -rs 'group_by(.phase) | map("\(.[0].phase) \(length)") | join(", ")')
+        ND_REVERT_FAILED=$(echo "$ND_AUDIT" | jq -s '[.[] | select(.phase == "revert-failed")] | length')
+        ND_TOKENS=$(echo "$ND_AUDIT" | jq -s '[.[] | select(.phase == "token")] | length')
+        ND_UNWITNESSED=$(echo "$ND_AUDIT" | jq -s '[.[] | select(.phase == "token" and .fac_witness == "unmeasured")] | length')
+        ND_START_EPOCH=$(epoch_of "$ND_STARTED")
+        ND_WINDOW="last 24 h"
+        if [[ -z "$ND_CUTOFF" ]]; then
+          ND_WINDOW="whole current log (date could not compute the 24 h cutoff)"
+        elif [[ -n "$ND_START_EPOCH" ]] && (( ND_START_EPOCH > ND_NOW - 86400 )); then
+          ND_WINDOW="since ${ND_STARTED} only (earlier containers' lines are gone)"
+        fi
+        ND_AUDIT_TEXT="audit ${ND_WINDOW}: ${ND_PHASES:-no write phases}; fac_witness unmeasured on ${ND_UNWITNESSED}/${ND_TOKENS} token(s)"
+        ND_AT="read at sidecar start ${ND_STARTED}"
+        # Baseline: unreadable is not the same as absent, so they are read apart.
+        ND_STATE=$(kubectl -n monitoring get configmap daily-check-state -o json 2>/dev/null) || ND_STATE=""
+        ND_BASE=$(echo "$ND_STATE" | jq -r '.data["netdev-controller-version"] // empty' 2>/dev/null)
+        if [[ "$ND_READER" != "ok" ]]; then
+          record fail "$ND_NAME" "reader credential ${ND_READER} (${ND_AT}) — populate the UniFi values (fleet-ops skill unifi-im-credential) and restart im"
+        elif [[ -z "$ND_VERSION" ]]; then
+          record fail "$ND_NAME" "no controller version reading (${ND_AT}) — the reader never reached the controller"
+        elif [[ "$ND_VERSION" == unreadable* ]]; then
+          record fail "$ND_NAME" "controller version ${ND_VERSION} (${ND_AT}) — the reader cannot reach the controller"
+        elif (( ND_REVERT_FAILED > 0 )); then
+          record fail "$ND_NAME" "${ND_REVERT_FAILED} revert-failed write(s) — a LAN change was not undone; read the ticket and kubectl logs -c netdev-mcp. ${ND_AUDIT_TEXT}"
+        elif [[ "$ND_VERSION" == "not reported" ]]; then
+          record warn "$ND_NAME" "the controller answered without a version (${ND_AT}); change not judged. ${ND_AUDIT_TEXT}"
+        elif [[ -z "$ND_STATE" ]]; then
+          record warn "$ND_NAME" "controller ${ND_VERSION}, but baseline ConfigMap monitoring/daily-check-state is unreadable — version change not judged. ${ND_AUDIT_TEXT}"
+        elif [[ -n "$ND_BASE" && "$ND_BASE" == "$ND_VERSION" ]]; then
+          record ok "$ND_NAME" "controller ${ND_VERSION} (unchanged; ${ND_AT}); operator ${ND_OPERATOR:-<no reading>}; write tools ${ND_WRITES:-<no reading>}; ${ND_AUDIT_TEXT}"
+        elif ! kubectl -n monitoring patch configmap daily-check-state --type=merge --field-manager=daily-check \
+              -p "$(jq -nc --arg v "$ND_VERSION" '{data: {"netdev-controller-version": $v}}')" >/dev/null 2>&1; then
+          record warn "$ND_NAME" "controller ${ND_VERSION} (baseline ${ND_BASE:-none}), and the baseline could not be written — this change will be judged again tomorrow. ${ND_AUDIT_TEXT}"
+        elif [[ -n "$ND_BASE" ]]; then
+          record warn "$ND_NAME" "controller version changed: ${ND_BASE} → ${ND_VERSION} (${ND_AT}); now the baseline, so this warns once. ${ND_AUDIT_TEXT}"
+        else
+          record ok "$ND_NAME" "controller ${ND_VERSION} (first reading, recorded as baseline; ${ND_AT}); operator ${ND_OPERATOR:-<no reading>}; write tools ${ND_WRITES:-<no reading>}; ${ND_AUDIT_TEXT}"
+        fi
+      fi
+    fi
+
     if [[ $FAIL_COUNT -gt 0 ]]; then
       STATUS_TAG="❌ ${FAIL_COUNT} FAIL"
       [[ $WARN_COUNT -gt 0 ]] && STATUS_TAG="${STATUS_TAG}, ${WARN_COUNT} WARN"

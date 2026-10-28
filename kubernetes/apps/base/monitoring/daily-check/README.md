@@ -28,7 +28,7 @@ Per cluster:
 
 No cross-cluster checks. Each cluster is self-contained for operability.
 
-## What it checks (32 items)
+## What it checks (33 items)
 
 > **Adding a check? The table below is machine-checked.** `scripts/check-row-numbers-resolve.sh` asserts that this legend and the `# N.` section headers in `app/configmap.yaml` define exactly the same set of labels, that no label is defined twice on either side, that every `check N` / `row N` cited anywhere in the repo resolves here, and that no comment in that file *resembles* a section header without being one. The last part exists because `# 17a.` was indented two spaces deeper than the pattern expected and stayed invisible for months while the guard reported everything resolvable (ferry133/jg-base#118, #121). **The report itself never prints these numbers** — it prints the name — so a number is only ever as useful as this table.
 
@@ -66,6 +66,7 @@ No cross-cluster checks. Each cluster is self-contained for operability.
 | 28 | Tenant isolation | Structure, not impersonation (`can-i --as` answers about the caller under Omni, and `impersonate` would itself be the escalation): reads ClusterRoleBindings, RoleBindings, Namespaces labelled `jg.tenant`, and PVCs. `fail` when a ClusterRoleBinding names a tenant ServiceAccount (`flux-system/tenant-*`), a RoleBinding naming one points anywhere but ClusterRole `tenant-admin`, a tenant namespace binds `admin`/`edit`/`cluster-admin`, or a tenant namespace has no PSA `enforce` label or is `privileged` without `jg.tenant-privileged=granted`; `warn` when tenant namespaces hold PVCs (tenant data is outside the off-site backup by design); `ok` lists the tenants and **names those privileged by grant** every day without raising anything; `skip` with no tenants, or when a read was refused ("no RBAC read permission" is not clean). Fleet-ops root `standalone-app-repos` 2.3, sub-change `tenant-isolation-baseline` §4 |
 | 29 | Envoy xDS connection | Reads each Envoy Gateway proxy's own gauge `envoy_control_plane_connected_state` from its `metrics` container port (`/stats/prometheus`, pod IP), for every Running pod labelled `app.kubernetes.io/managed-by=envoy-gateway` in any namespace. `fail` when a proxy reads 0 on two reads ~10 s apart: it has lost xDS and is serving frozen config, so the next backend change breaks its routes (#193: four jg-jiahd proxies sat disconnected ~27 h until a linebot rollout broke). A 0 that recovers on the re-read is a reconnect, not an outage. `skip` naming the pod when it declares no `metrics` port, does not answer, or reports no gauge — unless another proxy already failed, because red outranks not-measured; `skip` with no proxies. ferry133/jg-base#199 |
 | 30 | Tenant route admission | Behaviour, where row 28 reads structure: in the first tenant namespace by name, a server-side **dry-run** create of an HTTPRoute for `probe.<tenant>.<domain>` (must be accepted) and one for `probe.<domain>` (must be refused by `tenant-httproute-hostnames`). `fail` when the compliant probe is refused by the policy — with `no params found` that is kube-apiserver's ConfigMap param informer stuck (#205, jg-jcc2 2026-10-21): every tenant route is refused, recovery is restarting kube-apiserver on every control-plane node, not recreating the policy — or when the outside probe is admitted (the bound is not enforced); `ok` names the tenant probed; `skip` with no tenants, no `SECRET_DOMAIN`, an RBAC refusal, or any error that is not the policy. The Job's `create` on httproutes is held to dry-runs by `tenant-admission/daily-check-dry-run-only.yaml` |
+| 31 | netdev-mcp sidecar | Only where im runs the `im/netdev` overlay (a UniFi console is recorded); `skip` elsewhere. Reads `kubectl logs -c netdev-mcp` of the newest running im pod: the sidecar's `netdev-mcp: ` startup readings (printed once, at container start — the row names when) and its stdout audit JSON lines within 24 h (or since the container started, said so). `fail` when the sidecar is declared but not running, the reader credential is missing, the controller version is unreadable (the reader cannot reach it, root D4), or any `revert-failed` audit line falls in the window (root D6); `warn` when the controller version changed since the last run (warned **once**, then it is the baseline), is not reported, or the baseline could not be read or written; `skip` when logs are unreadable or the startup readings have rotated away. `ok` names the version, the operator state (absent = reader-only, a legitimate state), whether write tools are registered, the phase counts and how many tokens went ahead with `fac_witness: unmeasured`. The baseline lives in ConfigMap `monitoring/daily-check-state` (`ssa: IfNotPresent`; the row's only write, get+patch on that one name). ⚠️ Costs `pods/log` in claudecode for the daily-check ServiceAccount (`daily-check-netdev-logs`): RBAC cannot pin the container, so it can read `app`'s and talos-mcp's logs too (ferry133/jg-base#222) |
 
 > ⚠️ **This table is behind the script.** It documents 1–15 and 21; the script
 > also carries **16** (LoadBalancer address assignment), **17** (discovered LAN
@@ -394,13 +395,16 @@ kubernetes/apps/base/monitoring/
 ├── namespace.yaml                 (monitoring namespace; prune: disabled)
 └── daily-check/
     ├── README.md                  (this file)
-    ├── ks.yaml                    (two Flux Kustomizations: daily-check, targetNamespace=monitoring;
-    │                               daily-check-cilium-exec, NO targetNamespace)
+    ├── ks.yaml                    (three Flux Kustomizations: daily-check, targetNamespace=monitoring;
+    │                               daily-check-cilium-exec and daily-check-netdev-logs, NO targetNamespace)
     ├── kube-system/               (row 27's pods/exec Role + RoleBinding — kept out of app/,
     │                               whose targetNamespace would move them to monitoring, #173)
+    ├── claudecode/                (row 31's pods/log Role + RoleBinding — out of app/ for the
+    │                               same reason; Kustomization daily-check-netdev-logs)
     └── app/
         ├── kustomization.yaml     (resource list)
-        ├── rbac.yaml              (SA + ClusterRole + ClusterRoleBinding)
+        ├── rbac.yaml              (SA + ClusterRole + ClusterRoleBinding, and two one-object Roles)
+        ├── state.yaml             (daily-check-state: row 31's baseline, created once by Flux)
         ├── secret.yaml            (daily-check-config; Flux substitutes vars)
         ├── configmap.yaml         (run-check.sh + msmtprc.template)
         └── cronjob.yaml           (the CronJob itself)
