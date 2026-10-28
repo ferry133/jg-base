@@ -549,6 +549,15 @@ jobs:
           set -euo pipefail
           export KUBEBUILDER_ASSETS=/tmp/controller-tools/envtest
           bash scripts/check-tenant-l2-policy.sh && bash scripts/check-tenant-l2-policy.sh --self-test
+      # #235: a tenant HTTPRoute attaches to envoy-internal only, envoy-external
+      # too with jg.tenant-public=granted. Same envtest binaries; the HTTPRoute
+      # CRD is the Gateway API v1.4.1 bundle, pinned by sha256 in the script.
+      # The self-test starts eleven apiservers.
+      - name: tenant HTTPRoutes stay on envoy-internal unless granted public
+        run: |
+          set -euo pipefail
+          export KUBEBUILDER_ASSETS=/tmp/controller-tools/envtest
+          bash scripts/check-tenant-route-parents-policy.sh && bash scripts/check-tenant-route-parents-policy.sh --self-test
       # #124: offsite-backup used to `apk add` its whole toolchain on every
       # schedule -- over 11 minutes of a 13m27s Job on the slow appliance,
       # against a backup body of seconds. Image layers are cached by
