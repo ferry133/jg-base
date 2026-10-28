@@ -86,9 +86,11 @@ startup() {  # reader version operator writes
   echo 'INFO:     Uvicorn running on http://127.0.0.1:8766 (Press CTRL+C to quit)'
 }
 audit() {  # seconds-ago phase [fac_witness]
-  printf '{"ts": "%s", "tool": "set_port_profile", "target": "port 3", "phase": "%s", "stated_reason": "x", "user": "", "snapshot_digest": "", "diff_digest": "", "health": [], "outbound": "", "fac_witness": "%s"}\n' "$(iso "$1")" "$2" "${3:-}"
+  printf '{"ts": "%s", "tool": "set_dhcp_reservation", "target": "users/aa:bb:cc:00:00:01", "phase": "%s", "stated_reason": "x", "user": "", "snapshot_digest": "", "diff_digest": "", "health": [], "outbound": "", "fac_witness": "%s"}\n' "$(iso "$1")" "$2" "${3:-}"
 }
-REG="registered — set_port_profile, set_wlan; set_dns_forward not shipped (root spike 1.1)"
+# The real strings, k8scc f5861a2 (WRITE_TOOLS, _write_blockers) — not invented names, which
+# read like a recorded output (k8scc-c7 on #238; the first version had two invented ones).
+REG="registered — set_dhcp_reservation, clear_dhcp_reservation, block_client, unblock_client, set_port_forward, delete_port_forward, restart_device, power_cycle_port; set_dns_forward not shipped (root spike 1.1)"
 NOTREG="not registered — operator credential absent (UNIFI_OPERATOR_FILE unset)"
 WEEK="$(isoz 604800)"
 # Computed once and shared by input and expectation: two calls can straddle a
@@ -165,6 +167,8 @@ run_case "11 revert-failed in the window" "$DEPLOY_ND" "$ONE" "$(startup ok 9.0.
 run_case "12 version changed: warn once, baseline moves" "$DEPLOY_ND" "$ONE" "$(startup ok 9.1.120 ok "$REG")" ok 9.0.114 ok warn 9.1.120 "controller version changed: 9.0.114 → 9.1.120 && warns once"
 run_case "13 first reading: ok, baseline recorded" "$DEPLOY_ND" "$ONE" "$(startup ok 9.0.114 ok "$REG")" ok "" ok ok 9.0.114 "first reading, recorded as baseline"
 run_case "14 operator absent: reader-only is ok" "$DEPLOY_ND" "$ONE" "$(startup ok 9.0.114 'absent (UNIFI_OPERATOR_FILE unset)' "$NOTREG")" ok 9.0.114 ok ok - "operator absent (UNIFI_OPERATOR_FILE unset) && write tools not registered && no write phases"
+run_case "14b operator invalid: warn, not reader-only" "$DEPLOY_ND" "$ONE" "$(startup ok 9.0.114 'invalid (login refused: 401)' "not registered — operator credential invalid (login refused: 401)")" ok 9.0.114 ok warn - "operator credential invalid (login refused: 401) — mounted but unusable"
+run_case "14c operator empty, first reading: warn, baseline still recorded" "$DEPLOY_ND" "$ONE" "$(startup ok 9.0.114 'empty (/etc/netdev-mcp/operator/operator)' "not registered — operator credential empty (/etc/netdev-mcp/operator/operator)")" ok "" ok warn 9.0.114 "operator credential empty && first reading, recorded as baseline"
 run_case "15 version not reported" "$DEPLOY_ND" "$ONE" "$(startup ok 'not reported' ok "$REG")" ok 9.0.114 ok warn - "answered without a version && change not judged"
 run_case "16 baseline unreadable" "$DEPLOY_ND" "$ONE" "$(startup ok 9.1.120 ok "$REG")" ok - ok warn - "baseline ConfigMap monitoring/daily-check-state is unreadable && not judged"
 run_case "17 baseline unwritable" "$DEPLOY_ND" "$ONE" "$(startup ok 9.1.120 ok "$REG")" ok 9.0.114 refuse warn - "could not be written && judged again tomorrow"
@@ -174,5 +178,5 @@ run_case "19 red outranks: revert-failed and a new version" "$DEPLOY_ND" "$ONE" 
 # this case too (mutation d survived the first version).
 run_case "20 newest running pod is read" "$DEPLOY_ND" "{\"items\":[$(pod im-old "$WEEK"),$(pod im-new "$ONEH")]}" "$(startup ok 9.0.114 ok "$REG")" ok 9.0.114 ok ok - "read at sidecar start $ONEH"
 
-[[ $rc -eq 0 ]] && echo "ok — row 31 gives skip/ok/warn/fail as specified across 21 cases (k8scc f5861a2 strings), the baseline moves only on a judged change, and the pods/log and baseline grants are where the row needs them"
+[[ $rc -eq 0 ]] && echo "ok — row 31 gives skip/ok/warn/fail as specified across 23 cases (k8scc f5861a2 strings), the baseline moves only on a judged change, and the pods/log and baseline grants are where the row needs them"
 exit $rc

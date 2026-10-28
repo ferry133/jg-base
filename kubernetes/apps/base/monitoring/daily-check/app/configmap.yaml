@@ -2301,7 +2301,9 @@ data:
     #         controller version unreadable (the reader cannot reach it, D4);
     #         any `revert-failed` audit line in the window (D6).
     #   warn  controller version changed or not reported; baseline unreadable or
-    #         unwritable (then the change was not judged).
+    #         unwritable (then the change was not judged); an operator credential
+    #         mounted but `empty`/`invalid` — writes were intended and are
+    #         silently absent, which must not read like reader-only.
     #   skip  no im; no netdev-mcp container (no console here); logs unreadable;
     #         startup readings no longer in the log.
     #   ok    names the version, the operator state (an absent operator is
@@ -2361,6 +2363,16 @@ data:
         # Baseline: unreadable is not the same as absent, so they are read apart.
         ND_STATE=$(kubectl -n monitoring get configmap daily-check-state -o json 2>/dev/null) || ND_STATE=""
         ND_BASE=$(echo "$ND_STATE" | jq -r '.data["netdev-controller-version"] // empty' 2>/dev/null)
+        # The two ok exits go through here: `absent` is reader-only and fine,
+        # `empty (…)` / `invalid (…)` is a credential someone mounted that does
+        # not work (k8scc-c7 on #238). The baseline still moves on that run.
+        nd_ok() {
+          if grep -qE '^(empty|invalid)' <<<"$ND_OPERATOR"; then
+            record warn "$ND_NAME" "operator credential ${ND_OPERATOR} — mounted but unusable, so the write tools are not registered; $1"
+          else
+            record ok "$ND_NAME" "$1"
+          fi
+        }
         if [[ "$ND_READER" != "ok" ]]; then
           record fail "$ND_NAME" "reader credential ${ND_READER} (${ND_AT}) — populate the UniFi values (fleet-ops skill unifi-im-credential) and restart im"
         elif [[ -z "$ND_VERSION" ]]; then
@@ -2374,14 +2386,14 @@ data:
         elif [[ -z "$ND_STATE" ]]; then
           record warn "$ND_NAME" "controller ${ND_VERSION}, but baseline ConfigMap monitoring/daily-check-state is unreadable — version change not judged. ${ND_AUDIT_TEXT}"
         elif [[ -n "$ND_BASE" && "$ND_BASE" == "$ND_VERSION" ]]; then
-          record ok "$ND_NAME" "controller ${ND_VERSION} (unchanged; ${ND_AT}); operator ${ND_OPERATOR:-<no reading>}; write tools ${ND_WRITES:-<no reading>}; ${ND_AUDIT_TEXT}"
+          nd_ok "controller ${ND_VERSION} (unchanged; ${ND_AT}); operator ${ND_OPERATOR:-<no reading>}; write tools ${ND_WRITES:-<no reading>}; ${ND_AUDIT_TEXT}"
         elif ! kubectl -n monitoring patch configmap daily-check-state --type=merge --field-manager=daily-check \
               -p "$(jq -nc --arg v "$ND_VERSION" '{data: {"netdev-controller-version": $v}}')" >/dev/null 2>&1; then
           record warn "$ND_NAME" "controller ${ND_VERSION} (baseline ${ND_BASE:-none}), and the baseline could not be written — this change will be judged again tomorrow. ${ND_AUDIT_TEXT}"
         elif [[ -n "$ND_BASE" ]]; then
           record warn "$ND_NAME" "controller version changed: ${ND_BASE} → ${ND_VERSION} (${ND_AT}); now the baseline, so this warns once. ${ND_AUDIT_TEXT}"
         else
-          record ok "$ND_NAME" "controller ${ND_VERSION} (first reading, recorded as baseline; ${ND_AT}); operator ${ND_OPERATOR:-<no reading>}; write tools ${ND_WRITES:-<no reading>}; ${ND_AUDIT_TEXT}"
+          nd_ok "controller ${ND_VERSION} (first reading, recorded as baseline; ${ND_AT}); operator ${ND_OPERATOR:-<no reading>}; write tools ${ND_WRITES:-<no reading>}; ${ND_AUDIT_TEXT}"
         fi
       fi
     fi
