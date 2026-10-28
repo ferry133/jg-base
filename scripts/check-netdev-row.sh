@@ -105,7 +105,11 @@ run_case() {
   out="$(W="$WORK/c" LOGMODE="$logmode" STATE="$state" PATCH="$patch" GNUDATE="$GNUDATE" bash -c '
     set -uo pipefail
     record() { echo "$1|$2|${3:-}"; }
-    date() { "$GNUDATE" "$@"; }
+    # `command`: with GNUDATE=date (Linux) a plain call would be this function
+    # calling itself. That recursion failed every cutoff in CI while macOS
+    # (gdate) was green; the row then said "whole current log" and cases 0 and
+    # 18 went red, which is how it was found.
+    date() { command "$GNUDATE" "$@"; }
     '"$EPOCH_OF"'
     kubectl() {
       case "$*" in
