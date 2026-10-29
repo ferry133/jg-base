@@ -1,0 +1,37 @@
+---
+# Row 31 (ferry133/jg-base#222): read the netdev-mcp sidecar's log, the only
+# place its startup readings and its audit stream exist. RBAC cannot pin the
+# container, so this Role lets the daily-check ServiceAccount read the log of
+# ANY container in claudecode — im's `app` (the ttyd terminal) and talos-mcp
+# included. Kept in a Role in claudecode rather than on the ClusterRole so it
+# reaches no other namespace. The only caller is row 31, which runs exactly
+# `kubectl -n claudecode logs <im pod> -c netdev-mcp` and puts only the parsed
+# readings in the report.
+#
+# Its own directory and Flux Kustomization (`daily-check-netdev-logs` in
+# ../ks.yaml), NOT ../app, for the same reason as ../kube-system: ../app sets
+# `targetNamespace: monitoring` (#173).
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: daily-check-netdev-logs
+  namespace: claudecode
+rules:
+  # Getting the pod itself is already on the ClusterRole.
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: daily-check-netdev-logs
+  namespace: claudecode
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: daily-check-netdev-logs
+subjects:
+  - kind: ServiceAccount
+    name: daily-check
+    namespace: monitoring

@@ -508,6 +508,11 @@ jobs:
       # namespace list and the dry-run create (it checks the object it is sent).
       - name: daily-check tenant route admission row
         run: bash scripts/check-tenant-route-admission-row.sh
+      # #222: row 31 reads the netdev-mcp sidecar's startup readings and audit
+      # stream, k8scc's own strings. Every verdict, the 24 h window both ways,
+      # and that the baseline moves only on a judged change.
+      - name: daily-check row 31 (netdev-mcp) verdicts
+        run: bash scripts/check-netdev-row.sh
       # #190: ClusterRole tenant-admin is the only thing a tenant SA is bound
       # to. Its deny list -- Flux/cilium/storage/cluster-scoped kinds,
       # escalate/bind/impersonate, any `*`, writable quota -- and a self-test

@@ -4,6 +4,7 @@ kind: Kustomization
 resources:
   # namespace.yaml moved up to base/monitoring/ (base convention)
   - ./rbac.yaml
+  - ./state.yaml
   - ./secret.yaml
   - ./configmap.yaml
   - ./cronjob.yaml
