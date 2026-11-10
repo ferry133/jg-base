@@ -176,6 +176,13 @@ jobs:
       - name: daily-check off-site destination row
         run: bash scripts/check-offsite-destination-row.sh
 
+      # #239: app state on an NFS class was invisible until the NAS failed.
+      # The positive control (one sc-nas PVC outside the allowlist reports 1)
+      # is the case that has to keep failing. The allowlist's count is pinned:
+      # an entry added without moving NFS_ALLOW_PINNED fails this step.
+      - name: daily-check app state on NFS row
+        run: bash scripts/check-nfs-app-state-row.sh
+
       # #66: `latest` froze on spegel and three green signals hid a months-old
       # image. Check 23 compares the running digest against the spec pin; the
       # case that has to keep warning is running≠pinned — the pin present and
