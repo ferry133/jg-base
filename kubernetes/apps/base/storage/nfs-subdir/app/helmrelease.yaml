@@ -18,7 +18,14 @@ spec:
   values:
     storageClass:
       name: sc-nas
-      defaultClass: true
+      # Not the default once the cluster is re-rendered (ferry133 2026-11-01,
+      # jgct#257): app state belongs on the block tier, so a PVC that names
+      # no class goes to local-path, and sc-nas is used only where it is
+      # named. The fallback is `true` so this merge changes nothing: a
+      # cluster-secrets rendered before jgct#257 has no NAS_IS_DEFAULT and
+      # keeps sc-nas as its one default. The re-render writes
+      # NAS_IS_DEFAULT=false and LOCAL_PATH_IS_DEFAULT=true in the same commit.
+      defaultClass: ${NAS_IS_DEFAULT:=true}
       provisionerName: "k8s-sigs.io/first-nfs-subdir-external-provisioner"
       pathPattern: "${CLUSTER_NAME}-$${.PVC.namespace}-$${.PVC.name}"
     nfs:
