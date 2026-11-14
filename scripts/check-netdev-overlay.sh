@@ -28,7 +28,7 @@
 #      They sit in different containers; disagreeing, the app registers a dead
 #      server or the probes kill a healthy one.
 #   5. every file env points inside the mount of its own Secret on netdev-mcp
-#      (CA and reader key -> unifi-reader, operator -> unifi-operator, ticket
+#      (CA and reader login -> unifi-reader, operator -> unifi-operator, ticket
 #      token -> im-fac-ticket), each readOnly and not subPath (rotation); and
 #      NETDEV_SNAPSHOT_DIR IS the writable netdev-snapshots mount. Paths and
 #      mounts sit far apart; diverging, the server reads "absent" (== reader,
@@ -128,7 +128,7 @@ check() {
     yq -r "$V | .persistence.$1.advancedMounts.im.netdev-mcp[0].$2 // \"\"" "$work/nd.yaml"
   }
   local pair envname vol mpath f
-  for pair in UNIFI_CA_FILE:unifi-reader UNIFI_READER_KEY_FILE:unifi-reader \
+  for pair in UNIFI_CA_FILE:unifi-reader UNIFI_READER_FILE:unifi-reader \
               UNIFI_OPERATOR_FILE:unifi-operator IM_FAC_TICKET_TOKEN_FILE:im-fac-ticket; do
     envname="${pair%%:*}"; vol="${pair#*:}"
     mpath="$(mount_of "$vol" path)"
@@ -176,7 +176,7 @@ check() {
   local insecure
   insecure="$(yq -r "$V | .controllers.im | ((.containers // {}) + (.initContainers // {})) | to_entries[] | select(.value.env.NETDEV_ALLOW_INSECURE_HTTP != null) | .key" "$work/nd.yaml" | tr '\n' ' ')"
   [[ -z "$insecure" ]] \
-    || fail "NETDEV_ALLOW_INSECURE_HTTP is set on: ${insecure}— a test-only flag that lets the reader key cross the LAN in clear"
+    || fail "NETDEV_ALLOW_INSECURE_HTTP is set on: ${insecure}— a test-only flag that lets the reader's login cross the LAN in clear"
   [[ "$(yq -r "$V | $N.env.IM_FAC_TICKET_API // \"\"" "$work/nd.yaml")" == "" ]] \
     || fail "netdev-mcp sets IM_FAC_TICKET_API — the contract says leave it unset: the override exists for the controls' fake GitHub, and tickets would go wherever it points"
   [[ "$(yq -r "$V | $N.env.CLAUDE_USER_ID // \"\"" "$work/nd.yaml")" == "" ]] \
@@ -259,15 +259,15 @@ self_test() {
   expect "4b. readiness probe on another port" 1 "$P" "$PC.netdev-mcp.probes.readiness.spec.exec.command[2] = \"exec 3<>/dev/tcp/127.0.0.1/8767\""
   expect "4c. NETDEV_MCP_PORT disagrees" 1 "$P" "$PC.netdev-mcp.env.NETDEV_MCP_PORT = \"8767\""
   expect "5. CA path outside the mount" 1 "$P" "$PC.netdev-mcp.env.UNIFI_CA_FILE = \"/etc/netdev-mcp/ca.crt\""
-  expect "5b. mount via subPath" 1 "$P" '.spec.values.persistence.unifi-reader.advancedMounts.im.netdev-mcp[0].subPath = "reader-key"'
+  expect "5b. mount via subPath" 1 "$P" '.spec.values.persistence.unifi-reader.advancedMounts.im.netdev-mcp[0].subPath = "reader"'
   expect "5c. mount not readOnly" 1 "$P" '.spec.values.persistence.unifi-reader.advancedMounts.im.netdev-mcp[0].readOnly = false'
   expect "6. app container mounts the reader too" 1 "$P" '.spec.values.persistence.unifi-reader.advancedMounts.im.app = [{"path": "/etc/netdev-mcp/reader", "readOnly": true}]'
   expect "6b. volume not optional" 1 "$P" '.spec.values.persistence.unifi-reader.volumeSpec.secret.optional = false'
   # 6c is caught by assertion 1 as well (it changes the app container); 6d is
   # the case only assertion 6 can see -- the sidecar itself taking the key
   # through env, where it shows in the process environment.
-  expect "6c. app env-reads the Secret" 1 "$P" "$PC.app.env.UNIFI_KEY = {\"valueFrom\": {\"secretKeyRef\": {\"name\": \"unifi-reader\", \"key\": \"reader-key\"}}}"
-  expect "6d. netdev-mcp env-reads the Secret" 1 "$P" "$PC.netdev-mcp.env.UNIFI_KEY = {\"valueFrom\": {\"secretKeyRef\": {\"name\": \"unifi-reader\", \"key\": \"reader-key\"}}}"
+  expect "6c. app env-reads the Secret" 1 "$P" "$PC.app.env.UNIFI_KEY = {\"valueFrom\": {\"secretKeyRef\": {\"name\": \"unifi-reader\", \"key\": \"reader\"}}}"
+  expect "6d. netdev-mcp env-reads the Secret" 1 "$P" "$PC.netdev-mcp.env.UNIFI_KEY = {\"valueFrom\": {\"secretKeyRef\": {\"name\": \"unifi-reader\", \"key\": \"reader\"}}}"
   expect "7. insecure-http flag set" 1 "$P" "$PC.netdev-mcp.env.NETDEV_ALLOW_INSECURE_HTTP = \"1\""
   expect "8. unparseable dollar-brace in a value" 1 "$P" "$PC.netdev-mcp.env.UNIFI_SITE = \"\${...}\""
   local A=im/enabled/state-archive.yaml PP='.spec.values.persistence'
