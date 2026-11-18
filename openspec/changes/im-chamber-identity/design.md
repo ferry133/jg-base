@@ -102,6 +102,16 @@ chamber-verify-status ts=<epoch> signers=<n> revoked=<n> sshkeygen=ok|missing
 
 打開＝某座叢集的 `claude-code-im` Kustomization 多一行 `components`。那一行由 user repo 的 patch 帶，而 patch 由 `jg-cluster-template` 渲染——所以是一個 `cluster.yaml` 欄位，屬該 repo 的 issue，**合併前要 ferry133 點頭**（root tasks 7.4）。拋棄式叢集的第一次走通用手寫的 patch，不等模板。
 
+### D7 模式由一個帶預設的替換變數決定：`CHAMBER_MODE`（提案；回答了 Open Question 3 的一半）
+
+`app` 與橋接 container 的 `CHAMBER_MODE` 都寫成 `${CHAMBER_MODE:=observe}`。
+
+- 不給這個鍵的叢集＝觀察模式（k8scc 那一側的預設也是 `observe`，兩邊一致）。所以把 component 接上不會讓 im 開始上線或開始被宣告訊息——那是第二個、分開的決定。
+- 切到送達模式＝那座叢集的 `cluster-secrets` 多一個鍵 `CHAMBER_MODE=deliver`，由 `jg-cluster-template` 渲染（tasks 5.1 的欄位）。生產的兩座要 ferry133 點頭（root tasks 9.6）。
+- 它登記在 `scripts/substitution-vocabulary.txt`。那份檔的規矩是「登記＝承諾某座叢集會帶這個鍵」；這裡的承諾是「**可以**帶」，不帶時有預設。這是那份表上第一個純粹可選的鍵之外的又一個（`HA_MCP_URL`、`IM_APPS_REPO` 是同一種），不是新形狀。
+- **沒有放進來的**：`SESSION_KEEP`。它改變的不只是 chamber（session 常駐之後，舊的 inbox 通道也會在沒人看著時被處理——k8scc design 寫明），所以不跟著 component 走，留給 Open Question 3 的另一半。
+- 橋接 container 多一個 `CHAMBER_SOCKET`（它聽的路徑）。**這個變數名是起草者取的，k8scc 的環境變數表還沒有它**——路徑兩邊對過，名字沒有；k8scc 定了別的名字就改這裡，守衛檢查的是「橋接聽的路徑＝`app` 連的路徑」。
+
 ## Risks / Trade-offs
 
 - **[多一個 container 等於多一個讓 pod NotReady 的東西]** 橋接 container 不設 readiness probe（提案）：它的健康由 daily-check 那一列說，不由 Service 的流量說。代價是它掛了 pod 仍然 Ready——那正是要的。

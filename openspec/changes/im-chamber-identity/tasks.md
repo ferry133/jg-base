@@ -6,11 +6,12 @@
 
 ## 1. component 與守衛（不接上任何叢集）
 
-- [ ] 1.1 `kubernetes/apps/base/claudecode/claude-code/im/chamber/`：`kind: Component`——patch（`chamber-bridge` container、`app` 的 `CHAMBER_URL`／`CHAMBER_ACCOUNT`／`CHAMBER_SIGNERS_DIR`、三個 volume）、replacement（橋接的 tag 取自 `app`）、公鑰清單的 `configMapGenerator`（兩個空檔，`disableNameSuffixHash`）
-- [ ] 1.2 `scripts/check-chamber-component.sh`：(a) `kubernetes/` 下除了 component 自己的目錄，沒有任何 YAML 引用 `im/chamber`（`im/enabled`、`im/netdev`、`im-ks.yaml`、任何 `ks.yaml`）——對照：在 `im-ks.yaml` 加一行引用 → 紅。（初稿寫「與 `main` 逐位元組相同」，合併後是自己比自己，永遠綠；`jg-base-56 [c30591]` 指出）；(b) `enabled`、`netdev` 各自加上 component 後，扣掉新增的部分等於原渲染——對照：patch 多改 `app` 一個既有欄位 → 紅；(c) 橋接的 tag 等於 `app` 的 tag
-- [ ] 1.3 同一支守衛（不另開一支）：Secret `im-chamber` 進得了 container 的**每一條路**都只通到 `chamber-bridge`——`persistence.*.advancedMounts`、`persistence.*.globalMounts`（會掛進每一個 container，這幾個 volume 一律不准用）、projected volume、`env.*.valueFrom.secretKeyRef`、`envFrom`，`initContainers` 也算；兩處 `optional` 都在；socket 的 `emptyDir` 恰好兩個 container 掛、同一個路徑、`app` 的位址在裡面；`chamber-bridge` 沒有 port、沒有 probe；公鑰清單只進 `app`、唯讀、沒有 `subPath`、ConfigMap 恰好兩個檔。變異每條斷言至少一個，含「整行刪掉 `optional: true`」；第 0 格不變異、期望綠；每個變異先確認真的套用了，而且要因為**說得出的那個理由**變紅
-- [ ] 1.4 守衛接進 `.github/workflows/flux-local.yaml`（它是這個 component 唯一的 CI 覆蓋）；`check-substitution-vocabulary.sh` 仍綠——新增的替換變數只有 `CHAMBER_MODE`（帶預設 `observe`），要登記進 `scripts/substitution-vocabulary.txt`，那是一個要被看過的決定；`CLUSTER_NAME` 已在表上
-- [ ] 1.5 `claude-code/README.md`：一節說明這個 component、怎麼打開、打開要誰點頭
+- [x] 1.1 `kubernetes/apps/base/claudecode/claude-code/im/chamber/`：`kind: Component`——patch（`chamber-bridge` container、`app` 的 `CHAMBER_URL`／`CHAMBER_ACCOUNT`／`CHAMBER_SIGNERS_DIR`、三個 volume）、replacement（橋接的 tag 取自 `app`）、公鑰清單的 `configMapGenerator`（兩個空檔，`disableNameSuffixHash`）
+- [x] 1.2 `scripts/check-chamber-component.sh`：(a) `kubernetes/` 下除了 component 自己的目錄，沒有任何 YAML 引用 `im/chamber`（`im/enabled`、`im/netdev`、`im-ks.yaml`、任何 `ks.yaml`）——對照：在 `im-ks.yaml` 加一行引用 → 紅。（初稿寫「與 `main` 逐位元組相同」，合併後是自己比自己，永遠綠；`jg-base-56 [c30591]` 指出）；(b) `enabled`、`netdev` 各自加上 component 後，扣掉新增的部分等於原渲染——對照：patch 多改 `app` 一個既有欄位 → 紅；(c) 橋接的 tag 等於 `app` 的 tag
+- [x] 1.3 同一支守衛（不另開一支）：Secret `im-chamber` 進得了 container 的**每一條路**都只通到 `chamber-bridge`——`persistence.*.advancedMounts`、`persistence.*.globalMounts`（會掛進每一個 container，這幾個 volume 一律不准用）、projected volume、`env.*.valueFrom.secretKeyRef`、`envFrom`，`initContainers` 也算；兩處 `optional` 都在；socket 的 `emptyDir` 恰好兩個 container 掛、同一個路徑、`app` 的位址在裡面；`chamber-bridge` 沒有 port、沒有 probe；公鑰清單只進 `app`、唯讀、沒有 `subPath`、ConfigMap 恰好兩個檔。變異每條斷言至少一個，含「整行刪掉 `optional: true`」；第 0 格不變異、期望綠；每個變異先確認真的套用了，而且要因為**說得出的那個理由**變紅
+- [x] 1.4 守衛接進 `.github/workflows/flux-local.yaml`（它是這個 component 唯一的 CI 覆蓋）；`check-substitution-vocabulary.sh` 仍綠——新增的替換變數只有 `CHAMBER_MODE`（帶預設 `observe`），要登記進 `scripts/substitution-vocabulary.txt`，那是一個要被看過的決定；`CLUSTER_NAME` 已在表上
+- [x] 1.5 `claude-code/README.md`：一節說明這個 component、怎麼打開、打開要誰點頭
+  - **2026-11-19，`fleet-ops-98 [047e9c]`（第 1 組整組，一張 PR）**：量到的——守衛 rc=0；`--self-test` 32 格（第 0 格不變異＝綠；30 個變異各自因為說得出的理由變紅，每個變異印出改前改後的 cksum；讀取器瞎掉＝2）；`check-substitution-vocabulary.sh`、`check-netdev-overlay.sh`、`check-envsubst-parses.sh` 仍 rc=0；`im/disabled`＋component 的 build rc=1（design D1 的限制，預期內）。**沒量到的**——任何 pod 上的東西；叢集裡的 controller 讀 `spec.components`；映像裡還沒有 `chamber-bridge`，所以這個 container 從來沒起過。寫守衛時它先對正確的 component 報了四個假紅（多文件串流裡的陣列運算式每個文件各答一次）、又漏抓一格（加 readiness probe 沒被擋）；兩者都是自測抓到的，修在同一張 PR
 
 ## 2. 在拋棄式叢集接上一次（等 k8scc 的映像裡有 `chamber-bridge`）
 
