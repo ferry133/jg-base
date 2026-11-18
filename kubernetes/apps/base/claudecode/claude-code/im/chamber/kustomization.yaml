@@ -22,7 +22,7 @@
 #   - a memory emptyDir for a Unix socket, mounted by app and the bridge ONLY
 #   - Secret im-chamber (optional), mounted into the bridge ONLY
 #   - ConfigMap im-chamber-signers, mounted read-only into app as a directory
-#   - five env values on app
+#   - four env values on app
 #
 # The image is NOT written here; the replacement copies app's pin, for the same
 # reason as im/netdev: the pin-bump PRs rewrite only im/enabled/helmrelease.yaml.

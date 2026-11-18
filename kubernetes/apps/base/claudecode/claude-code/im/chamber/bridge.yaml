@@ -26,15 +26,13 @@ spec:
             command: ["chamber-bridge"]
             env:
               # The server address is not in this (public) repo: it rides in
-              # the same Secret as the credential, and only this container
-              # reads it. optional: an unconfigured bridge idles and says what
-              # is missing -- it must never take the terminal down with it.
-              CHAMBER_URL:
-                valueFrom:
-                  secretKeyRef:
-                    name: im-chamber
-                    key: url
-                    optional: true
+              # the same Secret as the credential, as a second FILE in the same
+              # optional volume. Not as env: the chart's schema (app-template
+              # 4.6.2) refuses `secretKeyRef.optional`, and without `optional`
+              # a pod whose Secret has not arrived cannot start its container
+              # (jg-base#251 review, F1). An unconfigured bridge idles and says
+              # what is missing -- it must never take the terminal down.
+              CHAMBER_URL_FILE: /etc/chamber/url
               CHAMBER_TOKEN_FILE: /etc/chamber/token
               CHAMBER_SOCKET: /run/chamber/bridge.sock
               CHAMBER_ACCOUNT: "im-${CLUSTER_NAME}"
@@ -70,6 +68,8 @@ spec:
             items:
               - key: token
                 path: token
+              - key: url
+                path: url
         advancedMounts:
           im:
             chamber-bridge:

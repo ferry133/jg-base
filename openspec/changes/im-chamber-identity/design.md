@@ -42,7 +42,9 @@ root：`fleet-ops/openspec/changes/agent-delegation-envelope`（tasks 第 7 組�
 ### D2 登入憑證：Secret 由 user repo 帶來，這裡只引用名字，而且 `optional`（提案）
 
 - 值是每座叢集一把、由 ferry133 鑄造（root 2.11）。這個 repo 是 public，不持有它，也不持有伺服器位址——位址放在同一個 Secret 的另一個鍵，只進橋接 container 的 env。
-- 名字 `im-chamber`，鍵 `token`（掛成 `/etc/chamber/token`，唯讀，mode 0400）與 `url`（`secretKeyRef`，`optional: true`）。與 `ha-im-token`、`im-apps-write-key` 同一條路：sops → Secret → pod 裡的一個檔，不經 `cluster-secrets`。
+- 名字 `im-chamber`，鍵 `token` 與 `url`，**兩個都是同一個 optional volume 裡的檔**（`/etc/chamber/token`、`/etc/chamber/url`，唯讀，mode 0400）；橋接程式以 `CHAMBER_TOKEN_FILE`、`CHAMBER_URL_FILE` 讀。**沒有任何 container 經 env 讀這個 Secret**。
+  - 初稿讓 `url` 走 env 的 `secretKeyRef`＋`optional: true`。**量到它裝不上去**（`jg-base-56 [c30591]`，2026-11-19，本機 `helm template` v3.17.2 對 repo 釘的 chart app-template 4.6.2）：schema 回 `Additional property optional is not allowed`，`enabled`／`netdev` 加 component 都 rc=1；對照「不加 component」與「只刪那一行」都 rc=0。拿掉 `optional` 則 Secret 不在時 container 起不來。chart 收的是 volume 那邊的 `optional`，所以兩個鍵都走 volume。k8scc 同日加了 `CHAMBER_URL_FILE`（`ferry133/k8scc#76`）。**沒量到**：叢集裡 helm-controller 的行為——量的是本機 `helm template`。
+  - **Secret 晚到**：optional 的 Secret volume 在 Secret 出現後由 kubelet 補上檔案，但橋接程式（k8scc#76 當時的版本）位址與憑證只在啟動時讀一次——Secret 晚到它不會自己發現，而這個 container 沒有 probe 會重啟它。已請 k8scc 在「未設定」的閒置狀態定期重讀；在那之前，Secret 到位後要重啟 pod。與 `ha-im-token`、`im-apps-write-key` 同一條路：sops → Secret → pod 裡的一個檔，不經 `cluster-secrets`。
 - **`optional: true`**。不 optional 的話，component 接上而 Secret 還沒到的那一段時間，pod 會卡在 ContainerCreating——im 的終端機跟著沒了。k8scc 那一側的對應行為（2026-11-19 與 `k8scc-0f [7c5b85]` 對過）：橋接 container 在未設定或設定不全時**留著不退出**，印一行原因後閒置；0 位元組與不存在同一件事。chamber 的毛病不該把終端機帶下來。
 - 帳號名不需要新欄位：`im-${CLUSTER_NAME}`，`CLUSTER_NAME` 已在 `cluster-secrets`（`scripts/substitution-vocabulary.txt:29`）。
 
@@ -54,6 +56,7 @@ im 的 pod 是 `hostNetwork: true`（`im/enabled/helmrelease.yaml` 的 `defaultP
 - `chamber-bridge` 不宣告任何 port；`allowPrivilegeEscalation: false`、drop ALL，與 `talos-mcp` 相同。
 - **這一層擋得住什麼，擋不住什麼**（2026-11-19 `jg-base-56 [c30591]` 驗收後改寫；初稿寫「擋的是憑證被帶走」，不成立）：
   - 擋得住：憑證不躺在 `app` 的檔案系統與 env 裡——`env`、`ps`、狀態封存、transcript 不會意外帶出它。守衛檢查的是這一件，而且只檢查 pod spec 的文字。
+  - **橋接 container 看得到什麼**（`jg-base-56 [c30591]` 讀渲染出的 pod）：除了這個 component 給它的三樣，它還掛著 `claude-config`（`/home/claude/.claude`、keyrings）與 `claude-workspace`——底下的 HelmRelease 用 `globalMounts`，新 container 自動繼承。與 `talos-mcp` 相同，不是這個 change 帶進來的；意思是橋接程式讀得到 agent 的設定與工作區，反過來 `app` 讀不到 `/etc/chamber`。
   - 擋不住 `app` 內的冒用：能打開 socket 的行程都能以 im 的名義收發（k8scc design D-b 明寫）。
   - **擋不住 `app` 去讀憑證**：整個 pod 用 ServiceAccount `claude-code`（`im/enabled/helmrelease.yaml` 的 `serviceAccount`），`app/rbac.yaml` 把它綁到 `cluster-admin`。`app` 是 root shell、帶著那個 SA 的 token，不需要掛載，問 apiserver 就讀得到 `im-chamber` 的每一個鍵。（讀的是來源檔；沒有在叢集上從 `app` 實讀一次——tasks 2.5 加一格。）`talos-mcp` 既有的隔離是同一個形狀，不是這個 change 帶進來的。
   - 所以保留類的依據不能是這把憑證，也不是它——root 的設計本來就是「伺服器記的寄件人對保留類沒有效力，只認人的簽章」。這把憑證被 `app` 拿到，後果是以 im 的名義說一般類的話，在 `app` 本來就能經 socket 做到的範圍內；多出來的是**可以帶到 pod 外面去用**。
@@ -116,7 +119,7 @@ chamber-verify-status ts=<epoch> signers=<n> revoked=<n> sshkeygen=ok|missing
 
 - **[多一個 container 等於多一個讓 pod NotReady 的東西]** 橋接 container 不設 readiness probe（提案）：它的健康由 daily-check 那一列說，不由 Service 的流量說。代價是它掛了 pod 仍然 Ready——那正是要的。
 - **[component 接上而映像裡還沒有橋接程式]** container 起不來，pod NotReady，終端機斷。所以 tasks 把「接上」排在 k8scc 的映像之後，而且只在拋棄式叢集。守衛擋不到這一格，因為它是兩個 repo 的版本關係。
-- **[守衛檢查的是渲染出來的 values，不是 pod]** 與 `check-netdev-overlay.sh` 同一個取捨：它用 `flux build`，不跑 helm。渲染成 pod 之後的那一半（`app` 的檔案與 env 裡真的沒有憑證；以及 `app` 經 apiserver 讀得到它）在拋棄式叢集量一次（tasks 2.5）。
+- **[守衛檢查的是渲染出來的 values，不是 pod]** 它用 `flux build` 讀 values，另外對釘住的 chart 跑一次 `helm template`（斷言 10）——第一版沒有這一格，結果把一個 chart 不收的欄位釘成了必須，是驗收的人量出來的。渲染成 pod 之後的那一半（`app` 的檔案與 env 裡真的沒有憑證；以及 `app` 經 apiserver 讀得到它）在拋棄式叢集量一次（tasks 2.5）。
 - **[flux-local 建不到它]** 沒有任何路徑引用 component，所以整個 CI 對它的覆蓋只有那一支守衛。
 - **[公鑰清單是公開的]** 人的公鑰與代號進 public repo。它們不是秘密；但清單的每一次變動都會公開可見。
 

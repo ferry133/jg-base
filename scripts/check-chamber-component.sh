@@ -16,11 +16,16 @@
 #      shell an agent types into; the split into a bridge that holds the
 #      credential and a client that does not is only real if the pod spec
 #      keeps it so.
-#        5. Secret im-chamber is referenced by the bridge container only --
-#           no other container (init containers included) mounts it or reads
-#           a key of it through env;
-#        6. both references are `optional`: a pod whose Secret has not arrived
-#           must still start, or chamber takes the terminal down with it;
+#        5. Secret im-chamber reaches the bridge container only, and only as
+#           ONE volume: no other container (init containers included) mounts
+#           it, and NO container -- the bridge included -- reads a key of it
+#           through env or envFrom;
+#        6. that volume is `optional`: a pod whose Secret has not arrived must
+#           still start, or chamber takes the terminal down with it. (This is
+#           why there is no env route at all: the chart refuses
+#           `secretKeyRef.optional`, and a non-optional one stops the
+#           container from starting.) It carries exactly the keys token and
+#           url, and the bridge's two *_FILE paths are inside its mount;
 #        7. the socket volume is an emptyDir mounted by exactly app and the
 #           bridge, at one path, and app's CHAMBER_URL is a path inside it;
 #        8. the bridge declares no port and no probe (the pod is hostNetwork:
@@ -33,7 +38,12 @@
 #        9. the signer list is mounted into app only, read-only, WITHOUT
 #           subPath (a subPath mount never follows a ConfigMap update, and a
 #           revocation only counts where the copy was refreshed), and the
-#           ConfigMap carries exactly the two files.
+#           ConfigMap carries exactly the two files;
+#       10. the values are ones the pinned chart ACCEPTS: `helm template` of
+#           the chart named in app/ocirepository.yaml, with the component on.
+#           Everything above reads the HelmRelease's values; this is the one
+#           reading of what Helm does with them. The first version of this
+#           guard did not have it, and pinned a field the chart refuses.
 #
 # What this does NOT measure: anything on a running pod (that the credential
 # is really absent from app's filesystem, that no TCP socket is opened) -- that
@@ -49,6 +59,21 @@ APP_DIR="${APP_DIR:-$ROOT/kubernetes/apps/base/claudecode/claude-code}"
 KUBE_DIR="${KUBE_DIR:-$ROOT/kubernetes}"
 command -v yq   >/dev/null 2>&1 || { echo "cannot measure: yq is missing (CI installs it)"; exit 2; }
 command -v flux >/dev/null 2>&1 || { echo "cannot measure: the flux CLI is missing (CI installs it)"; exit 2; }
+command -v helm >/dev/null 2>&1 || { echo "cannot measure: helm is missing — assertion 10 (the chart accepts these values) would not be a reading"; exit 2; }
+
+# The chart, pulled once per invocation (the self-test runs check ~40 times).
+chart_tgz() {
+  if [[ -z "${CHAMBER_CHART_TGZ:-}" || ! -s "${CHAMBER_CHART_TGZ:-}" ]]; then
+    local d url tag
+    url="$(yq -r 'select(.kind == "OCIRepository") | .spec.url' "$APP_DIR/app/ocirepository.yaml")"
+    tag="$(yq -r 'select(.kind == "OCIRepository") | .spec.ref.tag' "$APP_DIR/app/ocirepository.yaml")"
+    [[ "$url" == oci://* && -n "$tag" && "$tag" != "null" ]] || return 1
+    d="$(mktemp -d "${TMPDIR:-/tmp}/chamber-chart.XXXXXX")" || return 1
+    helm pull "$url" --version "$tag" -d "$d" >/dev/null 2>&1 || return 1
+    CHAMBER_CHART_TGZ="$(ls "$d"/*.tgz 2>/dev/null | head -1)"; export CHAMBER_CHART_TGZ
+  fi
+  [[ -s "${CHAMBER_CHART_TGZ:-}" ]]
+}
 
 HR='select(.kind == "HelmRelease" and .metadata.name == "im")'
 V="$HR | .spec.values"
@@ -73,13 +98,30 @@ check() {
   [[ -f "$dir/im/chamber/kustomization.yaml" ]] \
     || { echo "cannot measure: $dir/im/chamber/kustomization.yaml is not there"; return 2; }
 
-  # 1. nothing turns it on. The subject is every YAML under kubernetes/ except
-  #    the component's own directory. Comment lines are dropped first: the
-  #    component's header shows the very line being looked for.
-  local refs
-  refs="$(grep -rnE --include='*.yaml' '^[[:space:]]*(-[[:space:]]+)?[^#]*im/chamber|^[[:space:]]*-[[:space:]]+\.\./chamber[[:space:]]*$' "$kube" 2>/dev/null \
-            | grep -v "/im/chamber/" || true)"
-  [[ -z "$refs" ]] || { fail "something references the chamber component — a merge would change an im pod:"; echo "$refs" | head -5 | sed 's/^/  /'; }
+  # 1. nothing turns it on. Read as STRUCTURE, not as text: `- ../chamber`,
+  #    `components: [../chamber]`, `- "../chamber"` and `- ../chamber/` are one
+  #    reference written four ways, and a text match saw only the first
+  #    (jg-base#251 review, F2 -- with the flow form in im/disabled/
+  #    kustomization.yaml the guard was green while im/disabled no longer
+  #    built). The subject is every YAML under kubernetes/ outside the
+  #    component's own directory; a file that does not contain the word cannot
+  #    reference it, so only those are parsed.
+  local refs="" cand file ent
+  cand="$(grep -rlE --include='*.yaml' --include='*.yml' 'chamber' "$kube" 2>/dev/null | grep -v '/im/chamber/' || true)"
+  while IFS= read -r file; do
+    [[ -n "$file" ]] || continue
+    ent="$(yq -r '[.components[]?, .spec.components[]?, .resources[]?] | .[]' "$file" 2>/dev/null)" \
+      || { echo "cannot measure: $file mentions chamber and does not parse"; return 2; }
+    while IFS= read -r e; do
+      e="${e%/}"
+      case "$e" in chamber|*/chamber) refs="${refs}${file#"$kube"/}: ${e}"$'\n' ;; esac
+    done <<<"$ent"
+  done <<<"$cand"
+  [[ -z "$refs" ]] || { fail "something references the chamber component — a merge would change an im pod (or break im/disabled):"; printf '%s' "$refs" | head -5 | sed 's/^/  /'; }
+  # A reference is a finding on its own, and it changes what the renders below
+  # mean (a referenced component is no longer "off"); stop here rather than
+  # let a later "cannot measure" turn a definite failure into a 2.
+  [[ $rc -eq 0 ]] || return 1
 
   # The Kustomization as shipped, plus the one line that turns the component on.
   yq '.spec.components = ["../chamber"]' "$dir/im-ks.yaml" > "$work/ks-on.yaml" \
@@ -142,8 +184,8 @@ check() {
     local envfrom
     envfrom="$(yq -r "$V | .controllers.im | ((.containers // {}) * (.initContainers // {})) | to_entries | .[] | select([.value.envFrom[]?.secretRef.name, .value.envFrom[]?.secret] | any_c(. == \"$SECRET\")) | .key" "$f" | sort | tr '\n' ' ')"
     [[ -z "$envfrom" ]] || fail "im/$pos: containers taking Secret $SECRET whole through envFrom: [${envfrom% }] — every key, the token included, becomes an environment variable"
-    [[ "$envusers" == "$BRIDGE " ]] \
-      || fail "im/$pos: containers reading Secret $SECRET through env are [${envusers% }], not exactly [$BRIDGE]"
+    [[ -z "$envusers" ]] \
+      || fail "im/$pos: containers reading Secret $SECRET through env: [${envusers% }] — there must be none: the chart refuses an optional secretKeyRef, and a required one keeps the container from starting until the Secret exists"
     local SV="(.volumeSpec.secret.secretName == \"$SECRET\") or (.type == \"secret\" and .name == \"$SECRET\") or ([.volumeSpec.projected.sources[]?.secret.name] | any_c(. == \"$SECRET\"))"
     volusers="$(yq -r "$V | [.persistence[] | select($SV)] | .[] | (.advancedMounts.im // {}) | keys | .[]" "$f" | sort -u | tr '\n' ' ')"
     # A Secret-backed volume with globalMounts, or with no advancedMounts at
@@ -156,8 +198,6 @@ check() {
       || fail "im/$pos: containers mounting Secret $SECRET are [${volusers% }], not exactly [$BRIDGE]"
 
     # 6. optional, both ways in.
-    [[ "$(yq -r "$V | $B.env.CHAMBER_URL.valueFrom.secretKeyRef.optional" "$f")" == "true" ]] \
-      || fail "im/$pos: the bridge's CHAMBER_URL secretKeyRef is not optional — a pod whose Secret has not arrived would not start"
     [[ "$(yq -r "$V | .persistence.chamber-token.volumeSpec.secret.optional" "$f")" == "true" ]] \
       || fail "im/$pos: the chamber-token volume is not optional — a pod whose Secret has not arrived would sit in ContainerCreating, terminal included"
     local tokfile tokmount
@@ -165,6 +205,16 @@ check() {
     tokmount="$(yq -r "$V | .persistence.chamber-token.advancedMounts.im.$BRIDGE[0].path // \"\"" "$f")"
     case "$tokfile" in "$tokmount"/?*) [[ -n "$tokmount" ]] || fail "im/$pos: the bridge does not mount chamber-token" ;;
       *) fail "im/$pos: CHAMBER_TOKEN_FILE=${tokfile:-unset} is not inside the chamber-token mount ${tokmount:-<none>}" ;; esac
+    local urlfile items
+    urlfile="$(yq -r "$V | $B.env.CHAMBER_URL_FILE // \"\"" "$f")"
+    case "$urlfile" in "$tokmount"/?*) : ;; *) fail "im/$pos: CHAMBER_URL_FILE=${urlfile:-unset} is not inside the chamber-token mount ${tokmount:-<none>}" ;; esac
+    [[ "$(yq -r "$V | $B.env | has(\"CHAMBER_URL\")" "$f")" == "false" ]] \
+      || fail "im/$pos: the bridge has a CHAMBER_URL env — the server address must come from the Secret's file, not from this public repo and not from a secretKeyRef"
+    items="$(yq -r "$V | .persistence.chamber-token.volumeSpec.secret.items[] | .key + \"=\" + .path" "$f" | sort | tr '\n' ' ')"
+    [[ "$items" == "token=token url=url " ]] \
+      || fail "im/$pos: the chamber-token volume projects [${items% }], not exactly [token=token url=url]"
+    [[ "$tokfile" == "$tokmount/token" && "$urlfile" == "$tokmount/url" ]] \
+      || fail "im/$pos: the bridge's file paths (${tokfile:-unset}, ${urlfile:-unset}) are not the two projected files under ${tokmount:-<none>}"
 
     # 7. the socket.
     local sockusers sockpaths url
@@ -204,6 +254,19 @@ check() {
       || fail "im/$pos: ConfigMap im-chamber-signers carries [${keys% }], not exactly [allowed_signers revoked_signers]"
     [[ "$(yq -r "$V | .persistence.chamber-signers.name" "$f")" == "im-chamber-signers" ]] \
       || fail "im/$pos: the signer volume does not name ConfigMap im-chamber-signers (a hashed name would restart the pod on every change, and a wrong one mounts nothing)"
+
+    # 10. the pinned chart accepts these values. The control is the same
+    #     chart on the values WITHOUT the component: if that does not template,
+    #     the chart or helm is the problem and nothing here is a reading.
+    chart_tgz || { echo "cannot measure: could not pull the chart named in app/ocirepository.yaml"; return 2; }
+    yq "$HR | .spec.values" "$work/$pos.yaml" > "$work/$pos-values.yaml"
+    if ! helm template im "$CHAMBER_CHART_TGZ" -n claudecode -f "$work/$pos-values.yaml" > "$work/$pos-helm.out" 2>&1; then
+      echo "cannot measure: the chart does not template im/$pos even without the component:"; head -3 "$work/$pos-helm.out" | sed 's/^/  /'; return 2
+    fi
+    if ! helm template im "$CHAMBER_CHART_TGZ" -n claudecode -f "$f" > "$work/$pos-on-helm.out" 2>&1; then
+      fail "im/$pos: the chart refuses the values with the component on (it accepts them without):"
+      grep -vE '^(Error: |$)' "$work/$pos-on-helm.out" | head -4 | sed 's/^/  /'; grep -E '^Error' "$work/$pos-on-helm.out" | head -2 | cut -c1-300 | sed 's/^/  /'
+    fi
   done
 
   [[ $rc -eq 0 ]] && echo "ok — the chamber component is off by default, adds only itself on im/enabled and im/netdev, and keeps Secret $SECRET in $BRIDGE alone"
@@ -266,7 +329,19 @@ self_test() {
   expect "a projected volume carries the Secret into app" 1 "containers mounting Secret" "$P" "$PV.persistence.proj = {\"type\": \"custom\", \"volumeSpec\": {\"projected\": {\"sources\": [{\"secret\": {\"name\": \"im-chamber\"}}]}}, \"advancedMounts\": {\"im\": {\"app\": [{\"path\": \"/x\"}]}}}"
   expect "the token volume's optional line is deleted" 1 "ContainerCreating"        "$P" "del($PV.persistence.chamber-token.volumeSpec.secret.optional)"
   expect "the token volume is not optional"           1 "ContainerCreating"        "$P" "$PV.persistence.chamber-token.volumeSpec.secret.optional = false"
-  expect "the url env is not optional"                1 "secretKeyRef is not optional" "$P" "del($PC.chamber-bridge.env.CHAMBER_URL.valueFrom.secretKeyRef.optional)"
+  expect "the bridge reads url through an optional secretKeyRef (the first version)" 1 "through env" "$P" "$PC.chamber-bridge.env.CHAMBER_URL.valueFrom.secretKeyRef = {\"name\": \"im-chamber\", \"key\": \"url\", \"optional\": true}"
+  expect "the bridge reads url through a required secretKeyRef" 1 "through env"    "$P" "$PC.chamber-bridge.env.CHAMBER_URL.valueFrom.secretKeyRef = {\"name\": \"im-chamber\", \"key\": \"url\"}"
+  expect "the server address is written into the repo" 1 "has a CHAMBER_URL env"   "$P" "$PC.chamber-bridge.env.CHAMBER_URL = \"https://chamber.example\""
+  expect "CHAMBER_URL_FILE points outside the mount"  1 "CHAMBER_URL_FILE="       "$P" "$PC.chamber-bridge.env.CHAMBER_URL_FILE = \"/run/secrets/url\""
+  expect "the url key is not projected"               1 "volume projects ["        "$P" "del($PV.persistence.chamber-token.volumeSpec.secret.items[1])"
+  expect "the chart refuses a value (schema)"         1 "the chart refuses"        "$P" "$PC.chamber-bridge.nonsense = true"
+  expect "flow-style reference on the Flux Kustomization" 1 "references the chamber" "$KS" '.spec.components = ["../chamber"] | .spec.components style="flow"'
+  expect "reference with a trailing slash"            1 "references the chamber"   "$KS" '.spec.components = ["../chamber/"]'
+  expect "quoted reference"                           1 "references the chamber"   "$KS" '.spec.components = ["../chamber"] | .spec.components[0] style="double"'
+  expect "im/disabled references it (block)"          1 "references the chamber"   "im/disabled/kustomization.yaml" '.components = ["../chamber"]'
+  expect "im/disabled references it (flow)"           1 "references the chamber"   "im/disabled/kustomization.yaml" '.components = ["../chamber"] | .components style="flow"'
+  expect "im/disabled references it (quoted)"         1 "references the chamber"   "im/disabled/kustomization.yaml" '.components = ["../chamber"] | .components[0] style="double"'
+  expect "im/enabled lists it as a resource"          1 "references the chamber"   "im/enabled/kustomization.yaml" '.resources += ["../chamber"]'
   expect "CHAMBER_TOKEN_FILE points outside the mount" 1 "is not inside the chamber-token mount" "$P" "$PC.chamber-bridge.env.CHAMBER_TOKEN_FILE = \"/run/secrets/token\""
   expect "a third container mounts the socket"        1 "socket volume is mounted by" "$P" "$PV.persistence.chamber-socket.advancedMounts.im.talos-mcp = [{\"path\": \"/run/chamber\"}]"
   expect "the socket volume is mounted globally"      1 "every container would see" "$P" "$PV.persistence.chamber-socket.globalMounts = [{\"path\": \"/run/chamber\"}]"

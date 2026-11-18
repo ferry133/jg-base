@@ -87,7 +87,9 @@ cluster is on. Nothing in this repo references it.
   im that was meant to be switched off stays. Whatever sets `components` must
   drop it when the path is `im/disabled`.
 - **The credential** is the Secret `im-chamber` (keys `token`, `url`), brought
-  by the cluster's own repo, optional, mounted into the bridge container only.
+  by the cluster's own repo, optional, mounted as two files into the bridge
+  container only. Nothing reads it through env: the chart refuses an optional
+  `secretKeyRef`, and a required one would keep the container from starting.
   That keeps it out of `app`'s files and environment. It does **not** keep it
   from `app`: the pod's ServiceAccount is `cluster-admin` and can read any
   Secret through the API.

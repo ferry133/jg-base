@@ -429,7 +429,9 @@ jobs:
       # its additions is the render without it; the bridge is on the app
       # container's pin; Secret im-chamber reaches the bridge container alone
       # by every route a Secret can take (mount, global mount, projected,
-      # env, envFrom, init containers) and is optional; the socket volume is
+      # env, envFrom, init containers) and is optional; the pinned chart
+      # accepts the values (helm template -- the runner image carries helm);
+      # the socket volume is
       # mounted by app and the bridge only; no port, no probe; the signer
       # list is in app only, read-only, without subPath.
       # --self-test runs one mutation per assertion against a scratch copy.
