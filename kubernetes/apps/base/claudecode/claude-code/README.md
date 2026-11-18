@@ -70,3 +70,30 @@ substitution collapses newlines in multi-line values),
 `CLAUDECODE_CONFIG_STORAGE_CLASS`, `DEFAULT_STORAGE_CLASS`, plus the
 `claude-code-secret` / `talos-mcp-secret` keys in `app/`. Empty allowlist ⇒
 oauth2-proxy admits nobody: fail closed, not open.
+
+## `im/chamber` — a component, off by default (#248)
+
+`im/chamber` is not a position of the `claude-code-im` switch. It is a kustomize
+component that adds im's chamber identity (a `chamber-bridge` container, a
+socket volume, the login credential, the signer list) to whichever position a
+cluster is on. Nothing in this repo references it.
+
+- **Turning it on** is one line on the cluster's own `claude-code-im`
+  Kustomization: `spec.components: [../chamber]`. It changes an existing im
+  pod, so it needs the operator's approval; it is never done by a merge here.
+- **It cannot be combined with `im/disabled`.** The component copies the app
+  container's image pin, and `im/disabled` has no app container: the build
+  fails, the Kustomization stops reconciling and therefore stops pruning — an
+  im that was meant to be switched off stays. Whatever sets `components` must
+  drop it when the path is `im/disabled`.
+- **The credential** is the Secret `im-chamber` (keys `token`, `url`), brought
+  by the cluster's own repo, optional, mounted as two files into the bridge
+  container only. Nothing reads it through env: the chart refuses an optional
+  `secretKeyRef`, and a required one would keep the container from starting.
+  That keeps it out of `app`'s files and environment. It does **not** keep it
+  from `app`: the pod's ServiceAccount is `cluster-admin` and can read any
+  Secret through the API.
+- **`signers/`** is the list of people whose signed words count as a directive
+  on every cluster, and the keys that no longer do. A change to either file
+  needs the operator's approval before merge.
+- Guard: `scripts/check-chamber-component.sh` (and `--self-test`).

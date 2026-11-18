@@ -22,7 +22,8 @@ root 的 Why 不在這裡複述。jg-base 的份額是 pod 這一層：im 要以
 - **同一支守衛也守憑證的掛法**：Secret 進得了 container 的每一條路（掛載、全域掛載、projected、env、`envFrom`、init container）都只通到 `chamber-bridge`；socket 的 `emptyDir` 只有兩個 container 掛；`chamber-bridge` 沒有 port。它守的是 pod spec 的文字，不是「`app` 讀不到」（見 Why 第 1 點）。
 - **公鑰清單的 ConfigMap** 由這個 repo 渲染（兩個檔：`allowed_signers`、`revoked_signers`，掛成一個目錄、不用 `subPath`）。初始內容是空的——還沒有人的簽章金鑰（root tasks 4.2）。**改這兩個檔等於改「誰的話算指令」，合併前要 ferry133 點頭**，不走一般的 issue→驗收→合併。
 - **daily-check 新增一列**（四個讀數合成一列）：伺服器連得上、所屬房間與預期一致、驗章工具可用、im 在線。來源是 pod log 裡的狀態行。三種結果；狀態行太舊或讀不到＝量不到，不算綠。
-- **不動**：`im/enabled`、`im/netdev` 的任何檔；`claude-code-im` 這個 Kustomization 的預設；`cluster-secrets` 的鍵。
+- **不動**：`im/enabled`、`im/netdev` 的任何檔；`claude-code-im` 這個 Kustomization 的預設。
+- **新增一個替換變數 `CHAMBER_MODE`**（帶預設 `observe`，design D7）：沒有任何叢集的 `cluster-secrets` 需要為此多一個鍵——不給就是觀察模式；要切到送達模式的叢集才給。初稿這裡寫「不動 `cluster-secrets` 的鍵」，與它不一致（`jg-base-56 [c30591]` 指出）。
 - **不在本 sub-change**：哪一座叢集把它打開（那是 user repo 的一行，以及 `jg-cluster-template` 的一個欄位——root tasks 7.4，另開該 repo 的 issue，合併前要 ferry133 點頭）；登入憑證的鑄造（root 2.11：只有 ferry133）；伺服器本身。
 
 ## Capabilities

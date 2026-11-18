@@ -1,0 +1,85 @@
+---
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: im
+spec:
+  values:
+    controllers:
+      im:
+        containers:
+          app:
+            env:
+              # The chamber client in app holds no credential: it talks to the
+              # bridge over a Unix socket. The pod is hostNetwork, so a loopback
+              # port would be the node's loopback (k8scc im-chamber-client D-b).
+              CHAMBER_URL: unix:/run/chamber/bridge.sock
+              CHAMBER_ACCOUNT: "im-${CLUSTER_NAME}"
+              CHAMBER_MODE: "${CHAMBER_MODE:=observe}"
+              CHAMBER_SIGNERS_DIR: /etc/chamber/signers
+          chamber-bridge:
+            image:
+              repository: ghcr.io/ferry133/claude-code
+              # tag: copied from the app container by the replacement in
+              # kustomization.yaml. Do not write one here.
+            # Without a command the container runs the image entrypoint (ttyd).
+            command: ["chamber-bridge"]
+            env:
+              # The server address is not in this (public) repo: it rides in
+              # the same Secret as the credential, as a second FILE in the same
+              # optional volume. Not as env: the chart's schema (app-template
+              # 4.6.2) refuses `secretKeyRef.optional`, and without `optional`
+              # a pod whose Secret has not arrived cannot start its container
+              # (jg-base#251 review, F1). An unconfigured bridge idles and says
+              # what is missing -- it must never take the terminal down.
+              CHAMBER_URL_FILE: /etc/chamber/url
+              CHAMBER_TOKEN_FILE: /etc/chamber/token
+              CHAMBER_SOCKET: /run/chamber/bridge.sock
+              CHAMBER_ACCOUNT: "im-${CLUSTER_NAME}"
+              CHAMBER_MODE: "${CHAMBER_MODE:=observe}"
+            securityContext:
+              allowPrivilegeEscalation: false
+              capabilities: { drop: ["ALL"] }
+            # No probes, on purpose: its health is daily-check's to report, not
+            # the Service's. A bridge that is down must leave the pod Ready.
+            resources:
+              requests:
+                cpu: 10m
+                memory: 32Mi
+              limits:
+                memory: 128Mi
+    persistence:
+      chamber-socket:
+        type: emptyDir
+        medium: Memory
+        advancedMounts:
+          im:
+            app:
+              - path: /run/chamber
+            chamber-bridge:
+              - path: /run/chamber
+      chamber-token:
+        type: custom
+        volumeSpec:
+          secret:
+            secretName: im-chamber
+            optional: true
+            defaultMode: 256
+            items:
+              - key: token
+                path: token
+              - key: url
+                path: url
+        advancedMounts:
+          im:
+            chamber-bridge:
+              - path: /etc/chamber
+                readOnly: true
+      chamber-signers:
+        type: configMap
+        name: im-chamber-signers
+        advancedMounts:
+          im:
+            app:
+              - path: /etc/chamber/signers
+                readOnly: true
