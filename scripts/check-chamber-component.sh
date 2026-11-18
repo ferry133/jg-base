@@ -61,7 +61,13 @@ command -v yq   >/dev/null 2>&1 || { echo "cannot measure: yq is missing (CI ins
 command -v flux >/dev/null 2>&1 || { echo "cannot measure: the flux CLI is missing (CI installs it)"; exit 2; }
 command -v helm >/dev/null 2>&1 || { echo "cannot measure: helm is missing — assertion 10 (the chart accepts these values) would not be a reading"; exit 2; }
 
-# The chart, pulled once per invocation (the self-test runs check ~40 times).
+# The chart, pulled ONCE per invocation, in this shell, before anything else
+# runs (see the bottom of the file) -- and removed on exit. The first version
+# pulled lazily inside check(); the self-test calls check in a subshell, so
+# the exported path never came back, every case pulled again, and each pull
+# left a scratch directory behind (148 of them on a reviewer's machine,
+# jg-base#251).
+CHART_DIR=""
 chart_tgz() {
   if [[ -z "${CHAMBER_CHART_TGZ:-}" || ! -s "${CHAMBER_CHART_TGZ:-}" ]]; then
     local d url tag
@@ -69,6 +75,7 @@ chart_tgz() {
     tag="$(yq -r 'select(.kind == "OCIRepository") | .spec.ref.tag' "$APP_DIR/app/ocirepository.yaml")"
     [[ "$url" == oci://* && -n "$tag" && "$tag" != "null" ]] || return 1
     d="$(mktemp -d "${TMPDIR:-/tmp}/chamber-chart.XXXXXX")" || return 1
+    CHART_DIR="$d"
     helm pull "$url" --version "$tag" -d "$d" >/dev/null 2>&1 || return 1
     CHAMBER_CHART_TGZ="$(ls "$d"/*.tgz 2>/dev/null | head -1)"; export CHAMBER_CHART_TGZ
   fi
@@ -364,6 +371,12 @@ self_test() {
   fi
   echo "ok — ${n} self-test cases: green unmutated, red on every mutation for the stated reason, 2 when the reader is blind"
 }
+
+trap '[[ -n "$CHART_DIR" ]] && rm -rf "$CHART_DIR"' EXIT
+chart_tgz || { echo "cannot measure: could not pull the chart named in app/ocirepository.yaml"; exit 2; }
+# Which helm did the reading: the CI runner's is not pinned, and the cluster's
+# helm-controller embeds its own.
+echo "helm $(helm version --short 2>/dev/null) · chart $(basename "$CHAMBER_CHART_TGZ")"
 
 if [[ "${1:-}" == "--self-test" ]]; then
   self_test

@@ -17,7 +17,7 @@
 
 - [ ] 2.1 確認要用的映像 pin 含 `chamber-bridge`（k8scc tasks 3.x）；沒有就停在這裡，不接
 - [ ] 2.2 事前寫下預期，再做：手寫 patch 在拋棄式叢集的 `claude-code-im` 加 `spec.components`
-- [ ] 2.3 Secret 還不存在時：pod Running 且 Ready、終端機照常、橋接 container 的 log 有一行說缺什麼（design D2 的那一格）
+- [ ] 2.3 Secret 還不存在時：pod Running 且 Ready、終端機照常、橋接 container 的 log 有一行說缺什麼（design D2 的那一格）。**接著量 Secret 晚到**（事前寫預期）：pod 不重啟，Secret 建立之後多久 `/etc/chamber/` 出現兩個檔、橋接程式多久自己啟動；位址與憑證分兩次到各量一次。量不到自己啟動，就把「Secret 到位後要重啟 pod」寫進 README
 - [ ] 2.4 Flux 的 `spec.components` 真的照 design D1 渲染（讀叢集上的 HelmRelease，不讀本機的 kustomize）；量不過就改走兩個薄目錄並記下原因
 - [ ] 2.5 Secret 到位後，在 pod 裡量：`app` 的 env 與掛載裡沒有憑證（對照：`chamber-bridge` 裡有）；**`app` 以 pod 的 ServiceAccount 問 apiserver 讀得到那個 Secret**（預期：讀得到——design D3；只確認有沒有那個鍵，不印值）；節點上屬於橋接程式的 TCP listener 是 0（對照：同一份清單看得到 ttyd 的 port）；socket 目錄只在兩個 container 看得到
 - [ ] 2.6 拆掉 patch 後 pod 回到原樣（container 數、volume 數與接上之前相同）
