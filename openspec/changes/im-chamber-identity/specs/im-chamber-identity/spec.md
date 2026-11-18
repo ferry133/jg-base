@@ -5,8 +5,12 @@
 The chamber additions SHALL live in a kustomize component that no default path references. With the component not referenced, the rendered output of every existing im path SHALL be byte-identical to what it was before this change. With the component referenced, the rendered output minus the component's additions SHALL equal the output without it.
 
 #### Scenario: Merge with nothing turned on
-- **WHEN** this change is merged and no cluster references the component
-- **THEN** the render of each existing im path is byte-identical to the render before the merge
+- **WHEN** this change is merged
+- **THEN** no file under the existing im paths has changed and nothing in this repo references the component (positive control: adding a reference fails the guard)
+
+#### Scenario: The component meets the switched-off path
+- **WHEN** a cluster references the component while its path is the switched-off one
+- **THEN** the build fails and the im is not removed; whatever sets the reference SHALL drop it for that path
 
 #### Scenario: The component touches something it should not
 - **WHEN** the component's patch changes a field of an existing container other than the additions it declares
@@ -14,7 +18,7 @@ The chamber additions SHALL live in a kustomize component that no default path r
 
 ### Requirement: The login credential is mounted into the bridge container only
 
-The Secret that carries the chamber login credential and the server address SHALL be referenced only by the `chamber-bridge` container: no other container, init containers included, SHALL mount it or read any of its keys through its environment. The Secret SHALL be marked optional, so that a pod whose Secret has not arrived still starts and its terminal still serves.
+The Secret that carries the chamber login credential and the server address SHALL be referenced only by the `chamber-bridge` container: no other container, init containers included, SHALL mount it (directly, through a mount shared by all containers, or through a projected volume) or read any of its keys through its environment. This keeps the credential out of `app`'s files and environment; it SHALL NOT be described as keeping the credential from `app`, whose ServiceAccount can read the Secret through the API. The Secret SHALL be marked optional, so that a pod whose Secret has not arrived still starts and its terminal still serves.
 
 #### Scenario: The credential is also wired into `app`
 - **WHEN** a change adds the Secret to the `app` container's mounts or environment

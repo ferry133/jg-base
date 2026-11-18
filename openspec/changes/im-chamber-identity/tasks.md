@@ -7,9 +7,9 @@
 ## 1. component 與守衛（不接上任何叢集）
 
 - [ ] 1.1 `kubernetes/apps/base/claudecode/claude-code/im/chamber/`：`kind: Component`——patch（`chamber-bridge` container、`app` 的 `CHAMBER_URL`／`CHAMBER_ACCOUNT`／`CHAMBER_SIGNERS_DIR`、三個 volume）、replacement（橋接的 tag 取自 `app`）、公鑰清單的 `configMapGenerator`（兩個空檔，`disableNameSuffixHash`）
-- [ ] 1.2 `scripts/check-chamber-component.sh`：(a) `im/enabled`、`im/netdev` 的渲染與 `main` 逐位元組相同；(b) 各自加上 component 後，扣掉新增的部分等於原渲染；(c) 橋接的 tag 等於 `app` 的 tag。對照：把 component 的 patch 多改 `app` 一個既有欄位 → (b) 變紅
-- [ ] 1.3 `scripts/check-chamber-credential-isolation.sh`：Secret `im-chamber` 只出現在 `chamber-bridge` 的 mount 與 env；socket 的 `emptyDir` 恰好兩個 container 掛；`chamber-bridge` 沒有 port；公鑰清單的 mount 沒有 `subPath`、唯讀。變異各一：把憑證也掛進 `app`／多一個 container 掛 socket／加一個 port／加 `subPath` → 各自變紅；每個變異先確認真的套用了
-- [ ] 1.4 兩支守衛接進 `.github/workflows/flux-local.yaml`；`check-substitution-vocabulary.sh` 仍綠（新增的只有 `CLUSTER_NAME`，已在表上）
+- [ ] 1.2 `scripts/check-chamber-component.sh`：(a) `kubernetes/` 下除了 component 自己的目錄，沒有任何 YAML 引用 `im/chamber`（`im/enabled`、`im/netdev`、`im-ks.yaml`、任何 `ks.yaml`）——對照：在 `im-ks.yaml` 加一行引用 → 紅。（初稿寫「與 `main` 逐位元組相同」，合併後是自己比自己，永遠綠；`jg-base-56 [c30591]` 指出）；(b) `enabled`、`netdev` 各自加上 component 後，扣掉新增的部分等於原渲染——對照：patch 多改 `app` 一個既有欄位 → 紅；(c) 橋接的 tag 等於 `app` 的 tag
+- [ ] 1.3 同一支守衛（不另開一支）：Secret `im-chamber` 進得了 container 的**每一條路**都只通到 `chamber-bridge`——`persistence.*.advancedMounts`、`persistence.*.globalMounts`（會掛進每一個 container，這幾個 volume 一律不准用）、projected volume、`env.*.valueFrom.secretKeyRef`、`envFrom`，`initContainers` 也算；兩處 `optional` 都在；socket 的 `emptyDir` 恰好兩個 container 掛、同一個路徑、`app` 的位址在裡面；`chamber-bridge` 沒有 port、沒有 probe；公鑰清單只進 `app`、唯讀、沒有 `subPath`、ConfigMap 恰好兩個檔。變異每條斷言至少一個，含「整行刪掉 `optional: true`」；第 0 格不變異、期望綠；每個變異先確認真的套用了，而且要因為**說得出的那個理由**變紅
+- [ ] 1.4 守衛接進 `.github/workflows/flux-local.yaml`（它是這個 component 唯一的 CI 覆蓋）；`check-substitution-vocabulary.sh` 仍綠——新增的替換變數只有 `CHAMBER_MODE`（帶預設 `observe`），要登記進 `scripts/substitution-vocabulary.txt`，那是一個要被看過的決定；`CLUSTER_NAME` 已在表上
 - [ ] 1.5 `claude-code/README.md`：一節說明這個 component、怎麼打開、打開要誰點頭
 
 ## 2. 在拋棄式叢集接上一次（等 k8scc 的映像裡有 `chamber-bridge`）
@@ -18,8 +18,9 @@
 - [ ] 2.2 事前寫下預期，再做：手寫 patch 在拋棄式叢集的 `claude-code-im` 加 `spec.components`
 - [ ] 2.3 Secret 還不存在時：pod Running 且 Ready、終端機照常、橋接 container 的 log 有一行說缺什麼（design D2 的那一格）
 - [ ] 2.4 Flux 的 `spec.components` 真的照 design D1 渲染（讀叢集上的 HelmRelease，不讀本機的 kustomize）；量不過就改走兩個薄目錄並記下原因
-- [ ] 2.5 Secret 到位後，在 pod 裡量：`app` 的 env 與掛載裡沒有憑證（對照：`chamber-bridge` 裡有）；節點上屬於橋接程式的 TCP listener 是 0（對照：同一份清單看得到 ttyd 的 port）；socket 目錄只在兩個 container 看得到
+- [ ] 2.5 Secret 到位後，在 pod 裡量：`app` 的 env 與掛載裡沒有憑證（對照：`chamber-bridge` 裡有）；**`app` 以 pod 的 ServiceAccount 問 apiserver 讀得到那個 Secret**（預期：讀得到——design D3；只確認有沒有那個鍵，不印值）；節點上屬於橋接程式的 TCP listener 是 0（對照：同一份清單看得到 ttyd 的 port）；socket 目錄只在兩個 container 看得到
 - [ ] 2.6 拆掉 patch 後 pod 回到原樣（container 數、volume 數與接上之前相同）
+- [ ] 2.7 事前寫下預期，再量：`components` 那一行還在而路徑切到 `im/disabled`——預期 `claude-code-im` BuildFailed、im 的 HelmRelease **沒有被 prune**（design D1 的限制）；拿掉那一行後才被 prune
 
 ## 3. 公鑰清單
 
@@ -36,5 +37,5 @@
 
 ## 5. 範圍外的指標
 
-- [ ] 5.1 `jg-cluster-template` 的 issue：打開 component 的 `cluster.yaml` 欄位（root tasks 7.4）。**合併前要 ferry133 點頭**——客戶會繼承的行為
+- [ ] 5.1 `jg-cluster-template` 的 issue：打開 component 的 `cluster.yaml` 欄位（root tasks 7.4）。**合併前要 ferry133 點頭**——客戶會繼承的行為。issue 要帶上 design D1 的限制：欄位打開而路徑是 `im/disabled` 時，渲染要拿掉 `components`，並且要有守衛
 - [ ] 5.2 完成時在 `jg-base#248` 回報 commit，以及驗到什麼、沒驗到什麼；由開單者驗收
