@@ -40,6 +40,16 @@ spec:
             parameters: "@kubernetes"
           - name: forward
             parameters: . /etc/resolv.conf
+            # #253: `cache` refreshes an entry (prefetch, and serve_stale's
+            # background refresh) through a writer that presents itself as
+            # TCP, and `forward` uses the protocol of the request it is
+            # handed — so those refreshes left here over TCP even though
+            # every client asked over UDP. A resolver on the way that does
+            # not carry TCP then fails the refresh, and the failure is what
+            # gets cached. prefer_udp sends them over UDP and still retries
+            # over TCP when the answer comes back truncated.
+            configBlock: |-
+              prefer_udp
           - name: cache
             configBlock: |-
               prefetch 20
