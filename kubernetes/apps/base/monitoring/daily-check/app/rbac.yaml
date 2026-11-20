@@ -24,6 +24,10 @@ rules:
       - services
       - namespaces
     verbs: ["get", "list"]
+  # Row 32 reads which StorageClasses have an NFS provisioner (#239).
+  - apiGroups: ["storage.k8s.io"]
+    resources: ["storageclasses"]
+    verbs: ["list"]
   # Row 28 reads tenant bindings by structure (no impersonation, decision D-b).
   - apiGroups: ["rbac.authorization.k8s.io"]
     resources: ["clusterrolebindings", "rolebindings"]
