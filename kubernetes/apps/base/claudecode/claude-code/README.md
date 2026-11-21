@@ -93,6 +93,14 @@ cluster is on. Nothing in this repo references it.
   That keeps it out of `app`'s files and environment. It does **not** keep it
   from `app`: the pod's ServiceAccount is `cluster-admin` and can read any
   Secret through the API.
+- **The bridge's state** (`sync-state`: the sync position and the counts not
+  yet announced) lives on a claim of its own, `chamber-state` (128Mi, the
+  config tier's class, mounted into the bridge only), through
+  `CHAMBER_STATE_DIR` (#256). The socket stays on the memory emptyDir. Before
+  #256 the state sat next to the socket, so a replaced pod started "from now"
+  and a message that had arrived but was never announced was never announced.
+  The claim has no `retain`: turning the component off deletes it, and what is
+  lost is only a position.
 - **`signers/`** is the list of people whose signed words count as a directive
   on every cluster, and the keys that no longer do. A change to either file
   needs the operator's approval before merge.

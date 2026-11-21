@@ -44,6 +44,12 @@
 #           Everything above reads the HelmRelease's values; this is the one
 #           reading of what Helm does with them. The first version of this
 #           guard did not have it, and pinned a field the chart refuses.
+#       11. the bridge's state outlives the pod (jg-base#256): CHAMBER_STATE_DIR
+#           is the mount path of a persistentVolumeClaim named chamber-state,
+#           mounted by the bridge ONLY (no globalMounts), on the config tier's
+#           class variable -- not a literal class, not the workspace's or the
+#           bulk tier's -- and NOT the socket's directory (that is the emptyDir
+#           that goes with the pod).
 #
 # What this does NOT measure: anything on a running pod (that the credential
 # is really absent from app's filesystem, that no TCP socket is opened) -- that
@@ -87,7 +93,7 @@ V="$HR | .spec.values"
 SECRET=im-chamber
 BRIDGE=chamber-bridge
 ADDED_ENV="CHAMBER_URL CHAMBER_ACCOUNT CHAMBER_MODE CHAMBER_SIGNERS_DIR"
-ADDED_VOLS="chamber-socket chamber-token chamber-signers"
+ADDED_VOLS="chamber-socket chamber-token chamber-signers chamber-state"
 
 render() {  # app-dir, position, ks-file -> stdout
   flux build kustomization claude-code-im --dry-run \
@@ -262,6 +268,24 @@ check() {
     [[ "$(yq -r "$V | .persistence.chamber-signers.name" "$f")" == "im-chamber-signers" ]] \
       || fail "im/$pos: the signer volume does not name ConfigMap im-chamber-signers (a hashed name would restart the pod on every change, and a wrong one mounts nothing)"
 
+    # 11. the state directory outlives the pod.
+    local stdir stmounts sttype stclass stglobal
+    stdir="$(yq -r "$V | $B.env.CHAMBER_STATE_DIR // \"\"" "$f")"
+    sttype="$(yq -r "$V | .persistence.chamber-state.type // \"\"" "$f")"
+    stclass="$(yq -r "$V | .persistence.chamber-state.storageClass // \"\"" "$f")"
+    stglobal="$(yq -r "$V | .persistence.chamber-state | has(\"globalMounts\")" "$f")"
+    stmounts="$(yq -r "$V | (.persistence.chamber-state.advancedMounts.im // {}) | to_entries | .[] | .key + \"=\" + (.value[].path)" "$f" | sort | tr '\n' ' ')"
+    [[ -n "$stdir" ]] \
+      || fail "im/$pos: the bridge has no CHAMBER_STATE_DIR — its state defaults to the socket's emptyDir and is lost with the pod (#256)"
+    [[ "$sttype" == "persistentVolumeClaim" ]] \
+      || fail "im/$pos: chamber-state is '${sttype:-absent}', not a persistentVolumeClaim — the bridge's state would go with the pod (#256)"
+    [[ "$stclass" == '${CLAUDECODE_CONFIG_STORAGE_CLASS}' ]] \
+      || fail "im/$pos: chamber-state's class is '${stclass:-unset}', not the config tier's variable — app state belongs on the block tier (2026-11-01 ruling)"
+    [[ "$stglobal" == "false" && "$stmounts" == "$BRIDGE=$stdir " ]] \
+      || fail "im/$pos: chamber-state is mounted as [${stmounts% }]$([[ "$stglobal" == "false" ]] || echo ' plus globally'), not exactly [$BRIDGE=${stdir:-<CHAMBER_STATE_DIR>}]"
+    [[ -n "$stdir" && "$stdir" != "${url#unix:}" && "$stdir" != "${sockpaths% }" && "${url#unix:}" != "$stdir"/* ]] \
+      || fail "im/$pos: CHAMBER_STATE_DIR=${stdir:-unset} is the socket's directory — that is the emptyDir that goes with the pod"
+
     # 10. the pinned chart accepts these values. The control is the same
     #     chart on the values WITHOUT the component: if that does not template,
     #     the chart or helm is the problem and nothing here is a reading.
@@ -276,7 +300,7 @@ check() {
     fi
   done
 
-  [[ $rc -eq 0 ]] && echo "ok — the chamber component is off by default, adds only itself on im/enabled and im/netdev, and keeps Secret $SECRET in $BRIDGE alone"
+  [[ $rc -eq 0 ]] && echo "ok — the chamber component is off by default, adds only itself on im/enabled and im/netdev, keeps Secret $SECRET in $BRIDGE alone, and keeps the bridge's state on a claim of its own"
   return $rc
 }
 
@@ -362,6 +386,15 @@ self_test() {
   expect "the signer list is also mounted into the bridge" 1 "signer list is mounted by" "$P" "$PV.persistence.chamber-signers.advancedMounts.im.chamber-bridge = [{\"path\": \"/etc/chamber/signers\", \"readOnly\": true}]"
   expect "the revoked list is dropped from the ConfigMap" 1 "carries ["            "$K" 'del(.configMapGenerator[0].files[1])'
   expect "the ConfigMap name gets a hash suffix"      1 "does not name ConfigMap"  "$P" "$PV.persistence.chamber-signers.name = \"im-chamber-signers-abc\""
+  expect "the bridge has no CHAMBER_STATE_DIR (before #256)" 1 "has no CHAMBER_STATE_DIR" "$P" "del($PC.chamber-bridge.env.CHAMBER_STATE_DIR)"
+  expect "the state claim is an emptyDir"             1 "not a persistentVolumeClaim" "$P" "$PV.persistence.chamber-state = {\"type\": \"emptyDir\", \"advancedMounts\": {\"im\": {\"chamber-bridge\": [{\"path\": \"/var/lib/chamber-bridge\"}]}}}"
+  expect "the state claim is deleted outright"        1 "not a persistentVolumeClaim" "$P" "del($PV.persistence.chamber-state)"
+  expect "the state claim is on a literal sc-nas"     1 "not the config tier's"    "$P" "$PV.persistence.chamber-state.storageClass = \"sc-nas\""
+  expect "the state claim is on the workspace's class" 1 "not the config tier's"   "$P" "$PV.persistence.chamber-state.storageClass = \"\${CLAUDECODE_WORKSPACE_STORAGE_CLASS}\""
+  expect "the state claim is also mounted into app"   1 "chamber-state is mounted as" "$P" "$PV.persistence.chamber-state.advancedMounts.im.app = [{\"path\": \"/var/lib/chamber-bridge\"}]"
+  expect "the state claim is mounted globally"        1 "plus globally"            "$P" "$PV.persistence.chamber-state.globalMounts = [{\"path\": \"/var/lib/chamber-bridge\"}]"
+  expect "CHAMBER_STATE_DIR is not the claim's mount" 1 "chamber-state is mounted as" "$P" "$PC.chamber-bridge.env.CHAMBER_STATE_DIR = \"/var/lib/elsewhere\""
+  expect "CHAMBER_STATE_DIR is the socket's directory" 1 "socket's directory"      "$P" "$PC.chamber-bridge.env.CHAMBER_STATE_DIR = \"/run/chamber\" | $PV.persistence.chamber-state.advancedMounts.im.chamber-bridge[0].path = \"/run/chamber\""
   expect "the component does not build"               1 "does not build"           "$K" '.patches[0].path = "./nope.yaml"'
   expect "the reader is blind (talos-mcp command gone)" 2 "cannot measure"         "im/enabled/helmrelease.yaml" 'del(.spec.values.controllers.im.containers.talos-mcp.command)'
 
