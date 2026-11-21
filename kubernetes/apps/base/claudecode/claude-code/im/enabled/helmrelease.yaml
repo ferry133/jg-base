@@ -69,7 +69,7 @@ spec:
             # Same image as the app container, so this adds no new pull.
             image:
               repository: ghcr.io/ferry133/claude-code
-              tag: e8d7522@sha256:ee16e09721a8ee2a85a7fe961574f1f8b72530e76df013c051d8d970f15488ff
+              tag: bca81b3@sha256:1d0dfe95b0494cc67f2fcd35e41acf0ed563deb593aa371f4ad31f808bbd66ea
             command:
               - bash
               - -c
@@ -113,7 +113,7 @@ spec:
               # content-addressed — spegel has nothing to freeze. Updates are
               # scripts/bump-claudecode-image.sh -> commit, so each one is
               # visible to Flux and rollback is a revert.
-              tag: e8d7522@sha256:ee16e09721a8ee2a85a7fe961574f1f8b72530e76df013c051d8d970f15488ff
+              tag: bca81b3@sha256:1d0dfe95b0494cc67f2fcd35e41acf0ed563deb593aa371f4ad31f808bbd66ea
             env:
               # The pod runs as uid 0 (see defaultPodOptions), which would
               # resolve HOME=/root -- but all state (claude config PVC,
@@ -223,7 +223,7 @@ spec:
             # than crash or lie.
             image:
               repository: ghcr.io/ferry133/claude-code
-              tag: e8d7522@sha256:ee16e09721a8ee2a85a7fe961574f1f8b72530e76df013c051d8d970f15488ff
+              tag: bca81b3@sha256:1d0dfe95b0494cc67f2fcd35e41acf0ed563deb593aa371f4ad31f808bbd66ea
             command: ["python3", "/usr/local/bin/talos_mcp_server.py"]
             env:
               TALOSCONFIG: /etc/talos-mcp/talosconfig
