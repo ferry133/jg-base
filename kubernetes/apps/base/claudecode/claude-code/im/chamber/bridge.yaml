@@ -35,6 +35,14 @@ spec:
               CHAMBER_URL_FILE: /etc/chamber/url
               CHAMBER_TOKEN_FILE: /etc/chamber/token
               CHAMBER_SOCKET: /run/chamber/bridge.sock
+              # The sync position and the counts not yet announced (one file,
+              # sync-state; room ids and names only, no message text, no
+              # sender). On the chamber-state claim below, NOT next to the
+              # socket: the socket's emptyDir goes with the pod, and with it
+              # every message that arrived and was never announced
+              # (jg-base#256, k8scc#97 -- measured on a throwaway cluster as
+              # `receiving from now (no saved position)` after a pod delete).
+              CHAMBER_STATE_DIR: /var/lib/chamber-bridge
               CHAMBER_ACCOUNT: "im-${CLUSTER_NAME}"
               CHAMBER_MODE: "${CHAMBER_MODE:=observe}"
             securityContext:
@@ -58,6 +66,33 @@ spec:
               - path: /run/chamber
             chamber-bridge:
               - path: /run/chamber
+      # Where the bridge keeps its state across a pod's replacement
+      # (jg-base#256). Its own small claim, mounted on the bridge ONLY:
+      #   - not a subdirectory of the workspace claim: app mounts that whole
+      #     claim, and its class is the bulk tier's choice, which has been
+      #     sc-nas on clusters before (the 2026-11-01 ruling puts app state on
+      #     block storage);
+      #   - the config tier's class, the block tier by default (jgct
+      #     plugin.py: db_storage_class -> local-path) and carried by every
+      #     cluster (#136). Read live 2026-11-21: im-claude-config is longhorn
+      #     or local-path on all three clusters that have it;
+      #   - no `retain`: turning the component off deletes it, and what is lost
+      #     is a position -- the messages stay in the room;
+      #   - not in the claudecode state archive (that CronJob mounts only the
+      #     claims im/enabled names), for the same reason.
+      # The bridge runs as uid 0 (the pod's securityContext) with every
+      # capability dropped; the claim root is root-owned, so owner write is
+      # enough -- no CAP_DAC_OVERRIDE needed. The bridge itself refuses to open
+      # anything if the directory is absent or not writable, and says so.
+      chamber-state:
+        type: persistentVolumeClaim
+        storageClass: ${CLAUDECODE_CONFIG_STORAGE_CLASS}
+        accessMode: ReadWriteOnce
+        size: 128Mi
+        advancedMounts:
+          im:
+            chamber-bridge:
+              - path: /var/lib/chamber-bridge
       chamber-token:
         type: custom
         volumeSpec:

@@ -20,6 +20,8 @@
 # minus these additions IS the render without it):
 #   - container chamber-bridge: the only holder of the chamber login credential
 #   - a memory emptyDir for a Unix socket, mounted by app and the bridge ONLY
+#   - a small claim for the bridge's sync state, mounted by the bridge ONLY
+#     (#256: it has to outlive the pod; the socket does not)
 #   - Secret im-chamber (optional), mounted into the bridge ONLY
 #   - ConfigMap im-chamber-signers, mounted read-only into app as a directory
 #   - four env values on app
