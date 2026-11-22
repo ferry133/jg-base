@@ -15,10 +15,20 @@
 
 ## 2. 在拋棄式叢集接上一次（等 k8scc 的映像裡有 `chamber-bridge`）
 
-- [ ] 2.1 確認要用的映像 pin 含 `chamber-bridge`（k8scc tasks 3.x）；沒有就停在這裡，不接
-- [ ] 2.2 事前寫下預期，再做：手寫 patch 在拋棄式叢集的 `claude-code-im` 加 `spec.components`
-- [ ] 2.3 Secret 還不存在時：pod Running 且 Ready、終端機照常、橋接 container 的 log 有一行說缺什麼（design D2 的那一格）。**接著量 Secret 晚到**（事前寫預期）：pod 不重啟，Secret 建立之後多久 `/etc/chamber/` 出現兩個檔、橋接程式多久自己啟動；位址與憑證分兩次到各量一次。量不到自己啟動，就把「Secret 到位後要重啟 pod」寫進 README
-- [ ] 2.4 Flux 的 `spec.components` 真的照 design D1 渲染（讀叢集上的 HelmRelease，不讀本機的 kustomize）；量不過就改走兩個薄目錄並記下原因
+- [x] 2.1 確認要用的映像 pin 含 `chamber-bridge`（k8scc tasks 3.x）；沒有就停在這裡，不接
+- [x] 2.2 事前寫下預期，再做：手寫 patch 在拋棄式叢集的 `claude-code-im` 加 `spec.components`
+- [ ] 2.3 （**前半已量，後半未量**）Secret 還不存在時：pod Running 且 Ready、終端機照常、橋接 container 的 log 有一行說缺什麼（design D2 的那一格）。**接著量 Secret 晚到**（事前寫預期）：pod 不重啟，Secret 建立之後多久 `/etc/chamber/` 出現兩個檔、橋接程式多久自己啟動；位址與憑證分兩次到各量一次。量不到自己啟動，就把「Secret 到位後要重啟 pod」寫進 README
+  - **前半（Secret 不存在）**：2026-11-20，`fleet-ops-98 [047e9c]` 量的，本 repo 未複量（同一則 issuecomment-7015427750）。
+    - 橋接 container 印一行說位址檔不在，什麼都不開。之後每 20 秒印一行 `chamber-status … mode=unconfigured server=unmeasured rooms=unmeasured online=unmeasured`，不重啟。
+    - 終端機照常回 302。`app` 每 20 秒印一行 `chamber-verify-status … signers=0 revoked=0 sshkeygen=ok`。
+    - 同一顆映像上的 `talos-mcp`、`netdev-mcp` 正常起來。
+  - **後半（Secret 晚到）沒量**：Secret 還不存在。鑄造登入憑證要 ferry133 點頭（保留類第 5 條）。
+- [x] 2.4 Flux 的 `spec.components` 真的照 design D1 渲染（讀叢集上的 HelmRelease，不讀本機的 kustomize）；量不過就改走兩個薄目錄並記下原因
+  - **2026-11-20，`fleet-ops-98 [047e9c]` 量的，這個 repo 的 session 沒有複量**（`ferry133/jg-base#248` issuecomment-7015427750；在一座拋棄式叢集上，jg-base `de4479b`，映像 `9e1471f`；勾 2.1／2.2／2.4 由 `jg-base-5d [905a80]` 2026-11-22 照那則讀數打）。
+    - **2.1**：tag `9e1471f` 在 registry 回 200，digest `sha256:27a4b2b7…845ea`；不存在的 tag 回 404 當對照。
+    - **2.2**：預期事前寫下了，所有讀數都和預期相符。patch 寫在那座叢集自己 repo 的 `claude-code-im` 上：`spec.components: [../chamber]`，再把每一個用這顆映像的 container 的 tag 改掉。
+    - **2.4**：叢集上的 `claude-code-im` Ready，`spec.components=["../chamber"]`（這次是叢集裡的 kustomize-controller，先前只量過 CLI）；helm-controller `Helm upgrade succeeded`，chart `app-template@4.6.2`（先前只量過 `helm template`）；pod 五個 container 全 ready、重啟 0，多了 `chamber-socket`、`chamber-token`、`chamber-signers` 三個 volume；ConfigMap `im-chamber-signers` 有兩個鍵，都是空的。
+    - **量到的接線細節**：手動改 tag 時要改**每一個** container，含 `chamber-bridge`。原因是 component 的 replacement 在 patch 之前就抄了 `app` 的舊 tag。
 - [ ] 2.5 Secret 到位後，在 pod 裡量：`app` 的 env 與掛載裡沒有憑證（對照：`chamber-bridge` 裡有）；**`app` 以 pod 的 ServiceAccount 問 apiserver 讀得到那個 Secret**（預期：讀得到——design D3；只確認有沒有那個鍵，不印值）；節點上屬於橋接程式的 TCP listener 是 0（對照：同一份清單看得到 ttyd 的 port）；socket 目錄只在兩個 container 看得到
 - [ ] 2.6 拆掉 patch 後 pod 回到原樣（container 數、volume 數與接上之前相同）
 - [ ] 2.7 事前寫下預期，再量：`components` 那一行還在而路徑切到 `im/disabled`——預期 `claude-code-im` BuildFailed、im 的 HelmRelease **沒有被 prune**（design D1 的限制）；拿掉那一行後才被 prune
@@ -38,5 +48,10 @@
 
 ## 5. 範圍外的指標
 
-- [ ] 5.1 `jg-cluster-template` 的 issue：打開 component 的 `cluster.yaml` 欄位（root tasks 7.4）。**合併前要 ferry133 點頭**——客戶會繼承的行為。issue 要帶上 design D1 的限制：欄位打開而路徑是 `im/disabled` 時，渲染要拿掉 `components`，並且要有守衛
+- [x] 5.1 `jg-cluster-template` 的 issue：打開 component 的 `cluster.yaml` 欄位（root tasks 7.4）。**合併前要 ferry133 點頭**——客戶會繼承的行為。issue 要帶上 design D1 的限制：欄位打開而路徑是 `im/disabled` 時，渲染要拿掉 `components`，並且要有守衛
+  - **2026-11-22**：`ferry133/jg-cluster-template#263` 已由 #270 squash 合併（`1b43f91`）。
+    - 合併的依據是 ferry133 在 `fleet-ops-4c [50fff3]` 的 console 直接下的指示（保留類第 4 條）。
+    - 欄位是 `chamber_mode`（`off`／`observe`／`deliver`）、`chamber_token`、`chamber_url`。
+    - D1 的限制由 plugin 擋：im 走 `im/disabled`（`claudecode_auth0: false`）時，只要 `chamber_mode` 是 `observe` 或 `deliver` 就拒絕渲染（`off` 照常）。路徑是 `disabled` 時，`ks.yaml.j2` 也不會輸出 `components`。守衛是 `scripts/check-chamber-render.py`，共 18 格。
+    - **沒量的**：任何叢集上的 reconcile，以及 `im-chamber` 經 sops 解密之後的套用。
 - [ ] 5.2 完成時在 `jg-base#248` 回報 commit，以及驗到什麼、沒驗到什麼；由開單者驗收
