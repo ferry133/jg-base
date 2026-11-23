@@ -1,0 +1,6 @@
+# chamber — the people whose signature an agent accepts on a directive. THE ORIGINAL (copies: `chamber-signers check`).
+# One line per key:   PERSON namespaces="chamber-directive" KEYTYPE BASE64 [comment]
+# A person may have several keys (one per Mac with a Secure Enclave key). Added by a person with `chamber-signers add`;
+# an agent session is refused. Revoked with `chamber-signers revoke PERSON FINGERPRINT` (the line moves to revoked_signers).
+# 2026-11-17: no key yet — the first one is made on the MacBook (agent-delegation-envelope tasks 1.1 / 4.2).
+ferry133 namespaces="chamber-directive" sk-ecdsa-sha2-nistp256@openssh.com AAAAInNrLWVjZHNhLXNoYTItbmlzdHAyNTZAb3BlbnNzaC5jb20AAAAIbmlzdHAyNTYAAABBBC1KNeH2wHs03DqoVh37aP8RCbWR43FTybofRzWGXPeotHwphlOdTF1lRTDn/RYVxuuHVTxOj7IGnhOuoU+rlbsAAAAEc3NoOg== added-2026-11-20

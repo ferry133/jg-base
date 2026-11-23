@@ -68,7 +68,7 @@ im 的 pod 是 `hostNetwork: true`（`im/enabled/helmrelease.yaml` 的 `defaultP
 - 為什麼放這裡：Flux 每小時把它送到每一座叢集，kubelet 再同步進 pod。這是現有的路裡唯一不需要人逐座去更新的。內容只有公鑰與人的代號，沒有客戶名單。
 - 初始是空的。空清單下 `directive-verify` 回 2（量不到），不是 0。
 - **CI 覆蓋只有一支守衛**：這個 repo 裡沒有任何東西引用這個 component，所以 flux-local 永遠不會建到它；合併後它唯一的 CI 覆蓋是 tasks 1.2 那支守衛（`jg-base-56 [c30591]` 指出）。
-- **等裁定**：清單的正本住哪（root 的未決項）。這裡持有的若是副本，更新它的 PR 由誰開、怎麼證明與正本相同，要在正本的位置定了之後補一個比對。**不論正本在哪，改這兩個檔的 PR 合併前要 ferry133 點頭**——那是在改「誰的話算指令」，而 agent 不得增加簽章者（root 的裁定）。
+- **裁定（ferry133，2026-11-24）：正本在 `fleet-ops/chamber/`，這裡持有副本。** 副本由 `chamber-signers install --copy` 寫入、由 `chamber-signers check --copy` 比對（比金鑰，不比位元組）；這個 repo 的 CI 讀不到 private 的正本，所以比對在 fleet-ops 那一側跑，這裡沒有任何步驟斷言兩者相同。**不論正本在哪，改這兩個檔的 PR 合併前要 ferry133 點頭**——那是在改「誰的話算指令」，而 agent 不得增加簽章者（root 的裁定）。（裁定之前這一條寫的是「等裁定：清單的正本住哪」。）
 - **沒量到的**：ConfigMap 更新到 pod 裡的檔案實際要多久（tasks 3.3）。
 
 ### D5 daily-check：讀 pod log，不加 `exec`（提案）
@@ -127,7 +127,7 @@ chamber-verify-status ts=<epoch> signers=<n> revoked=<n> sshkeygen=ok|missing
 ## Open Questions（等 ferry133 或驗收的人）
 
 0. **給 ferry133：登入憑證要不要做到 `app` 真的讀不到。** 現在的形狀只讓它不躺在 `app` 的檔案與 env 裡；`app` 的 ServiceAccount 是 `cluster-admin`，讀得到（D3）。在 `cluster-admin` 之下，Secret 放在同一座叢集的任何地方都讀得到，所以做硬的路只有：(a) 縮小 im 的 SA 權限（那是 im 的整個設計，不是這個 change）；(b) 憑證不放在這座叢集的 Secret 裡（例如橋接程式不在 im 的 pod 裡）；(c) 接受——這把憑證只能說一般類的話，保留類只認人的簽章，而且撤銷一把憑證是量過的（root tasks 3.5）。起草者的看法是 (c)，這是我的判斷不是裁定。
-1. 公鑰清單的正本住哪；這裡是正本還是副本（D4）。
+1. ~~公鑰清單的正本住哪；這裡是正本還是副本（D4）。~~ **已裁定（2026-11-24）：正本在 fleet-ops，這裡是副本——見 D4。**
 2. 「驗章可用」要不要量到「真的驗過一份」（D5）。
 3. `cluster.yaml` 的欄位長什麼樣（D6）——一個布林，還是連模式（observe／deliver）與 `SESSION_KEEP` 一起。
 4. 橋接 container 要不要 liveness probe（卡死的橋接程式會讓 im 一直顯示不在線，daily-check 一天才看一次）。
