@@ -2398,6 +2398,86 @@ data:
       fi
     fi
 
+    # 32. Application state on an NFS class (ferry133/jg-base#239).
+    #
+    # The rule (ferry133 2026-11-01): the NAS holds only data people reach
+    # through the NAS share, and bulk data. Everything else an app owns —
+    # SQLite, broker persistence, sessions, config dirs, workspaces — belongs
+    # on the block tier. Nothing checked that, and the way it is broken is
+    # silent: a PVC that names no class, or a manifest that hard-codes sc-nas.
+    # It showed on 2026-10-28, when NAS2 was encrypted and took HA's config
+    # with it.
+    #
+    # What is judged: every PVC whose storageClassName is a class with an NFS
+    # provisioner (read off the StorageClasses, so a renamed or second NFS
+    # class is not missed). A class-less PVC is judged too, because the API
+    # server writes the cluster default into it at admission.
+    #
+    # Static PVs are exempt by construction, not by an allowlist entry:
+    # they bind with `storageClassName: ""`, so they never match a class.
+    # Those are the pre-existing NAS shares (knowledge, jia.homedesign,
+    # showcase-vault, backup1), i.e. the "people reach it through the NAS"
+    # half of the rule.
+    #
+    # The allowlist is for the "bulk data" half. Every entry is
+    # `namespace/name-glob|reason`, and NFS_ALLOW_PINNED pins how many there
+    # are. An allowlist that only ever grows ends up admitting everything,
+    # so adding an entry without moving the pin turns the row red here, and
+    # scripts/check-nfs-app-state-row.sh fails in CI as well.
+    #
+    #   fail  a PVC on an NFS class that no entry covers (listed with class and
+    #         phase); the allowlist count differs from its pin; an entry has
+    #         no reason.
+    #   warn  StorageClasses or PVCs could not be listed: this row measured nothing.
+    #   skip  no StorageClass on this cluster has an NFS provisioner.
+    #   ok    names the NFS classes and how many PVCs on them the allowlist
+    #         covered (0 is a real answer once the classes were read).
+    NFS_NAME="App state on NFS"
+    NFS_ALLOW=(
+    )
+    NFS_ALLOW_PINNED=0
+    NFS_NOREASON=""
+    for e in "${NFS_ALLOW[@]}"; do
+      [[ "$e" == *"|"?* ]] || NFS_NOREASON="${NFS_NOREASON} ${e%%|*}"
+    done
+    if (( ${#NFS_ALLOW[@]} != NFS_ALLOW_PINNED )); then
+      record fail "$NFS_NAME" "allowlist has ${#NFS_ALLOW[@]} entries but is pinned at ${NFS_ALLOW_PINNED}; an entry was added or removed without moving the pin, so review it (#239)"
+    elif [[ -n "$NFS_NOREASON" ]]; then
+      record fail "$NFS_NAME" "allowlist entries without a reason:${NFS_NOREASON}"
+    else
+      kget_items get storageclass -o json
+      if [[ -n "$KGET_WHY" ]]; then
+        record warn "$NFS_NAME" "${KGET_WHY}; this row measured nothing"
+      else
+        NFS_CLASSES=$(echo "$KGET_OUT" | jq -r '[.items[] | select((.provisioner // "") | test("nfs"; "i")) | .metadata.name] | join(" ")')
+        if [[ -z "$NFS_CLASSES" ]]; then
+          record skip "$NFS_NAME" "no StorageClass on this cluster has an NFS provisioner, so there is nothing to judge (static NFS volumes are exempt anyway)"
+        else
+          kget_items get pvc -A -o json
+          if [[ -n "$KGET_WHY" ]]; then
+            record warn "$NFS_NAME" "NFS class(es) ${NFS_CLASSES}, but ${KGET_WHY}; this row measured nothing"
+          else
+            NFS_ON=$(echo "$KGET_OUT" | jq -r --arg c "$NFS_CLASSES" '($c | split(" ")) as $cs | .items[] | (.spec.storageClassName // "") as $s | select(any($cs[]; . == $s)) | "\(.metadata.namespace)/\(.metadata.name) \($s) \(.status.phase // "unknown")"')
+            NFS_BAD=() NFS_COVERED=0
+            while read -r nn cls phase; do
+              [[ -n "$nn" ]] || continue
+              hit=""
+              for e in "${NFS_ALLOW[@]}"; do
+                # shellcheck disable=SC2053  # the glob is the point
+                [[ "$nn" == ${e%%|*} ]] && { hit=1; break; }
+              done
+              if [[ -n "$hit" ]]; then ((NFS_COVERED++)); else NFS_BAD+=("${nn} (${cls}, ${phase})"); fi
+            done <<<"$NFS_ON"
+            if (( ${#NFS_BAD[@]} > 0 )); then
+              record fail "$NFS_NAME" "${#NFS_BAD[@]} PVC(s) on NFS class(es) ${NFS_CLASSES} that no allowlist entry covers: $(printf '%s; ' "${NFS_BAD[@]}")move app state to the block tier (DB_STORAGE_CLASS), or allowlist bulk data with a reason (#239)"
+            else
+              record ok "$NFS_NAME" "NFS class(es) ${NFS_CLASSES}: ${NFS_COVERED} PVC(s) on them, all covered by the allowlist (${NFS_ALLOW_PINNED} entries)"
+            fi
+          fi
+        fi
+      fi
+    fi
+
     if [[ $FAIL_COUNT -gt 0 ]]; then
       STATUS_TAG="❌ ${FAIL_COUNT} FAIL"
       [[ $WARN_COUNT -gt 0 ]] && STATUS_TAG="${STATUS_TAG}, ${WARN_COUNT} WARN"
