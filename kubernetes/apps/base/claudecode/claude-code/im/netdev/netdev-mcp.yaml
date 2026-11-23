@@ -24,7 +24,7 @@ spec:
               # node's LAN address. Same shape as TALOS_MCP_URL.
               NETDEV_MCP_URL: http://127.0.0.1:8766/sse
           netdev-mcp:
-            # Own container, own credential mount: the reader key is visible
+            # Own container, own credential mount: the reader's login is visible
             # here and nowhere else (the app container is the customer's root
             # shell). image.tag is filled by the replacement in
             # ./kustomization.yaml from the app container's pin.
@@ -47,7 +47,12 @@ spec:
               # turn that off, and the test-only insecure-http flag is
               # deliberately absent (the guard refuses it).
               UNIFI_CA_FILE: /etc/netdev-mcp/reader/ca.crt
-              UNIFI_READER_KEY_FILE: /etc/netdev-mcp/reader/reader-key
+              # The reader is a View Only LOCAL account (user, then password,
+              # two lines -- the same shape as UNIFI_OPERATOR_FILE), not an API
+              # key: on FAC1 the console had no read-only key, and the
+              # owner-made one could write (jgct#261, k8scc#67 finding 6,
+              # ferry133 2026-11-13).
+              UNIFI_READER_FILE: /etc/netdev-mcp/reader/reader
               # ---- the write release (k8scc#45, contract on #222 2026-10-26
               # 20:29). Write tools register only when EVERY input below is
               # usable; with any one missing the server stays a reader and its
@@ -114,9 +119,9 @@ spec:
               limits:
                 memory: 128Mi
     persistence:
-      # Secret `unifi-reader` (keys `ca.crt`, `reader-key`), rendered by
+      # Secret `unifi-reader` (keys `ca.crt`, `reader`), rendered by
       # jg-cluster-template into the user repo. A directory mount, not subPath:
-      # a subPath mount never sees a rotated key.
+      # a subPath mount never sees a rotated credential.
       #
       # optional: true on purpose. This is the rescue terminal's pod; a Secret
       # that has not landed yet (ordering between the user repo's

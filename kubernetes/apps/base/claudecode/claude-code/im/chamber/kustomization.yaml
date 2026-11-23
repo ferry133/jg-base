@@ -1,0 +1,63 @@
+---
+# im's chamber identity (ferry133/jg-base#248, fleet-ops agent-delegation-envelope
+# sub-change im-chamber-identity). A kustomize COMPONENT, not a position of the
+# claude-code-im switch: it adds to whichever position a cluster is on
+# (im/enabled or im/netdev) instead of needing one directory per combination.
+#
+# NOTHING REFERENCES IT BY DEFAULT. A cluster turns it on with one line on its
+# claude-code-im Kustomization:
+#
+#     spec:
+#       components:
+#         - ../chamber
+#
+# (relative to spec.path). Turning it on changes an existing im pod -- one more
+# container, one more Secret mounted -- and needs the operator's approval. It
+# is not something a merge here does.
+#
+# What it adds, and nothing else (scripts/check-chamber-component.sh holds
+# both directions -- every render without it is untouched, and a render with it
+# minus these additions IS the render without it):
+#   - container chamber-bridge: the only holder of the chamber login credential
+#   - a memory emptyDir for a Unix socket, mounted by app and the bridge ONLY
+#   - a small claim for the bridge's sync state, mounted by the bridge ONLY
+#     (#256: it has to outlive the pod; the socket does not)
+#   - Secret im-chamber (optional), mounted into the bridge ONLY
+#   - ConfigMap im-chamber-signers, mounted read-only into app as a directory
+#   - four env values on app
+#
+# The image is NOT written here; the replacement copies app's pin, for the same
+# reason as im/netdev: the pin-bump PRs rewrite only im/enabled/helmrelease.yaml.
+#
+# signers/ holds the public keys of the people whose signed words count as a
+# directive, and the keys that no longer do. They are public keys; they are
+# also the list of who can authorise a reserved action on every cluster.
+# A change to either file needs the operator's approval before merge.
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+configMapGenerator:
+  - name: im-chamber-signers
+    files:
+      - signers/allowed_signers
+      - signers/revoked_signers
+    options:
+      disableNameSuffixHash: true
+patches:
+  - path: ./bridge.yaml
+    target:
+      group: helm.toolkit.fluxcd.io
+      kind: HelmRelease
+      name: im
+replacements:
+  - source:
+      kind: HelmRelease
+      name: im
+      fieldPath: spec.values.controllers.im.containers.app.image.tag
+    targets:
+      - select:
+          kind: HelmRelease
+          name: im
+        fieldPaths:
+          - spec.values.controllers.im.containers.chamber-bridge.image.tag
+        options:
+          create: true

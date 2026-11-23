@@ -69,9 +69,13 @@ spec:
     defaultBackupStore:
       backupTarget: ${LONGHORN_BACKUP_TARGET:=}
     persistence:
-      # Not the cluster default. Bulk data does not need replication, and making
-      # this the default would quietly move every existing PVC onto it.
-      defaultClass: false
+      # Not the cluster default, except on an NFS cluster whose block tier
+      # (db_storage_class) is longhorn: jgct#257 renders LONGHORN_IS_DEFAULT
+      # true only there, so a PVC that names no class lands on the block tier
+      # the cluster chose, not on the NAS (ferry133 2026-11-01). Everywhere
+      # else bulk data does not need replication. A default never moves a
+      # bound PVC (storageClassName is immutable); it only decides new ones.
+      defaultClass: ${LONGHORN_IS_DEFAULT:=false}
       defaultClassReplicaCount: 2
       reclaimPolicy: Retain
     longhornUI:

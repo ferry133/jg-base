@@ -428,6 +428,23 @@ jobs:
       - name: netdev overlay adds the sidecar and nothing else
         run: bash scripts/check-netdev-overlay.sh && bash scripts/check-netdev-overlay.sh --self-test
 
+      # #248: im/chamber is a kustomize component that NOTHING in this repo
+      # references -- a cluster turns it on with spec.components on its own
+      # claude-code-im. So flux-local never builds it, and this step is its
+      # only coverage. It holds: nothing here references it (a merge changes
+      # no pod); on im/enabled and im/netdev alike, the render with it minus
+      # its additions is the render without it; the bridge is on the app
+      # container's pin; Secret im-chamber reaches the bridge container alone
+      # by every route a Secret can take (mount, global mount, projected,
+      # env, envFrom, init containers) and is optional; the pinned chart
+      # accepts the values (helm template -- the runner image carries helm);
+      # the socket volume is
+      # mounted by app and the bridge only; no port, no probe; the signer
+      # list is in app only, read-only, without subPath.
+      # --self-test runs one mutation per assertion against a scratch copy.
+      - name: chamber component is off by default and keeps the credential in the bridge
+        run: bash scripts/check-chamber-component.sh && bash scripts/check-chamber-component.sh --self-test
+
       # #145: the claudecode state archive mounts PVCs directly, because
       # `kubectl exec` needs a RUNNING pod and a scaled-to-0 instance has
       # none -- its content never reached off-site storage. Mounting removes
