@@ -69,7 +69,7 @@ spec:
       # for. postgres:16 is already being pulled for the container below.
       initContainers:
         - name: wait-for-postgres
-          image: postgres:16
+          image: postgres:16.16@sha256:3950ad7c3148ca2175ef1b6c36c9efbf78957ae8fbe8b3a5d7c35af50500382f
           command:
             - sh
             - -c
@@ -121,7 +121,7 @@ spec:
                   key: POSTGRES_DB
       containers:
         - name: migrate
-          image: postgres:16
+          image: postgres:16.16@sha256:3950ad7c3148ca2175ef1b6c36c9efbf78957ae8fbe8b3a5d7c35af50500382f
           command:
             - psql
             - -v
