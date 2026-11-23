@@ -70,6 +70,7 @@ kubernetes/apps/base/claudecode/claude-code/im/chamber/bridge.yaml|spec.values.c
 kubernetes/apps/base/claudecode/claude-code/im/netdev/netdev-mcp.yaml|spec.values.controllers.im.containers.netdev-mcp.image|tag is copied from the app container pin by the replacement in im/netdev/kustomization.yaml
 '
 
+TAB="$(printf '\t')"
 PIN_RE='@sha256:[0-9a-f]{64}$'
 DIGEST_RE='^sha256:[0-9a-f]{64}$'
 
@@ -85,14 +86,17 @@ command -v yq >/dev/null 2>&1 || cannot "yq required. CI installs it, pinned, in
 # A map under `image` without `repository` is not an image reference (a CRD
 # schema's `properties.image`, for one) and is not emitted.
 read_images() {
-  yq -r '
+  # The separator reaches yq through the environment, not as "\t" in the
+  # expression: yq 4.48.1 (the version CI pins) prints that escape literally,
+  # where 4.52 prints a tab. The reader control below is what caught it.
+  SEP="$TAB" yq -r '
     .. | select(tag == "!!map" and has("image")) | .image |
     (
-      (select(tag == "!!str") | "S\t" + (path | join(".")) + "\t" + .),
+      (select(tag == "!!str") | "S" + strenv(SEP) + (path | join(".")) + strenv(SEP) + .),
       (select(tag == "!!map" and has("repository")) |
-         "M\t" + (path | join(".")) + "\t" + (.repository | tostring) + "\t" +
-         ((.tag // "") | tostring) + "\t" + ((.digest // "") | tostring)),
-      (select(tag != "!!str" and tag != "!!map") | "X\t" + (path | join(".")) + "\t" + tag)
+         "M" + strenv(SEP) + (path | join(".")) + strenv(SEP) + (.repository | tostring) + strenv(SEP) +
+         ((.tag // "") | tostring) + strenv(SEP) + ((.digest // "") | tostring)),
+      (select(tag != "!!str" and tag != "!!map") | "X" + strenv(SEP) + (path | join(".")) + strenv(SEP) + tag)
     )
   ' "$1"
 }
@@ -253,7 +257,6 @@ nrefs="$(wc -l < "$WORK/refs" | tr -d ' ')"
 # ── Judge ──────────────────────────────────────────────────────────────────
 bad=0; n_str=0; n_map=0; n_allow=0
 : > "$WORK/untagged"
-TAB="$(printf '\t')"
 while IFS="$TAB" read -r rel kind path a b c; do
   case "$kind" in
     S)
