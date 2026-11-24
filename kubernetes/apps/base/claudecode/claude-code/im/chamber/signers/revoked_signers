@@ -1,0 +1,2 @@
+# chamber — keys that were once accepted and no longer are. THE ORIGINAL. One line per key:   KEYTYPE BASE64 [comment]
+# A key on this list is refused even where a stale allowed list still carries it, and is never listed again.

@@ -36,8 +36,18 @@
 
 ## 3. 公鑰清單
 
-- [ ] 3.1 等裁定：正本住哪（design Open Question 1）。定了之後補「這裡的副本與正本相同」的比對，或寫明這裡就是正本
+- [x] 3.1 等裁定：正本住哪（design Open Question 1）。定了之後補「這裡的副本與正本相同」的比對，或寫明這裡就是正本
+  - **裁定（ferry133，2026-11-24，在 `jg-base-d4 [a9cc43]` 的 console 選的選項）：正本在 `fleet-ops/chamber/`，這裡是副本。** 選項的原文是我寫的：「fleet-ops 是正本。jg-base 放副本給 im 用。因為 fleet-ops 是 private，jg-base 的 CI 讀不到它，所以『副本與正本相同』的比對放在 fleet-ops 那一側跑。」
+  - **比對是現成的工具**：`chamber-signers check --copy kubernetes/apps/base/claudecode/claude-code/im/chamber/signers`，在同時有兩個 repo 的機器上跑。0＝副本的金鑰與正本完全相同，1＝不同（逐條印出），2＝量不到。它比的是金鑰，不是位元組。
+  - **這個 repo 的 CI 量不到這一格**，也不假裝量得到：沒有任何步驟斷言副本與正本相同。誰定期跑、多久跑一次，歸 fleet-ops（見 3.2 的 PR 開的那張單）。
+  - **更新副本的方式**：`chamber-signers install --copy <同一個目錄>`，不手改。手改的副本與正本只差一個字時，`check` 會說出來；沒有人跑 `check` 時不會有任何東西說。
 - [ ] 3.2 第一把人的金鑰進清單——**PR 合併前 ferry133 點頭**；PR 由誰開照 3.1 的裁定
+  - **2026-11-24，`jg-base-d4 [a9cc43]`：PR 已開，停在合併之前。** 副本由 `chamber-signers install --copy` 寫入，來源是 fleet-ops `80ab7b4` 的那兩個檔。
+    - 事前：`check` 回 1，印出「副本缺 ferry133 的一把金鑰」。事後：回 0，`SAME`（正本 1 人 1 把、撤銷 0）。兩個檔與正本逐位元組相同（`cmp`）。
+    - `check-chamber-component.sh` 仍 rc=0。
+    - **合併會改到兩座現有的 im**（同日用 `kubeconfig-sa` 讀的）：jcom 與 jg-jiahd 的 `claude-code-im` 都是 `spec.components=["../chamber"]`，叢集上的 ConfigMap `im-chamber-signers` 兩個鍵都是 0 位元組。合併後一小時內，那兩座 im 的清單由空變成一把金鑰——也就是 im 開始有辦法驗 ferry133 簽的指令。
+    - **已知的一個瑕疵，不在這裡修**：副本是逐位元組照抄的，所以檔頭那一行仍寫著「THE ORIGINAL」，而且有一行「2026-11-17: no key yet」已經不成立。兩行都是註解，`ssh-keygen` 不讀；改它們要改正本或改工具，那是 fleet-ops 的。
+    - **沒量的**：任何 pod 裡的檔案（3.3）。
 - [ ] 3.3 量：改了 ConfigMap 之後，pod 裡 `/etc/chamber/signers` 的檔案多久跟上（不重建 pod）；撤銷一把測試金鑰，同一份指令在 pod 裡由 0 變 1。對照：`subPath` 掛的同一個檔不會變
 
 ## 4. daily-check 的一列（等 k8scc 把狀態行的格式定稿並貼到 `jg-base#248`）
