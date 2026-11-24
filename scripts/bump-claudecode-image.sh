@@ -54,11 +54,19 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 F="$ROOT/kubernetes/apps/base/claudecode/claude-code/im/enabled/helmrelease.yaml"
 [[ -f "$F" ]] || { echo "missing: $F" >&2; exit 1; }
 
+# Only tags that belong to this image are rewritten (#269). The file also pins
+# other images by tag@digest (oauth2-proxy since #220), and a pattern that
+# takes every digest-shaped `tag:` line would write the claude-code pin onto
+# them. A `tag:` line is rewritten only when the nearest `repository:` line
+# above it names REPO; each `tag:` line uses up its `repository:`, so a tag
+# with no repository of its own is left alone.
+#
 # The pin goes in via the environment and the `e` modifier concatenates it,
 # because a double-quoted perl replacement would interpolate `@sha256` as an
 # (empty) perl array — measured: the first version of this script wrote
 # `tag: <sha>:<digest>` and only the site-count guard below caught it.
-PIN="$PIN" perl -pi -e 's{^(\s*tag: )[\w.-]+\@sha256:[0-9a-f]{64}$}{$1 . $ENV{PIN}}ge' "$F"
+REPO="ghcr.io/ferry133/claude-code"
+PIN="$PIN" REPO="$REPO" perl -pi -e 'BEGIN { $r = "" } if (/^\s*repository:\s*(\S+)/) { $r = $1 } elsif (/^\s*tag:/) { s{^(\s*tag: )[\w.-]+\@sha256:[0-9a-f]{64}$}{$1 . $ENV{PIN}}e if $r eq $ENV{REPO}; $r = "" }' "$F"
 
 n=$(grep -c "tag: ${PIN}" "$F" || true)
 if [[ "$n" -ne 3 ]]; then
