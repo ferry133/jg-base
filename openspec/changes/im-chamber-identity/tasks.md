@@ -41,7 +41,11 @@
   - **比對是現成的工具**：`chamber-signers check --copy kubernetes/apps/base/claudecode/claude-code/im/chamber/signers`，在同時有兩個 repo 的機器上跑。0＝副本的金鑰與正本完全相同，1＝不同（逐條印出），2＝量不到。它比的是金鑰，不是位元組。
   - **這個 repo 的 CI 量不到這一格**，也不假裝量得到：沒有任何步驟斷言副本與正本相同。誰定期跑、多久跑一次，歸 fleet-ops（見 3.2 的 PR 開的那張單）。
   - **更新副本的方式**：`chamber-signers install --copy <同一個目錄>`，不手改。手改的副本與正本只差一個字時，`check` 會說出來；沒有人跑 `check` 時不會有任何東西說。
-- [ ] 3.2 第一把人的金鑰進清單——**PR 合併前 ferry133 點頭**；PR 由誰開照 3.1 的裁定
+- [x] 3.2 第一把人的金鑰進清單——**PR 合併前 ferry133 點頭**；PR 由誰開照 3.1 的裁定
+  - **2026-11-24 19:03，`jg-base-d4 [a9cc43]`：已合併、已驗收。**
+    - #264 由 ferry133 本人在 GitHub UI 合併（`3f4f231`，合併的 head 是 `5e0b823`）。我沒有按。
+    - 驗收由開單者 `fleet-ops-02 [e3795b]` 在 #263 上給（留言 7129599247）：jcom、jg-jiahd、jg-jcc2 三座 im 的 `chamber-verify-status` 從 pod 起來之後每一行都是 `signers=1 revoked=0 sshkeygen=ok`。那一行在 `app` 容器的 log，不在 `chamber-bridge`。
+    - **沒驗的**（照那則驗收）：沒有在任何 im 上驗過一份真的簽章。jg-jcc2 的清單來自該座 repo 自己的 patch，不是這裡的副本。
   - **2026-11-24，`jg-base-d4 [a9cc43]`：PR 已開，停在合併之前。** 副本由 `chamber-signers install --copy` 寫入，來源是 fleet-ops `80ab7b4` 的那兩個檔。
     - 事前：`check` 回 1，印出「副本缺 ferry133 的一把金鑰」。事後：回 0，`SAME`（正本 1 人 1 把、撤銷 0）。兩個檔與正本逐位元組相同（`cmp`）。
     - `check-chamber-component.sh` 仍 rc=0。
