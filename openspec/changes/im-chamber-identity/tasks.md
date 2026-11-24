@@ -43,10 +43,22 @@
     - **橋接程式的 TCP listener 是 0**：在橋接 container 裡 `ss -ltnp`，節點上 27 個 listener 沒有一個屬於它看得到的行程；它唯一的 listener 是 Unix socket `/run/chamber/bridge.sock`（`python3`，pid 1）。對照：同一個指令在 `app` 裡看得到 `127.0.0.1:7681` 屬於 `ttyd`。
     - **socket 目錄只有兩個 container 有**：`/run/chamber` 在 `app` 與 `chamber-bridge` 存在，在 `talos-mcp`、`netdev-mcp` 不存在。`oauth2-proxy` 的映像沒有 shell，進不去；它是從 pod spec 讀的（沒有任何 chamber 的 volumeMount）。
     - **沒量的**：只量了一座、一個 pod。`oauth2-proxy` 的檔案系統沒有實際看。jg-jcc2 的橋接 container 多了 `CHAMBER_SIGNERS_DIR`、`CHAMBER_TRANSCRIPTS` 兩個 env，`app` 多了 `CHAMBER_TRANSCRIPTS`，不在這個 repo 的 component 裡；來源沒有查。
-- [ ] 2.6 拆掉 patch 後 pod 回到原樣（container 數、volume 數與接上之前相同）
-  - **2026-11-24：沒做，等 ferry133。** `fleet-ops-02 [e3795b]` 判它是破壞性操作（預期的結果本身就包含刪掉 PVC `im-chamber-state`），已在自己的 console 問 ferry133。
-- [ ] 2.7 事前寫下預期，再量：`components` 那一行還在而路徑切到 `im/disabled`——預期 `claude-code-im` BuildFailed、im 的 HelmRelease **沒有被 prune**（design D1 的限制）；拿掉那一行後才被 prune
-  - **2026-11-24：沒做，等 ferry133。** `fleet-ops-02 [e3795b]` 在 jg-jcc2 讀到：Helm release `im` 的四個 PVC（`im-claude-config`、`im-claude-workspace`、`im-netdev-snapshots`、`im-chamber-state`）都是 `local-path`、reclaim `Delete`。HelmRelease 被 prune 時四個會一起被刪，包括 im 的登入狀態與 workspace。這一格的後半不是「im 停一下」。
+- [x] 2.6 拆掉 patch 後 pod 回到原樣（container 數、volume 數與接上之前相同）
+  - **2026-11-24 22:43–22:53（台北），`fleet-ops-02 [e3795b]` 在 jg-jcc2 量的**（jg-base `55f8d88`，映像 `ebdf226`）。讀數在 `jg-base#248` 的留言 7135118363；這裡是照那則留言抄的，不是我量的。依據是 ferry133 在他們的 console 的指示「248 兩格都做」。
+    - 拿掉 `components` 與兩個手寫 patch（jg-jcc2 `256d8b4`）：`claude-code-im` Ready，HelmRelease `im` 是同一個 uid。pod 從 5 個 container、14 個 volume 變成 4 個 container（`app`、`netdev-mcp`、`oauth2-proxy`、`talos-mcp`）、10 個 volume，4/4、重啟 0。
+    - 一起被刪的：ConfigMap `im-chamber-signers`、PVC `im-chamber-state`。另外三個 PVC 的 uid 不變。
+    - 單獨接回 `components`（`09a7ea9`）：5 個 container、14 個 volume，5/5；`im-chamber-state` 是新的一個。
+    - **限定**：「與接上之前相同」比的是沒有 component 的 `im/netdev` 在叢集上的樣子，不是 11-20 接上之前的讀數（那時的 volume 清單沒有留下紀錄）。
+    - **拆掉不會帶走 Secret `im-chamber`**：它是手建的，不在 Flux 的 inventory 裡，要另外刪。
+    - **沒量的**：只量了一座、一次。jcom 與 jg-jiahd 的 Secret 是 Flux 渲染的，那一種在拆掉時會怎樣沒有量。
+- [x] 2.7 事前寫下預期，再量：`components` 那一行還在而路徑切到 `im/disabled`——預期 `claude-code-im` BuildFailed、im 的 HelmRelease **沒有被 prune**（design D1 的限制）；拿掉那一行後才被 prune
+  - **2026-11-24 22:43–22:53（台北），`fleet-ops-02 [e3795b]` 在 jg-jcc2 量的**，同一則留言（7135118363），同一個依據。預期在動手前寫下，兩半都相符。
+    - **前半**（路徑 `im/disabled`，`components` 還在，jg-jcc2 `757f169`）：`claude-code-im` 是 `False/BuildFailed`，訊息是 `accumulating components … nothing selected by HelmRelease…`。HelmRelease `im` 還在，uid 與版本都不變；pod 是同一個（5/5）；inventory 三項都在，沒有東西被 prune。
+    - **後半**（拿掉 `components`，`8c46b30`）：`claude-code-im` Ready，inventory 空；HelmRelease 與 im 的 pod 都不見了。CronJob `claudecode-state-backup` 也被 prune。
+    - **PVC 被刪的是兩個，不是四個**：`im-netdev-snapshots` 與 `im-chamber-state` 被刪；`im-claude-config` 與 `im-claude-workspace` 留著，uid 不變（它們帶 `helm.sh/resource-policy: keep`，來自 HelmRelease 的 `retain: true`）。**下面那一段當天稍早的話因此是錯的**，留著是因為它是當時的紀錄。
+    - **還原**（`df3f73e`）：新的 release 把留下的兩個 PVC 接回去（uid 不變），另外兩個是新的；pod 5/5。登入檔都在（只看了存在與 mtime）。
+    - **沒量的**：只量了一座、每一步一次。登入檔在，不等於登入還有效（沒有開 session 試）。`im-netdev-snapshots` 換新後 netdev 的基準沒了，daily-check 那一列下一次怎麼寫沒有量。前半只量了「單獨一行 `components`」，帶著手寫 patch 的形狀沒有量。
+  - **2026-11-24 稍早（已被上面更正）：** `fleet-ops-02 [e3795b]` 在 jg-jcc2 讀到：Helm release `im` 的四個 PVC（`im-claude-config`、`im-claude-workspace`、`im-netdev-snapshots`、`im-chamber-state`）都是 `local-path`、reclaim `Delete`。HelmRelease 被 prune 時四個會一起被刪，包括 im 的登入狀態與 workspace。這一格的後半不是「im 停一下」。
 
 ## 3. 公鑰清單
 
