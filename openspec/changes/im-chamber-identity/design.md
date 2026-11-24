@@ -59,7 +59,7 @@ im 的 pod 是 `hostNetwork: true`（`im/enabled/helmrelease.yaml` 的 `defaultP
   - 擋得住：憑證不躺在 `app` 的檔案系統與 env 裡——`env`、`ps`、狀態封存、transcript 不會意外帶出它。守衛檢查的是這一件，而且只檢查 pod spec 的文字。
   - **橋接 container 看得到什麼**（`jg-base-56 [c30591]` 讀渲染出的 pod）：除了這個 component 給它的三樣，它還掛著 `claude-config`（`/home/claude/.claude`、keyrings）與 `claude-workspace`——底下的 HelmRelease 用 `globalMounts`，新 container 自動繼承。與 `talos-mcp` 相同，不是這個 change 帶進來的；意思是橋接程式讀得到 agent 的設定與工作區，反過來 `app` 讀不到 `/etc/chamber`。
   - 擋不住 `app` 內的冒用：能打開 socket 的行程都能以 im 的名義收發（k8scc design D-b 明寫）。
-  - **擋不住 `app` 去讀憑證**：整個 pod 用 ServiceAccount `claude-code`（`im/enabled/helmrelease.yaml` 的 `serviceAccount`），`app/rbac.yaml` 把它綁到 `cluster-admin`。`app` 是 root shell、帶著那個 SA 的 token，不需要掛載，問 apiserver 就讀得到 `im-chamber` 的每一個鍵。（讀的是來源檔；沒有在叢集上從 `app` 實讀一次——tasks 2.5 加一格。）`talos-mcp` 既有的隔離是同一個形狀，不是這個 change 帶進來的。
+  - **擋不住 `app` 去讀憑證**：整個 pod 用 ServiceAccount `claude-code`（`im/enabled/helmrelease.yaml` 的 `serviceAccount`），`app/rbac.yaml` 把它綁到 `cluster-admin`。`app` 是 root shell、帶著那個 SA 的 token，不需要掛載，問 apiserver 就讀得到 `im-chamber` 的每一個鍵。（2026-11-24 在 jg-jcc2 的 `app` 裡實讀了一次：rc=0，兩個鍵都在——tasks 2.5。）`talos-mcp` 既有的隔離是同一個形狀，不是這個 change 帶進來的。
   - 所以保留類的依據不能是這把憑證，也不是它——root 的設計本來就是「伺服器記的寄件人對保留類沒有效力，只認人的簽章」。這把憑證被 `app` 拿到，後果是以 im 的名義說一般類的話，在 `app` 本來就能經 socket 做到的範圍內；多出來的是**可以帶到 pod 外面去用**。
 
 ### D4 公鑰清單：這個 repo 渲染的 ConfigMap，掛成目錄（提案；有一格等裁定）
@@ -69,13 +69,13 @@ im 的 pod 是 `hostNetwork: true`（`im/enabled/helmrelease.yaml` 的 `defaultP
 - 初始是空的。空清單下 `directive-verify` 回 2（量不到），不是 0。
 - **CI 覆蓋只有一支守衛**：這個 repo 裡沒有任何東西引用這個 component，所以 flux-local 永遠不會建到它；合併後它唯一的 CI 覆蓋是 tasks 1.2 那支守衛（`jg-base-56 [c30591]` 指出）。
 - **裁定（ferry133，2026-11-24）：正本在 `fleet-ops/chamber/`，這裡持有副本。** 副本由 `chamber-signers install --copy` 寫入、由 `chamber-signers check --copy` 比對（比金鑰，不比位元組）；這個 repo 的 CI 讀不到 private 的正本，所以比對在 fleet-ops 那一側跑，這裡沒有任何步驟斷言兩者相同。**不論正本在哪，改這兩個檔的 PR 合併前要 ferry133 點頭**——那是在改「誰的話算指令」，而 agent 不得增加簽章者（root 的裁定）。（裁定之前這一條寫的是「等裁定：清單的正本住哪」。）
-- **沒量到的**：ConfigMap 更新到 pod 裡的檔案實際要多久（tasks 3.3）。
+- **量到的（2026-11-24，tasks 3.3）**：ConfigMap 更新後，目錄掛載的檔在 42 到 58 秒之間跟上，pod 裡的驗章結果同時由 0 變 1；`subPath` 掛的那一份 213 秒後仍是舊的。只量一次，不是上限。
 
 ### D5 daily-check：讀 pod log，不加 `exec`（提案）
 
 daily-check 在 `claudecode` 只有 `pods/log`（`daily-check/claudecode/rbac.yaml`）。往一個握有叢集管理權的 agent pod 裡 `exec` 是比這一列大得多的權限，不加。`netdev-mcp sidecar` 那一列已經是這個形狀。
 
-所以四個讀數來自兩行定期印出的狀態（格式是 k8scc 的草案，2026-11-19；**定稿前這一列不實作**）。**哪一行由哪個 container 印要先定**（`jg-base-56 [c30591]` 指出）：公鑰清單只掛進 `app`（D4），所以 `chamber-verify-status` 只能由 `app` 裡的行程印（k8scc 的草案是 `chamber-watch`），`chamber-status` 由橋接 container 印——這一列因此要讀兩個 container 的 log，而 `app` 的 stdout 目前是誰在寫、會不會被別的輸出淹掉，要在 k8scc 定稿時先看。**間隔不寫死在 daily-check 裡**：請狀態行自己帶 `interval=<秒>`，「太舊」＝比 3 個它自己說的間隔還舊。這兩件是給 k8scc 定稿的輸入。
+所以四個讀數來自兩行定期印出的狀態（下面的格式是 k8scc 2026-11-19 的草案；定稿在本節表格之後）。**哪一行由哪個 container 印要先定**（`jg-base-56 [c30591]` 指出）：公鑰清單只掛進 `app`（D4），所以 `chamber-verify-status` 只能由 `app` 裡的行程印（k8scc 的草案是 `chamber-watch`），`chamber-status` 由橋接 container 印——這一列因此要讀兩個 container 的 log，而 `app` 的 stdout 目前是誰在寫、會不會被別的輸出淹掉，要在 k8scc 定稿時先看。**間隔不寫死在 daily-check 裡**：請狀態行自己帶 `interval=<秒>`，「太舊」＝比 3 個它自己說的間隔還舊。這兩件是給 k8scc 定稿的輸入。
 
 ```
 chamber-status ts=<epoch> mode=observe|deliver|unconfigured server=ok|unreachable|refused rooms=<排序、逗號分隔，沒有是 -> online=yes|no|unmeasured
@@ -97,6 +97,12 @@ chamber-verify-status ts=<epoch> signers=<n> revoked=<n> sshkeygen=ok|missing
 | `mode=deliver` 且 `online=no` | `fail`（R20） |
 | `mode=observe` | 在線那一格不判，訊息寫「觀察模式，不上線是設計」 |
 | 任何欄位是 `unmeasured` | 那一格 `skip` |
+
+**定稿（2026-11-24，`k8scc-bf [97703c]`，`ferry133/jg-base#248` issuecomment-7130894158，v1）。** 上面兩行草案多了一個欄位：兩行都帶 `interval=<秒>`。`server` 另有 `unmeasured`（只和 `mode=unconfigured` 一起出現），`rooms` 另有 `unmeasured`。k8scc 承諾欄位名稱、順序與值不改，之後只在行尾加欄位，所以列用 `key=value` 解析。列（第 33 列）照定稿寫，與上表有三處不同：
+
+- **過期門檻是 `3 × interval + 300 秒`，不是 3 個間隔。** `interval` 是最短週期：每一輪還要加上對伺服器的請求，每個上限 70 秒。300 是 k8scc 讀程式推的建議值，沒有在不通的伺服器上量過。
+- **`app` 裡沒有 `chamber-verify-status`，而 log 裡有 `chamber-watch:` 自己說沒起來的那一行 → `warn`，不是 `skip`。** k8scc 指出：有橋接 container 而沒有這一行，是「該起而沒起」，不是量不到。兩行都找不到時仍是 `skip`。
+- **預期的房間是 `cust-<CLUSTER_NAME>`，剛好一間。** 多一間、少一間、換一間都是 `fail`。命名規則不是 k8scc 的（映像不讀 `CLUSTER_NAME`），是伺服器那一側的，由 fleet-ops 持有；這裡的依據是 `~/coding/CLAUDE.md` 的 chamber 段與 2026-11-24 三座的現場讀數（`cust-jcom`、`cust-jg-jcc2`）。
 
 - 預期的房間由 daily-check 自己從 `CLUSTER_NAME` 推，不讀橋接程式的說法——拿被量的東西的自述當預期，等於沒有比。房間的命名規則以 root 為準。
 - **這一列量不到的**：沒有 `chamber-bridge` container 時回 `skip`，分不出「從來沒接」與「接過、掉了」——「這座應該接著」的預期住在 user repo，daily-check 讀不到。現在接受。

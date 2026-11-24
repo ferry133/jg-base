@@ -2478,6 +2478,183 @@ data:
       fi
     fi
 
+    # 33. im chamber (ferry133/jg-base#248; fleet-ops root
+    # `agent-delegation-envelope`, sub-change `im-chamber-identity` D5).
+    #
+    # Only where im carries the im/chamber component. No exec: two status lines
+    # that the image prints on its own, read with the pods/log grant row 31
+    # already has. The format is k8scc's commitment (v1, jg-base#248 comment
+    # 7130894158, read off k8scc ebdf226): fields are parsed as key=value, never
+    # by position, because new fields may be appended.
+    #
+    #   chamber-status         container chamber-bridge, stdout
+    #   chamber-verify-status  container app, stderr, printed by chamber-watch
+    #
+    # Each line carries its own `interval=`. A line is too old to judge when its
+    # `ts` is more than 3 x interval + 300 s behind now. The 300 is k8scc's
+    # suggestion, derived from the code's request timeouts and not measured
+    # against a server that is down.
+    #
+    # The expected room is `cust-<CLUSTER_NAME>`, worked out here. The bridge's
+    # own `rooms=` is the thing being measured, so it cannot also be the
+    # expectation. The naming rule is fleet-ops' (the server side), not k8scc's.
+    #
+    # The result is the worst of the readings:
+    #   fail  bridge declared but not running; server unreachable or refused;
+    #         rooms differ from the expected room; ssh-keygen missing; deliver
+    #         mode and not online (im is meant to be online at all times).
+    #   warn  mode=unconfigured (attached, and the Secret is absent or
+    #         incomplete); signers=0 (every directive would read "cannot
+    #         measure"); chamber-watch said it did not start.
+    #   skip  no im; no chamber-bridge container; logs unreadable; a status line
+    #         absent or too old; a field that reads `unmeasured` or a value this
+    #         row does not know. Each is named.
+    #   ok    names mode, server, room, online and the signer counts.
+    #
+    # In observe mode `online=no` is the design, so presence is not judged.
+    #
+    # What this row cannot tell: "never attached" from "was attached and came
+    # off" (both are a pod without the container, and which clusters should be
+    # attached is recorded in the user repo, which this job cannot read). And
+    # `signers=<n>` says the list is readable, not that a signature was ever
+    # verified with it.
+    CH_NAME="im chamber"
+    CH_DEPLOY=$(kubectl -n claudecode get deploy im -o json 2>/dev/null) || CH_DEPLOY=""
+    if [[ -z "$CH_DEPLOY" ]]; then
+      record skip "$CH_NAME" "no im deployment — nothing measured"
+    elif ! echo "$CH_DEPLOY" | jq -e '.spec.template.spec.containers[] | select(.name == "chamber-bridge")' >/dev/null 2>&1; then
+      record skip "$CH_NAME" "im has no chamber-bridge container — this cluster is not attached to chamber"
+    else
+      CH_SEL=$(echo "$CH_DEPLOY" | jq -r '.spec.selector.matchLabels | to_entries | map("\(.key)=\(.value)") | join(",")')
+      CH_PODS=$(kubectl -n claudecode get pods -l "$CH_SEL" -o json 2>/dev/null) || CH_PODS=""
+      # The newest pod whose chamber-bridge container is running.
+      CH_RUN='[.items[] | {pod: .metadata.name, c: ((.status.containerStatuses // [])[] | select(.name == "chamber-bridge" and .state.running != null))}] | sort_by(.c.state.running.startedAt) | last'
+      CH_POD=$(echo "$CH_PODS" | jq -r "($CH_RUN) // {} | .pod // empty" 2>/dev/null)
+      if [[ -z "$CH_PODS" ]]; then
+        record skip "$CH_NAME" "im pods could not be listed"
+      elif [[ -z "$CH_POD" ]]; then
+        record fail "$CH_NAME" "im declares a chamber-bridge container but none is running"
+      elif ! CH_BLOG=$(kubectl -n claudecode logs "$CH_POD" -c chamber-bridge --tail=200 2>&1); then
+        if grep -qi "forbidden" <<<"$CH_BLOG"; then
+          record skip "$CH_NAME" "no RBAC permission to read pods/log in claudecode — not measured, which is not the same as clean"
+        else
+          record skip "$CH_NAME" "logs of ${CH_POD}/chamber-bridge unreadable: $(echo "$CH_BLOG" | head -1)"
+        fi
+      else
+        # One field of one status line. Prints nothing when the key is absent.
+        ch_field() { tr ' ' '\n' <<<"$1" | sed -n "s/^$2=//p" | head -1; }
+        # Prints the age in seconds when the line is too old to judge, `bad` when
+        # ts or interval is not a number, and nothing when the line is fresh.
+        ch_stale() {
+          local ts iv
+          ts=$(ch_field "$1" ts); iv=$(ch_field "$1" interval)
+          [[ "$ts" =~ ^[0-9]+$ && "$iv" =~ ^[0-9]+(\.[0-9]+)?$ ]] || { echo bad; return; }
+          awk -v now="$CH_NOW" -v ts="$ts" -v iv="$iv" 'BEGIN { age = now - ts; if (age > 3 * iv + 300) printf "%d", age }'
+        }
+        CH_NOW=$(date -u +%s)
+        CH_FAILS=() CH_WARNS=() CH_SKIPS=() CH_OKS=()
+        CH_S=$(grep '^chamber-status ' <<<"$CH_BLOG" | tail -1)
+        CH_MODE=""
+        if [[ -z "$CH_S" ]]; then
+          CH_SKIPS+=("no chamber-status line in the last 200 lines of ${CH_POD}/chamber-bridge")
+        else
+          CH_AGE=$(ch_stale "$CH_S")
+          if [[ "$CH_AGE" == bad ]]; then
+            CH_SKIPS+=("chamber-status has no usable ts/interval: ${CH_S}")
+          elif [[ -n "$CH_AGE" ]]; then
+            CH_SKIPS+=("the newest chamber-status line is ${CH_AGE} s old (interval $(ch_field "$CH_S" interval) s) — too old to judge")
+          else
+            CH_MODE=$(ch_field "$CH_S" mode)
+            CH_SERVER=$(ch_field "$CH_S" server)
+            CH_ROOMS=$(ch_field "$CH_S" rooms)
+            CH_ONLINE=$(ch_field "$CH_S" online)
+            CH_WANT="cust-${CLUSTER_NAME}"
+            case "$CH_MODE" in
+              unconfigured)
+                CH_WHY=$(grep -E '^chamber-bridge: (not configured|incomplete)' <<<"$CH_BLOG" | tail -1)
+                CH_WARNS+=("attached but not configured (mode=unconfigured)${CH_WHY:+: ${CH_WHY#chamber-bridge: }} — the bridge has opened no connection") ;;
+              observe|deliver)
+                case "$CH_SERVER" in
+                  ok)
+                    CH_OKS+=("mode ${CH_MODE}, server ok")
+                    if [[ "$CH_ROOMS" == "$CH_WANT" ]]; then
+                      CH_OKS+=("room ${CH_ROOMS}")
+                    elif [[ "$CH_ROOMS" == unmeasured || -z "$CH_ROOMS" ]]; then
+                      CH_SKIPS+=("rooms=${CH_ROOMS:-<absent>} — the bridge could not read a room name, so membership was not judged")
+                    else
+                      CH_FAILS+=("rooms=${CH_ROOMS}, expected exactly ${CH_WANT}")
+                    fi
+                    if [[ "$CH_MODE" == observe ]]; then
+                      CH_OKS+=("observe mode, so not being online is the design (online=${CH_ONLINE:-<absent>}, not judged)")
+                    else
+                      case "$CH_ONLINE" in
+                        yes) CH_OKS+=("online") ;;
+                        no) CH_FAILS+=("deliver mode and online=no — im's session is not sending its alive signal") ;;
+                        *) CH_SKIPS+=("online=${CH_ONLINE:-<absent>} — presence not judged") ;;
+                      esac
+                    fi ;;
+                  unreachable|refused)
+                    CH_FAILS+=("mode ${CH_MODE}, server=${CH_SERVER} — $([[ "$CH_SERVER" == refused ]] && echo "the server refused the credential, or it belongs to another account" || echo "no HTTP answer from the chamber server")") ;;
+                  *) CH_SKIPS+=("mode ${CH_MODE}, server=${CH_SERVER:-<absent>} — rooms and presence not judged") ;;
+                esac ;;
+              *) CH_SKIPS+=("mode=${CH_MODE:-<absent>} is not a value this row knows: ${CH_S}") ;;
+            esac
+          fi
+        fi
+        # The verify line is in app's log, among other output. The tail is enough
+        # for a line printed every interval; when it is not there, the whole log
+        # is read once for chamber-watch's own reason.
+        if ! CH_ALOG=$(kubectl -n claudecode logs "$CH_POD" -c app --tail=500 2>&1); then
+          CH_SKIPS+=("logs of ${CH_POD}/app unreadable, so the signer list was not judged: $(echo "$CH_ALOG" | head -1)")
+        else
+          CH_V=$(grep '^chamber-verify-status ' <<<"$CH_ALOG" | tail -1)
+          if [[ -z "$CH_V" ]]; then
+            CH_WATCH=$(kubectl -n claudecode logs "$CH_POD" -c app 2>/dev/null | grep '^chamber-watch: ' | tail -1)
+            if [[ -n "$CH_WATCH" ]]; then
+              CH_WARNS+=("no chamber-verify-status line; app's last word on it: ${CH_WATCH} — the signer list is not being reported")
+            else
+              CH_SKIPS+=("no chamber-verify-status line in the last 500 lines of ${CH_POD}/app, and no chamber-watch line saying why — signer list not judged")
+            fi
+          else
+            CH_AGE=$(ch_stale "$CH_V")
+            if [[ "$CH_AGE" == bad ]]; then
+              CH_SKIPS+=("chamber-verify-status has no usable ts/interval: ${CH_V}")
+            elif [[ -n "$CH_AGE" ]]; then
+              CH_SKIPS+=("the newest chamber-verify-status line is ${CH_AGE} s old — signer list not judged")
+            else
+              CH_SIGNERS=$(ch_field "$CH_V" signers)
+              CH_REVOKED=$(ch_field "$CH_V" revoked)
+              CH_KEYGEN=$(ch_field "$CH_V" sshkeygen)
+              case "$CH_KEYGEN" in
+                ok) ;;
+                missing) CH_FAILS+=("sshkeygen=missing — no directive can be verified in this pod") ;;
+                *) CH_SKIPS+=("sshkeygen=${CH_KEYGEN:-<absent>} — not judged") ;;
+              esac
+              if [[ "$CH_SIGNERS" == 0 ]]; then
+                CH_WARNS+=("signers=0 — the list is readable and empty, so every directive reads \"cannot measure\"")
+              elif [[ "$CH_SIGNERS" =~ ^[0-9]+$ ]]; then
+                CH_OKS+=("signers ${CH_SIGNERS}, revoked ${CH_REVOKED:-<absent>} (the list is readable; no signature was verified by this row)")
+              else
+                CH_SKIPS+=("signers=${CH_SIGNERS:-<absent>} — the signer list could not be read")
+              fi
+            fi
+          fi
+        fi
+        ch_join() { local out; out=$(printf '%s; ' "$@"); echo "${out%; }"; }
+        CH_REST=""
+        [[ ${#CH_OKS[@]} -gt 0 ]] && CH_REST="read fine: $(ch_join "${CH_OKS[@]}")"
+        if [[ ${#CH_FAILS[@]} -gt 0 ]]; then
+          record fail "$CH_NAME" "$(ch_join "${CH_FAILS[@]}")${CH_WARNS[*]:+ | also: $(ch_join "${CH_WARNS[@]}")}${CH_SKIPS[*]:+ | not measured: $(ch_join "${CH_SKIPS[@]}")}${CH_REST:+ | ${CH_REST}}"
+        elif [[ ${#CH_WARNS[@]} -gt 0 ]]; then
+          record warn "$CH_NAME" "$(ch_join "${CH_WARNS[@]}")${CH_SKIPS[*]:+ | not measured: $(ch_join "${CH_SKIPS[@]}")}${CH_REST:+ | ${CH_REST}}"
+        elif [[ ${#CH_SKIPS[@]} -gt 0 ]]; then
+          record skip "$CH_NAME" "$(ch_join "${CH_SKIPS[@]}")${CH_REST:+ | ${CH_REST}}"
+        else
+          record ok "$CH_NAME" "$(ch_join "${CH_OKS[@]}")"
+        fi
+      fi
+    fi
+
     if [[ $FAIL_COUNT -gt 0 ]]; then
       STATUS_TAG="❌ ${FAIL_COUNT} FAIL"
       [[ $WARN_COUNT -gt 0 ]] && STATUS_TAG="${STATUS_TAG}, ${WARN_COUNT} WARN"

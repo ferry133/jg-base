@@ -550,6 +550,16 @@ jobs:
       # and that the baseline moves only on a judged change.
       - name: daily-check row 31 (netdev-mcp) verdicts
         run: bash scripts/check-netdev-row.sh
+      # #248: row 33 reads two status lines whose format is k8scc's commitment
+      # (v1). Every verdict in the design's table, the age limit on both sides
+      # and following the line's own interval, and that the expected room is
+      # worked out here and not taken from the bridge. The self-test runs
+      # first: cell 0 unmutated, then ten mutations that must each turn the
+      # case they were aimed at red.
+      - name: daily-check row 33 (im chamber) guard self-test
+        run: bash scripts/check-chamber-row.sh --self-test
+      - name: daily-check row 33 (im chamber) verdicts
+        run: bash scripts/check-chamber-row.sh
       # #190: ClusterRole tenant-admin is the only thing a tenant SA is bound
       # to. Its deny list -- Flux/cilium/storage/cluster-scoped kinds,
       # escalate/bind/impersonate, any `*`, writable quota -- and a self-test
