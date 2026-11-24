@@ -190,6 +190,19 @@ jobs:
       - name: daily-check im image pin row
         run: bash scripts/check-image-pin-row.sh
 
+      # #220: the row above reads only `im`. Nothing checked any other image,
+      # and postgres:16 / alpine:3.20 ran on rolling tags — 16.13 on one
+      # cluster and 16.14 on the other on the day this was added. This reads
+      # every `image` key under kubernetes/ and refuses one without
+      # @sha256:<64 hex>. Images whose tag the manifest does not write are an
+      # allowlist with a pinned length. The self-test runs first: its cell 0
+      # is the unmutated tree, so a broken guard cannot read as "every
+      # mutation was caught".
+      - name: every image is pinned by digest (self-test)
+        run: bash scripts/check-image-pins.sh --self-test
+      - name: every image is pinned by digest
+        run: bash scripts/check-image-pins.sh
+
       # fleet-ops#11: an expired Omni SA key passes every other row — the pod
       # stays Running and the break is a talosctl auth error at call time.
       # Check 24 reads the expiry recorded at issuance. The cases that must
