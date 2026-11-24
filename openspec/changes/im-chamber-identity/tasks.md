@@ -78,11 +78,11 @@
 
 - [x] 4.1 格式定稿之前不寫。定稿後照 design D5 的表實作一列；預期的房間由 `CLUSTER_NAME` 推
   - **2026-11-24，`jg-base-d4 [a9cc43]`。** 格式由 `k8scc-bf [97703c]` 定稿並貼在 `ferry133/jg-base#248` issuecomment-7130894158（v1，讀自 k8scc `ebdf226`）。列是第 33 列「im chamber」。
-    - 與 design D5 的表有三處不同，都寫回 D5 了：過期門檻是 `3 × interval + 300 秒`；`app` 沒有 `chamber-verify-status` 而 `chamber-watch` 自己說了沒起來時是 `warn`，不是 `skip`；預期的房間是 `cust-<CLUSTER_NAME>`，剛好一間。
-    - **把同一段程式從這台 Mac 對三座叢集唯讀跑了一次**（不是 CronJob 跑的）：jcom `ok`（observe、`cust-jcom`）；jg-jiahd `skip`（`rooms=unmeasured`，橋接程式讀不到房間名）；jg-jcc2 `fail`（deliver 而 `online=no`，當時 pod 剛被換過、裡面沒有 session）。三個結果都與當下的事實相符。
+    - 與 design D5 的表有四處不同，都寫回 D5 了：橋接程式的那一行不單獨判最新一行（驗收時 `fleet-ops-02 [e3795b]` 量到 jg-jiahd 間歇斷線後改的）；過期門檻是 `3 × interval + 300 秒`；`app` 沒有 `chamber-verify-status` 而 `chamber-watch` 自己說了沒起來時是 `warn`，不是 `skip`；預期的房間是 `cust-<CLUSTER_NAME>`，剛好一間。
+    - **把同一段程式從這台 Mac 對三座叢集唯讀跑了一次**（不是 CronJob 跑的）：jcom `ok`（observe、`cust-jcom`）；jg-jiahd 第一版是 `skip`（最新一行剛好是 `rooms=unmeasured`），改成不單獨判最新一行之後連跑三次都是 `ok`，訊息帶著「幾行不乾淨」的數字；jg-jcc2 `fail`（deliver 而 `online=no`，當時 pod 剛被換過、裡面沒有 session）。三個結果都與當下的事實相符。
     - daily-check 的 ServiceAccount 讀得到這兩份 log（`kubectl auth can-i get pods/log --as …`，jg-jcc2，yes）。
 - [x] 4.2 `scripts/check-chamber-row.sh`：表上每一個情形各一份 fixture log，結果逐格相符；「狀態行太舊」與「欄位是 unmeasured」各自落在 `skip`，不落在 `ok`
-  - 34 格 fixture，其中三格是 2026-11-24 在三座叢集讀到的原行（只換 `ts`）。「太舊」兩側各一格，另一格證明門檻跟著那一行自己的 `interval`。`--self-test` 13 格：第 0 格不變異＝綠；10 個變異各自先確認檔案真的變了，再確認是它瞄準的那一格變紅；ConfigMap 讀不到、列標頭不見各回 2。
+  - 40 格 fixture（第 34–39 格是間歇斷線），其中三格是 2026-11-24 在三座叢集讀到的原行（只換 `ts`）。「太舊」兩側各一格，另一格證明門檻跟著那一行自己的 `interval`。`--self-test` 17 格：第 0 格不變異＝綠；14 個變異各自先確認檔案真的變了，再確認是它瞄準的那一格變紅；ConfigMap 讀不到、列標頭不見各回 2。
 - [x] 4.3 `daily-check/README.md` 的圖例加這一列；`check-row-numbers-resolve.sh` 仍綠
   - 守衛第一次跑是紅的：README 標題寫 34 項而表有 35 列。改成 35 後 rc=0。
 - [ ] 4.4 在拋棄式叢集上各看到一次：沒接（`skip`）、接了沒設定（`warn`）、觀察模式（`ok`，在線不判）、送達模式且 session 在（`ok`）、送達模式而 session 不在（`fail`）

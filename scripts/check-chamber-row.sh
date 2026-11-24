@@ -7,6 +7,10 @@
 # tail, app's whole log). Anything else fails loudly: a stub that ignores its
 # arguments is a constant.
 #
+# Cases 34-39 are the intermittent link (fleet-ops-02 on #267): the newest
+# line is not judged alone, and a server is down only when every fresh line
+# says so.
+#
 # The status lines follow k8scc's committed format (v1, jg-base#248 comment
 # 7130894158). Three of the fixtures are lines read live on 2026-11-24 with
 # only `ts` replaced: jg-jcc2 (deliver, online), jcom (observe) and jg-jiahd
@@ -61,6 +65,9 @@ st() {  # age-seconds mode server rooms online [interval]
   echo "chamber-bridge: started — mode=$2 account=im-fixture socket=/run/chamber/bridge.sock — the credential is in this container only"
   echo "chamber-status ts=$(( NOW - 4000 )) interval=${6:-20} mode=deliver server=unreachable rooms=unmeasured online=unmeasured"
   echo "chamber-status ts=$(( NOW - $1 )) interval=${6:-20} mode=$2 server=$3 rooms=$4 online=$5"
+}
+ln() {  # one status line: age-seconds mode server rooms online
+  echo "chamber-status ts=$(( NOW - $1 )) interval=20 mode=$2 server=$3 rooms=$4 online=$5"
 }
 vf() {  # age-seconds signers revoked sshkeygen
   echo "entrypoint: starting"
@@ -163,12 +170,28 @@ run_all() {
   run_case "30 unknown mode" "$DEPLOY_CH" "$ONE" "$(st 5 relay ok cust-jg-fixture yes)" ok "$GOODV" ok "" skip "mode=relay is not a value this row knows"
   run_case "31 an appended field does not move the others" "$DEPLOY_CH" "$ONE" "chamber-status ts=$(( NOW - 3 )) interval=20 mode=deliver server=ok rooms=cust-jg-fixture online=yes queue=4" ok "$GOODV" ok "" ok "room cust-jg-fixture && online"
   run_case "32 ts is not a number" "$DEPLOY_CH" "$ONE" "chamber-status ts=soon interval=20 mode=deliver server=ok rooms=cust-jg-fixture online=yes" ok "$GOODV" ok "" skip "no usable ts/interval"
+  # jg-jiahd, 2026-11-24: the link drops for a beat or two every few minutes.
+  # A row that read only the newest line was red or green by the second it ran.
+  run_case "34 newest line unreachable, a clean line 45 s before it: judged by the clean line, the drop is counted" "$DEPLOY_CH" "$ONE" \
+    "$(ln 85 observe ok cust-jg-fixture no; ln 65 observe ok cust-jg-fixture no; ln 45 observe ok cust-jg-fixture no; ln 25 observe ok unmeasured unmeasured; ln 5 observe unreachable unmeasured unmeasured)" ok "$GOODV" ok "" ok \
+    "mode observe, server ok && room cust-jg-fixture && intermittent: of 5 status lines in the log tail, 1 had no server and 1 could not read room names" "server=unreachable"
+  run_case "35 newest line cannot read rooms, a clean line before it: ok, counted" "$DEPLOY_CH" "$ONE" \
+    "$(ln 45 deliver ok cust-jg-fixture yes; ln 5 deliver ok unmeasured unmeasured)" ok "$GOODV" ok "" ok "room cust-jg-fixture && online && 0 had no server and 1 could not read room names"
+  run_case "36 down for the whole window: the last clean line is too old to count" "$DEPLOY_CH" "$ONE" \
+    "$(ln 500 deliver ok cust-jg-fixture yes; ln 300 deliver unreachable unmeasured unmeasured; ln 150 deliver unreachable unmeasured unmeasured; ln 5 deliver unreachable unmeasured unmeasured)" ok "$GOODV" ok "" fail \
+    "server=unreachable && on every one of the 3 fresh status line(s)" "online"
+  run_case "37 no clean line in the window, and not down throughout: not judged" "$DEPLOY_CH" "$ONE" \
+    "$(ln 45 observe ok unmeasured unmeasured; ln 5 observe unreachable unmeasured unmeasured)" ok "$GOODV" ok "" skip "no fresh line read both the server and the room names (1 of 2 fresh lines had no server)"
+  run_case "38 the clean line that is judged still has to be the right room" "$DEPLOY_CH" "$ONE" \
+    "$(ln 45 deliver ok cust-other yes; ln 5 deliver unreachable unmeasured unmeasured)" ok "$GOODV" ok "" fail "rooms=cust-other, expected exactly cust-jg-fixture"
+  run_case "39 unconfigured now is not rescued by a clean line from before" "$DEPLOY_CH" "$ONE" \
+    "$(ln 45 deliver ok cust-jg-fixture yes; ln 5 unconfigured unmeasured unmeasured unmeasured)" ok "$GOODV" ok "" warn "attached but not configured"
   run_case "33 newest running pod is read" "$DEPLOY_CH" "{\"items\":[$(pod im-old 2026-11-20T00:00:00Z),$(pod im-new 2026-11-24T09:37:50Z)]}" "$(st 5 deliver ok cust-jg-fixture yes)" ok "$GOODV" ok "" ok "online"
 }
 
 if [[ "${1:-}" != "--self-test" ]]; then
   run_all
-  [[ $rc -eq 0 ]] && echo "ok — row 33 gives skip/ok/warn/fail as specified across 34 cases (k8scc format v1), and the pods/log grant is where the row reads"
+  [[ $rc -eq 0 ]] && echo "ok — row 33 gives skip/ok/warn/fail as specified across 40 cases (k8scc format v1), and the pods/log grant is where the row reads"
   exit $rc
 fi
 
@@ -201,7 +224,11 @@ run_cell "m7 deliver online=no not failed" 's/no) CH_FAILS+=("deliver mode and o
 run_cell "m8 the oldest status line read, not the newest" "s/CH_S=\$(grep '^chamber-status ' <<<\"\$CH_BLOG\" | tail -1)/CH_S=\$(grep '^chamber-status ' <<<\"\$CH_BLOG\" | head -1)/" "0 "
 run_cell "m9 unconfigured line deleted" '/^ *unconfigured)$/,/the bridge has opened no connection") ;;$/d' "11 "
 run_cell "m10 ssh-keygen missing not failed" 's/missing) CH_FAILS+=("sshkeygen=missing/missing) CH_OKS+=("sshkeygen=missing/' "21 "
+run_cell "m11 only the newest line judged" 's/if \[\[ "\$CH_MODE" != unconfigured \&\& -n "\$CH_PICK" \]\]; then/if [[ "$CH_MODE" == never ]]; then/' "34 "
+run_cell "m12 a stale clean line is allowed to speak" 's/now - f\["ts"\] <= 3 \* f\["interval"\] + 300/now - f["ts"] <= 999999/' "36 "
+run_cell "m13 a clean line rescues an unconfigured bridge" 's/if \[\[ "\$CH_MODE" != unconfigured \&\& -n "\$CH_PICK" \]\]; then/if [[ -n "$CH_PICK" ]]; then/' "39 "
+run_cell "m14 the intermittent count dropped" 's/if (( CH_DOWNS + CH_NOROOM > 0 )); then/if (( CH_DOWNS + CH_NOROOM > 999 )); then/' "34 "
 CHAMBER_ROW_CM="$WORK/absent.yaml" bash "${BASH_SOURCE[0]}" >/dev/null 2>&1; [[ $? -eq 2 ]] && echo "PASS  c1 ConfigMap unreadable: cannot measure (2)" || { echo "FAIL — c1 an unreadable ConfigMap did not read as cannot measure"; src=1; }
 sed '/# 33\. im chamber/d' "$ORIG_CM" > "$WORK/norow.yaml"; CHAMBER_ROW_CM="$WORK/norow.yaml" bash "${BASH_SOURCE[0]}" >/dev/null 2>&1; [[ $? -eq 2 ]] && echo "PASS  c2 row header gone: cannot measure (2)" || { echo "FAIL — c2 a missing row did not read as cannot measure"; src=1; }
-[[ $src -eq 0 ]] && echo "self-test ok: 13 cells (cell 0 green, 10 mutations each red at the case it was aimed at, 2 cannot-measure)"
+[[ $src -eq 0 ]] && echo "self-test ok: 17 cells (cell 0 green, 14 mutations each red at the case it was aimed at, 2 cannot-measure)"
 exit $src

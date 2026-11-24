@@ -98,11 +98,12 @@ chamber-verify-status ts=<epoch> signers=<n> revoked=<n> sshkeygen=ok|missing
 | `mode=observe` | 在線那一格不判，訊息寫「觀察模式，不上線是設計」 |
 | 任何欄位是 `unmeasured` | 那一格 `skip` |
 
-**定稿（2026-11-24，`k8scc-bf [97703c]`，`ferry133/jg-base#248` issuecomment-7130894158，v1）。** 上面兩行草案多了一個欄位：兩行都帶 `interval=<秒>`。`server` 另有 `unmeasured`（只和 `mode=unconfigured` 一起出現），`rooms` 另有 `unmeasured`。k8scc 承諾欄位名稱、順序與值不改，之後只在行尾加欄位，所以列用 `key=value` 解析。列（第 33 列）照定稿寫，與上表有三處不同：
+**定稿（2026-11-24，`k8scc-bf [97703c]`，`ferry133/jg-base#248` issuecomment-7130894158，v1）。** 上面兩行草案多了一個欄位：兩行都帶 `interval=<秒>`。`server` 另有 `unmeasured`（只和 `mode=unconfigured` 一起出現），`rooms` 另有 `unmeasured`。k8scc 承諾欄位名稱、順序與值不改，之後只在行尾加欄位，所以列用 `key=value` 解析。列（第 33 列）照定稿寫，與上表有四處不同：
 
 - **過期門檻是 `3 × interval + 300 秒`，不是 3 個間隔。** `interval` 是最短週期：每一輪還要加上對伺服器的請求，每個上限 70 秒。300 是 k8scc 讀程式推的建議值，沒有在不通的伺服器上量過。
 - **`app` 裡沒有 `chamber-verify-status`，而 log 裡有 `chamber-watch:` 自己說沒起來的那一行 → `warn`，不是 `skip`。** k8scc 指出：有橋接 container 而沒有這一行，是「該起而沒起」，不是量不到。兩行都找不到時仍是 `skip`。
-- **預期的房間是 `cust-<CLUSTER_NAME>`，剛好一間。** 多一間、少一間、換一間都是 `fail`。命名規則不是 k8scc 的（映像不讀 `CLUSTER_NAME`），是伺服器那一側的，由 fleet-ops 持有；這裡的依據是 `~/coding/CLAUDE.md` 的 chamber 段與 2026-11-24 三座的現場讀數（`cust-jcom`、`cust-jg-jcc2`）。
+- **橋接程式的那一行不單獨判最新一行。** 在還沒過期的行裡，取最新的一條「乾淨」的行（`server=ok` 而且房間名讀得到）來判；訊息另外寫出 log 尾端有幾行不乾淨。伺服器要每一條沒過期的行都說不通才是 `fail`。起因是驗收時量到的（`fleet-ops-02 [e3795b]`，`ferry133/jg-base#267`）：jg-jiahd 的橋接程式大約每 5 分鐘掉一兩個 beat，467 行裡 46 行 `unreachable`、51 行 `rooms=unmeasured`；只看最後一行的話，那一座每天早上的結果取決於 Job 跑到的那一秒。`mode=unconfigured` 不適用這一條：現在沒設定，不會被先前的一條乾淨行救回來。
+- **預期的房間是 `cust-<CLUSTER_NAME>`，剛好一間。** 多一間、少一間、換一間都是 `fail`。命名規則不是 k8scc 的（映像不讀 `CLUSTER_NAME`），是伺服器那一側的，由 fleet-ops 持有；這裡的`fleet-ops-02 [e3795b]` 在 `ferry133/jg-base#267` 確認：每座一個帳號 `im-<cluster>`、一間 `cust-<cluster>`（ferry133 2026-11-15 的裁定），正本在 `fleet-ops/chamber/members.json`；im 不進 `fac`。日後若讓 im 進第二間，這一列會轉紅，那時再改這一列。
 
 - 預期的房間由 daily-check 自己從 `CLUSTER_NAME` 推，不讀橋接程式的說法——拿被量的東西的自述當預期，等於沒有比。房間的命名規則以 root 為準。
 - **這一列量不到的**：沒有 `chamber-bridge` container 時回 `skip`，分不出「從來沒接」與「接過、掉了」——「這座應該接著」的預期住在 user repo，daily-check 讀不到。現在接受。

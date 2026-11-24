@@ -554,8 +554,9 @@ jobs:
       # (v1). Every verdict in the design's table, the age limit on both sides
       # and following the line's own interval, and that the expected room is
       # worked out here and not taken from the bridge. The self-test runs
-      # first: cell 0 unmutated, then ten mutations that must each turn the
-      # case they were aimed at red.
+      # first: cell 0 unmutated, then fourteen mutations that must each turn
+      # the case they were aimed at red. Cases 34-39 hold the rule for a link
+      # that drops for a beat: the newest line is not judged alone.
       - name: daily-check row 33 (im chamber) guard self-test
         run: bash scripts/check-chamber-row.sh --self-test
       - name: daily-check row 33 (im chamber) verdicts

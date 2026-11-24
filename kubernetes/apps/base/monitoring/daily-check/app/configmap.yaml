@@ -2499,6 +2499,15 @@ data:
     # own `rooms=` is the thing being measured, so it cannot also be the
     # expectation. The naming rule is fleet-ops' (the server side), not k8scc's.
     #
+    # The bridge's line is not judged alone. A link that drops for a beat or two
+    # every few minutes (jg-jiahd, 2026-11-24: 46 of 467 lines `unreachable`)
+    # would make a row that reads only the newest line red on some mornings and
+    # green on others, by the second it ran. So: among the lines still fresh by
+    # the limit above, the newest CLEAN one (server ok, room names read) is the
+    # one judged, and the message counts the lines in the tail that were not
+    # clean. The server is `fail` only when every fresh line is without it, i.e.
+    # it has been down for the whole window. (fleet-ops-02 on #267.)
+    #
     # The result is the worst of the readings:
     #   fail  bridge declared but not running; server unreachable or refused;
     #         rooms differ from the expected room; ssh-keygen missing; deliver
@@ -2555,6 +2564,30 @@ data:
         CH_FAILS=() CH_WARNS=() CH_SKIPS=() CH_OKS=()
         CH_S=$(grep '^chamber-status ' <<<"$CH_BLOG" | tail -1)
         CH_MODE=""
+        # One pass over every status line in the tail: line 1 is six counts,
+        # line 2 the newest fresh clean line (empty when there is none).
+        CH_SCAN=$(awk -v now="$CH_NOW" '
+          /^chamber-status / {
+            split("", f)
+            for (i = 2; i <= NF; i++) { p = index($i, "="); if (p) f[substr($i, 1, p - 1)] = substr($i, p + 1) }
+            total++
+            down = (f["server"] == "unreachable" || f["server"] == "refused")
+            clean = (f["server"] == "ok" && f["rooms"] != "unmeasured" && f["rooms"] != "")
+            if (down) downs++
+            if (f["server"] == "ok" && !clean) noroom++
+            if (f["ts"] ~ /^[0-9]+$/ && f["interval"] ~ /^[0-9]+(\.[0-9]+)?$/ && now - f["ts"] <= 3 * f["interval"] + 300) {
+              fresh++
+              if (down) freshdown++
+              if (clean) pick = $0
+            }
+          }
+          END { printf "%d %d %d %d %d\n", total, downs, noroom, fresh, freshdown; print pick }' <<<"$CH_BLOG")
+        read -r CH_TOTAL CH_DOWNS CH_NOROOM CH_FRESH CH_FRESHDOWN <<<"$(head -1 <<<"$CH_SCAN")"
+        CH_PICK=$(sed -n 2p <<<"$CH_SCAN")
+        CH_FLAKY=""
+        if (( CH_DOWNS + CH_NOROOM > 0 )); then
+          CH_FLAKY="of ${CH_TOTAL} status lines in the log tail, ${CH_DOWNS} had no server and ${CH_NOROOM} could not read room names"
+        fi
         if [[ -z "$CH_S" ]]; then
           CH_SKIPS+=("no chamber-status line in the last 200 lines of ${CH_POD}/chamber-bridge")
         else
@@ -2565,6 +2598,11 @@ data:
             CH_SKIPS+=("the newest chamber-status line is ${CH_AGE} s old (interval $(ch_field "$CH_S" interval) s) — too old to judge")
           else
             CH_MODE=$(ch_field "$CH_S" mode)
+            # Judge the newest fresh clean line when the newest line is not it.
+            if [[ "$CH_MODE" != unconfigured && -n "$CH_PICK" ]]; then
+              CH_S="$CH_PICK"
+              CH_MODE=$(ch_field "$CH_S" mode)
+            fi
             CH_SERVER=$(ch_field "$CH_S" server)
             CH_ROOMS=$(ch_field "$CH_S" rooms)
             CH_ONLINE=$(ch_field "$CH_S" online)
@@ -2594,7 +2632,11 @@ data:
                       esac
                     fi ;;
                   unreachable|refused)
-                    CH_FAILS+=("mode ${CH_MODE}, server=${CH_SERVER} — $([[ "$CH_SERVER" == refused ]] && echo "the server refused the credential, or it belongs to another account" || echo "no HTTP answer from the chamber server")") ;;
+                    if (( CH_FRESHDOWN < CH_FRESH )); then
+                      CH_SKIPS+=("mode ${CH_MODE}, server=${CH_SERVER} on the newest line, and no fresh line read both the server and the room names (${CH_FRESHDOWN} of ${CH_FRESH} fresh lines had no server) — not judged")
+                    else
+                    CH_FAILS+=("mode ${CH_MODE}, server=${CH_SERVER} — $([[ "$CH_SERVER" == refused ]] && echo "the server refused the credential, or it belongs to another account" || echo "no HTTP answer from the chamber server") on every one of the ${CH_FRESH} fresh status line(s)")
+                    fi ;;
                   *) CH_SKIPS+=("mode ${CH_MODE}, server=${CH_SERVER:-<absent>} — rooms and presence not judged") ;;
                 esac ;;
               *) CH_SKIPS+=("mode=${CH_MODE:-<absent>} is not a value this row knows: ${CH_S}") ;;
@@ -2643,14 +2685,15 @@ data:
         ch_join() { local out; out=$(printf '%s; ' "$@"); echo "${out%; }"; }
         CH_REST=""
         [[ ${#CH_OKS[@]} -gt 0 ]] && CH_REST="read fine: $(ch_join "${CH_OKS[@]}")"
+        CH_TAIL="${CH_FLAKY:+ | intermittent: ${CH_FLAKY}}"
         if [[ ${#CH_FAILS[@]} -gt 0 ]]; then
-          record fail "$CH_NAME" "$(ch_join "${CH_FAILS[@]}")${CH_WARNS[*]:+ | also: $(ch_join "${CH_WARNS[@]}")}${CH_SKIPS[*]:+ | not measured: $(ch_join "${CH_SKIPS[@]}")}${CH_REST:+ | ${CH_REST}}"
+          record fail "$CH_NAME" "$(ch_join "${CH_FAILS[@]}")${CH_WARNS[*]:+ | also: $(ch_join "${CH_WARNS[@]}")}${CH_SKIPS[*]:+ | not measured: $(ch_join "${CH_SKIPS[@]}")}${CH_REST:+ | ${CH_REST}}${CH_TAIL}"
         elif [[ ${#CH_WARNS[@]} -gt 0 ]]; then
-          record warn "$CH_NAME" "$(ch_join "${CH_WARNS[@]}")${CH_SKIPS[*]:+ | not measured: $(ch_join "${CH_SKIPS[@]}")}${CH_REST:+ | ${CH_REST}}"
+          record warn "$CH_NAME" "$(ch_join "${CH_WARNS[@]}")${CH_SKIPS[*]:+ | not measured: $(ch_join "${CH_SKIPS[@]}")}${CH_REST:+ | ${CH_REST}}${CH_TAIL}"
         elif [[ ${#CH_SKIPS[@]} -gt 0 ]]; then
-          record skip "$CH_NAME" "$(ch_join "${CH_SKIPS[@]}")${CH_REST:+ | ${CH_REST}}"
+          record skip "$CH_NAME" "$(ch_join "${CH_SKIPS[@]}")${CH_REST:+ | ${CH_REST}}${CH_TAIL}"
         else
-          record ok "$CH_NAME" "$(ch_join "${CH_OKS[@]}")"
+          record ok "$CH_NAME" "$(ch_join "${CH_OKS[@]}")${CH_TAIL}"
         fi
       fi
     fi
