@@ -97,7 +97,7 @@
   - 40 格 fixture（第 34–39 格是間歇斷線），其中三格是 2026-11-24 在三座叢集讀到的原行（只換 `ts`）。「太舊」兩側各一格，另一格證明門檻跟著那一行自己的 `interval`。`--self-test` 17 格：第 0 格不變異＝綠；14 個變異各自先確認檔案真的變了，再確認是它瞄準的那一格變紅；ConfigMap 讀不到、列標頭不見各回 2。
 - [x] 4.3 `daily-check/README.md` 的圖例加這一列；`check-row-numbers-resolve.sh` 仍綠
   - 守衛第一次跑是紅的：README 標題寫 34 項而表有 35 列。改成 35 後 rc=0。
-- [ ] 4.4 在拋棄式叢集上各看到一次：沒接（`skip`）、接了沒設定（`warn`）、觀察模式（`ok`，在線不判）、送達模式且 session 在（`ok`）、送達模式而 session 不在（`fail`）
+- [x] 4.4 在拋棄式叢集上各看到一次：沒接（`skip`）、接了沒設定（`warn`）、觀察模式（`ok`，在線不判）、送達模式且 session 在（`ok`）、送達模式而 session 不在（`fail`）
   - **2026-11-24：五種裡看到兩種，而且不是 CronJob 看到的**（見 4.1：從這台 Mac 跑同一段程式）。觀察模式 `ok`（jcom）與送達模式而 session 不在 `fail`（jg-jcc2）。
   - **還沒看到的**：沒接、接了沒設定、送達模式且 session 在。**CronJob 自己印出這一列一次都還沒有**——那要等這一列合併、Flux 套用、08:00 那一輪跑完。這一格在那之後才勾。
   - **2026-11-25：CronJob 自己印出這一列了，五種裡仍是同樣兩種。這一格不勾。**
@@ -106,6 +106,14 @@
     - jg-jcc2（deliver）：❌ `deliver mode and online=no`。這一列算進了結束碼：jg-jcc2 的 `FAIL_COUNT=6` 含 `[FAIL] im chamber`，jcom 的 `FAIL_COUNT=0`。
     - **仍然沒在任何叢集上看到的三種**：沒接（`skip`）、接了沒設定（`warn`）、送達模式且 session 在（`ok`）。這三種目前只有 4.2 的 fixture 涵蓋，那是守衛對寫出來的 log 的判定，不是 CronJob 在叢集上的讀數。
     - **另外沒量的**：那六分鐘的窗裡伺服器連不上時這一列怎麼判（三座一夜都沒有斷線）。
+  - **2026-11-25（同日稍晚）：剩下三種也由 CronJob 自己的 Job 印出來了，五種到齊，這一格勾起。**
+    - 以下讀數抄自 `fleet-ops-02 [e3795b]` 在 `jg-base#248` 的 issuecomment-7149046048，**不是 `jg-base-d4 [a9cc43]` 量的**。三次都在 jg-jcc2，都是 `kubectl create job --from=cronjob/daily-check`，image `17ce78a`。
+    - 送達模式且 session 在（Job `dc-manual-deliver-ok-082258`）：✅ `mode deliver, server ok; room cust-jg-jcc2; online`。`FAIL_COUNT=5`，早上沒有 session 的那一輪是 6。
+    - 接了沒設定（Job `dc-manual-warn-084734`；Secret `im-chamber` 拿掉、pod 重啟）：⚠️ `attached but not configured (mode=unconfigured)`，另有一行 `[WARN] im chamber`。`FAIL_COUNT=5`，警告不算進結束碼。
+    - 沒接（Job `dc-manual-skip-085146`；jg-jcc2 的 `ks.yaml` 拿掉 chamber 那 21 行，`b29da24`）：➖ `im has no chamber-bridge container`，另有一行 `[SKIP] im chamber`。`FAIL_COUNT=5`。
+    - 量完已復原：Secret 的雜湊與先前相同，`ks.yaml` 回到與 `539bec0` 相同的內容（jg-jcc2 `0908d53`）。
+    - **與這一格的字面不同之處**：觀察模式的 `ok` 是在 jcom 與 jg-jiahd 看到的，不是在拋棄式叢集上。
+    - **仍然沒量的**：伺服器在那個窗裡連不上時這一列怎麼判。
 
 ## 5. 範圍外的指標
 
@@ -115,4 +123,5 @@
     - 欄位是 `chamber_mode`（`off`／`observe`／`deliver`）、`chamber_token`、`chamber_url`。
     - D1 的限制由 plugin 擋：im 走 `im/disabled`（`claudecode_auth0: false`）時，只要 `chamber_mode` 是 `observe` 或 `deliver` 就拒絕渲染（`off` 照常）。路徑是 `disabled` 時，`ks.yaml.j2` 也不會輸出 `components`。守衛是 `scripts/check-chamber-render.py`，共 18 格。
     - **沒量的**：任何叢集上的 reconcile，以及 `im-chamber` 經 sops 解密之後的套用。
-- [ ] 5.2 完成時在 `jg-base#248` 回報 commit，以及驗到什麼、沒驗到什麼；由開單者驗收
+- [x] 5.2 完成時在 `jg-base#248` 回報 commit，以及驗到什麼、沒驗到什麼；由開單者驗收
+  - **2026-11-25，`jg-base-d4 [a9cc43]`**：最終回報在 `jg-base#248` 的 issuecomment-7149053959。開單者的驗收寫在那張單上，不寫在這裡。
