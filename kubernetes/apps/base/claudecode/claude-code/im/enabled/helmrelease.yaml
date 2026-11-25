@@ -184,6 +184,17 @@ spec:
               # anything that can list the process, and this is the customer's
               # root shell.
               HA_MCP_TOKEN_FILE: /etc/ha-mcp/token
+              # Keep the tmux session `claude` running with nobody at the ttyd
+              # (k8scc session-keep; jg-cluster-template#276). `1` where the
+              # cluster's cluster.yaml sets `im_session_keep`; everywhere else
+              # the default leaves it "", and session-keep treats anything
+              # that is not 1 as off. It matters with chamber delivery: a room
+              # message reaches im only while a session is alive, so without
+              # this the bridge reports online=no until someone opens the
+              # terminal. Not tied to CHAMBER_MODE on purpose -- connecting,
+              # delivering and staying up are three decisions (ferry133
+              # 2026-11-22, jgct#263 point 3).
+              SESSION_KEEP: "${IM_SESSION_KEEP:=}"
             probes:
               # ttyd binds loopback, unreachable from kubelet's tcpSocket
               # probe (hostNetwork pod IP) -- check from inside the pod.
