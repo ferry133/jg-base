@@ -100,6 +100,12 @@
 - [ ] 4.4 在拋棄式叢集上各看到一次：沒接（`skip`）、接了沒設定（`warn`）、觀察模式（`ok`，在線不判）、送達模式且 session 在（`ok`）、送達模式而 session 不在（`fail`）
   - **2026-11-24：五種裡看到兩種，而且不是 CronJob 看到的**（見 4.1：從這台 Mac 跑同一段程式）。觀察模式 `ok`（jcom）與送達模式而 session 不在 `fail`（jg-jcc2）。
   - **還沒看到的**：沒接、接了沒設定、送達模式且 session 在。**CronJob 自己印出這一列一次都還沒有**——那要等這一列合併、Flux 套用、08:00 那一輪跑完。這一格在那之後才勾。
+  - **2026-11-25：CronJob 自己印出這一列了，五種裡仍是同樣兩種。這一格不勾。**
+    - 以下讀數抄自 `fleet-ops-02 [e3795b]` 在 `jg-base#248` 的 issuecomment-7148270144，**不是 `jg-base-d4 [a9cc43]` 量的**。排程的 2026-11-25 00:00 UTC 那一輪（每座的 job `daily-check-29926080`，沒有人手動觸發），三座的 image 都是 `17ce78a`。
+    - jcom（observe）：✅ `mode observe, server ok; room cust-jcom`，在線不判。jg-jiahd（observe）：✅ 同上，房間 `cust-jg-jiahd`。
+    - jg-jcc2（deliver）：❌ `deliver mode and online=no`。這一列算進了結束碼：jg-jcc2 的 `FAIL_COUNT=6` 含 `[FAIL] im chamber`，jcom 的 `FAIL_COUNT=0`。
+    - **仍然沒在任何叢集上看到的三種**：沒接（`skip`）、接了沒設定（`warn`）、送達模式且 session 在（`ok`）。這三種目前只有 4.2 的 fixture 涵蓋，那是守衛對寫出來的 log 的判定，不是 CronJob 在叢集上的讀數。
+    - **另外沒量的**：那六分鐘的窗裡伺服器連不上時這一列怎麼判（三座一夜都沒有斷線）。
 
 ## 5. 範圍外的指標
 
