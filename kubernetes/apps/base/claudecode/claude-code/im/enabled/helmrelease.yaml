@@ -227,9 +227,9 @@ spec:
           talos-mcp:
             # Own container, own credential mounts (reader always, operator
             # when minted) -- the app container above never sees this secret.
-            # See openspec/changes/insideman for the base design and
-            # openspec/changes/im-onsite-operator-tools for the second
-            # credential. Present on every cluster: without Omni credentials
+            # See openspec/specs/talos-mcp-sidecar (designs archived as
+            # openspec/changes/archive/2026-08-11-insideman and
+            # 2026-11-27-im-onsite-operator-tools for the second credential). Present on every cluster: without Omni credentials
             # the server serves a "not configured" answer (k8scc#5) rather
             # than crash or lie.
             image:

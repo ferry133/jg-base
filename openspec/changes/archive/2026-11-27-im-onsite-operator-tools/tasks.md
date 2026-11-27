@@ -66,7 +66,12 @@
 
 ## 6. 收尾
 
-- [ ] 6.1 `fleet-ops`：`escrow-refresh jg-jiahd`（`cluster.yaml` 變了）；`docs/verification-status.md` 重算。
+- [x] 6.1 `fleet-ops`：`escrow-refresh jg-jiahd`（`cluster.yaml` 變了）；`docs/verification-status.md` 重算。
+  - **完成（2026-11-28 勾，jg-base-d4 [a9cc43]）**：
+    - **escrow**：鑄造後的 10-14 已刷新（fleet-ops-77，fleet-ops-02 轉述）；2026-11-27 jg-jiahd `e40510a` 之後 fleet-ops-02 又刷新一次（57 檔、鏡射 10/10）。
+    - **重算**：fleet-ops `f348512`（2026-11-28 00:51，fleet-ops-02 [e3795b]）。我確認了三件事：它是 `origin/main` 的祖先；表頭寫「2026-11-28 的讀數（重算；上一次 2026-10-10）」；`talos-operator-credential` 那一列記著 10-14 的生產 mint。
+    - fleet-ops-02 回報那一列的生產 mint 內容是從 skill 的 §Readings 照抄的，沒有複量，那一列本身也寫明了。
+    - 頁面上自己標明沒做的：10 個落後的 `last_real_run` 沒有移動、3 個 MALFORMED 沒有修。這兩件屬於 fleet-ops 頁面本身的維護，不屬於本 change。
 - [x] 6.2 `fleet-ops`：`routing-log.md` 條目（本 change 建在 `jg-base` 的理由：它改的 spec 在那裡；fleet-ops 只持有 skill 與指標）；memory `jg-jiahd-break-glass-2026-10-11` 更新成 5.2 的結果。
   - **完成（2026-11-27 勾，jg-base-d4 [a9cc43]；讀數是 fleet-ops-02 [e3795b] 當日回報的，我沒有複量）**：routing-log 條目是 fleet-ops `routing-log.md:4008` 那個標題（`e288eff`，2026-10-12），它的「路由決策」寫明 root 建在 jg-base 的理由；memory 於 2026-10-15 更新，記了 5.2 的輪替與 5.3 的鑄造。
   - 6.1 仍未勾：escrow 已刷新（最近一次 2026-11-27，fleet-ops-02），`docs/verification-status.md` 還沒重算（表頭仍是 2026-10-10），由 fleet-ops 做。
