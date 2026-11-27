@@ -67,7 +67,9 @@
 ## 6. 收尾
 
 - [ ] 6.1 `fleet-ops`：`escrow-refresh jg-jiahd`（`cluster.yaml` 變了）；`docs/verification-status.md` 重算。
-- [ ] 6.2 `fleet-ops`：`routing-log.md` 條目（本 change 建在 `jg-base` 的理由：它改的 spec 在那裡；fleet-ops 只持有 skill 與指標）；memory `jg-jiahd-break-glass-2026-10-11` 更新成 5.2 的結果。
+- [x] 6.2 `fleet-ops`：`routing-log.md` 條目（本 change 建在 `jg-base` 的理由：它改的 spec 在那裡；fleet-ops 只持有 skill 與指標）；memory `jg-jiahd-break-glass-2026-10-11` 更新成 5.2 的結果。
+  - **完成（2026-11-27 勾，jg-base-d4 [a9cc43]；讀數是 fleet-ops-02 [e3795b] 當日回報的，我沒有複量）**：routing-log 條目是 fleet-ops `routing-log.md:4008` 那個標題（`e288eff`，2026-10-12），它的「路由決策」寫明 root 建在 jg-base 的理由；memory 於 2026-10-15 更新，記了 5.2 的輪替與 5.3 的鑄造。
+  - 6.1 仍未勾：escrow 已刷新（最近一次 2026-11-27，fleet-ops-02），`docs/verification-status.md` 還沒重算（表頭仍是 2026-10-10），由 fleet-ops 做。
 - [x] 6.3 `jg-base`：`k8scc` sub-change archive 後，依四條規則更新本 root；本 root 在 sub 仍 active 時不可 archive。
   - **完成（2026-10-16，jg-base-0a [4e5e8d]）**：proposal 的 sub-change 表改指封存路徑與 k8scc `openspec/specs/`；design.md 新增「收尾時寫回的事實」一節，收齊沿途累積的七條；Risks 那條「守衛未落地前維持 `ask`」補上落地紀錄。`~/.claude/scripts/check-change-orchestration.py` 回報 every cross-repo link resolves。sub-change 已不再 active，本 root 可以封存；還沒勾的只剩 fleet-ops 的 6.1／6.2。
 
